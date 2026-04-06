@@ -1,0 +1,25 @@
+{
+	"$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+	"appId": "com.quickshot.app",
+	"productName": "QuickShot",
+	"directories": {
+		"output": "release/${version}"
+	},
+	"files": [
+		"dist",
+		"dist-electron",
+		"public"
+	],
+	"mac": {
+		"target": ["dmg"],
+		"artifactName": "${productName}-Mac-${arch}-${version}-Installer.${ext}"
+	},
+	"win": {
+		"target": ["nsis"],
+		"artifactName": "${productName}-Win-${version}-Setup.${ext}"
+	},
+	"linux": {
+		"target": ["AppImage"],
+		"artifactName": "${productName}-Linux-${version}.${ext}"
+	}
+}
