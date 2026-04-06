@@ -1,8 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("electronAPI", {
+	getScreenCapture: () => ipcRenderer.invoke("get-screen-capture"),
 	getPrimaryScreenSourceId: () =>
 		ipcRenderer.invoke("get-primary-screen-source-id"),
+	getScreenCaptureFallback: (sourceId: string) =>
+		ipcRenderer.invoke("get-screen-capture-fallback", sourceId),
 	showRegionSelector: () => ipcRenderer.invoke("show-region-selector"),
 	screenshotRegionSelected: (croppedImageData: string) =>
 		ipcRenderer.invoke("screenshot-region-selected", croppedImageData),

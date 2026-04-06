@@ -7,19 +7,13 @@ export function RegionSelector() {
 	const isSelectingRef = useRef(false);
 	const startRef = useRef({ x: 0, y: 0 });
 	const currentRef = useRef({ x: 0, y: 0 });
-	const [_tick, setTick] = useState(0);
-	const closingRef = useRef(false);
+	const [, setTick] = useState(0);
 
-	// Capture screen at full resolution via getUserMedia, then show the window
 	useEffect(() => {
-		const init = async () => {
+		const captureHighRes = async (): Promise<string | null> => {
 			try {
 				const result = await window.electronAPI.getPrimaryScreenSourceId();
-				if (!result.success || !result.sourceId) {
-					await Promise.resolve();
-					window.close();
-					return;
-				}
+				if (!result.success || !result.sourceId) return null;
 
 				const stream = await navigator.mediaDevices.getUserMedia({
 					audio: false,
@@ -28,8 +22,8 @@ export function RegionSelector() {
 						mandatory: {
 							chromeMediaSource: "desktop",
 							chromeMediaSourceId: result.sourceId,
-							maxWidth: 8192,
-							maxHeight: 4320,
+							maxWidth: 3840,
+							maxHeight: 2160,
 						},
 					},
 				});
@@ -47,21 +41,37 @@ export function RegionSelector() {
 				c.getContext("2d")?.drawImage(video, 0, 0);
 				stream.getTracks().forEach((t) => t.stop());
 
-				setScreenSrc(c.toDataURL("image/png"));
-				await window.electronAPI.showRegionSelector();
-			} catch (err) {
-				console.error("Screen capture failed:", err);
-				await Promise.resolve();
-				window.close();
+				if (c.width < 2) return null; // sanity check
+				return c.toDataURL("image/png");
+			} catch {
+				return null;
 			}
+		};
+
+		const captureFallback = async (): Promise<string | null> => {
+			try {
+				const r = await window.electronAPI.getScreenCapture();
+				return r.success && r.imageData ? r.imageData : null;
+			} catch {
+				return null;
+			}
+		};
+
+		const init = async () => {
+			// Try getUserMedia first (native resolution), fallback to desktopCapturer thumbnail
+			let data = await captureHighRes();
+			if (!data) data = await captureFallback();
+			if (!data) {
+				window.close();
+				return;
+			}
+			setScreenSrc(data);
+			await window.electronAPI.showRegionSelector();
 		};
 		init();
 
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
-				closingRef.current = true;
-				Promise.resolve().then(() => window.close());
-			}
+			if (e.key === "Escape") window.close();
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
@@ -116,7 +126,7 @@ export function RegionSelector() {
 				ctx.fillText(label, lx + 5, ly + 14);
 			}
 		}
-	}, []);
+	});
 
 	const handleMouseDown = (e: React.MouseEvent) => {
 		isSelectingRef.current = true;
@@ -148,7 +158,6 @@ export function RegionSelector() {
 		const img = imgRef.current;
 		if (!img || !img.complete || img.clientWidth === 0) return;
 
-		// Map CSS coords → image (physical pixel) coords
 		const scaleX = img.naturalWidth / img.clientWidth;
 		const scaleY = img.naturalHeight / img.clientHeight;
 		const rx = Math.round(cssX * scaleX);
@@ -156,14 +165,14 @@ export function RegionSelector() {
 		const rw = Math.round(cssW * scaleX);
 		const rh = Math.round(cssH * scaleY);
 
-		// Crop on the renderer side (canvas)
 		const cropCanvas = document.createElement("canvas");
 		cropCanvas.width = rw;
 		cropCanvas.height = rh;
 		cropCanvas.getContext("2d")?.drawImage(img, rx, ry, rw, rh, 0, 0, rw, rh);
 
-		closingRef.current = true;
-		await window.electronAPI.screenshotRegionSelected(cropCanvas.toDataURL("image/png"));
+		await window.electronAPI.screenshotRegionSelected(
+			cropCanvas.toDataURL("image/png"),
+		);
 	};
 
 	return (
@@ -179,11 +188,19 @@ export function RegionSelector() {
 					ref={imgRef}
 					src={screenSrc}
 					className="absolute inset-0 w-full h-full"
-					style={{ objectFit: "fill", userSelect: "none", pointerEvents: "none" }}
+					style={{
+						objectFit: "fill",
+						userSelect: "none",
+						pointerEvents: "none",
+					}}
 					draggable={false}
 				/>
 			)}
-			<canvas ref={canvasRef} className="absolute inset-0" style={{ pointerEvents: "none" }} />
+			<canvas
+				ref={canvasRef}
+				className="absolute inset-0"
+				style={{ pointerEvents: "none" }}
+			/>
 			{screenSrc && !isSelectingRef.current && (
 				<div
 					className="absolute top-5 left-1/2 -translate-x-1/2 px-5 py-2 rounded-full text-sm text-white"

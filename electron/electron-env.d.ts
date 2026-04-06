@@ -9,9 +9,15 @@ declare namespace NodeJS {
 
 interface Window {
 	electronAPI: {
+		getScreenCapture: () => Promise<{ success: boolean; imageData?: string }>;
 		getPrimaryScreenSourceId: () => Promise<{
 			success: boolean;
 			sourceId?: string;
+			error?: string;
+		}>;
+		getScreenCaptureFallback: (sourceId: string) => Promise<{
+			success: boolean;
+			imageData?: string;
 			error?: string;
 		}>;
 		showRegionSelector: () => Promise<{ success: boolean }>;

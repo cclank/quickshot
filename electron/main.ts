@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -26,14 +27,44 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 	? path.join(APP_ROOT, "public")
 	: RENDERER_DIST;
 
+// Menu bar removed — tray-only app
+Menu.setApplicationMenu(null);
+
 // ── Window references ────────────────────────────────────────────────────────
 
 let regionSelectorWindow: BrowserWindow | null = null;
 let screenshotPreviewWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 
+// ── Cursor helpers (macOS) ────────────────────────────────────────────────────
+
+let savedCursorPos: { x: number; y: number } | null = null;
+
+function hideCursorForCapture() {
+	if (process.platform !== "darwin") return;
+	savedCursorPos = screen.getCursorScreenPoint();
+	try {
+		execSync(
+			`osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); $.CGWarpMouseCursorPosition($.CGPointMake(99999, 99999))'`,
+			{ timeout: 2000 },
+		);
+	} catch {}
+}
+
+function restoreCursor() {
+	if (process.platform !== "darwin" || !savedCursorPos) return;
+	try {
+		execSync(
+			`osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); $.CGWarpMouseCursorPosition($.CGPointMake(${savedCursorPos.x}, ${savedCursorPos.y}))'`,
+			{ timeout: 2000 },
+		);
+	} catch {}
+	savedCursorPos = null;
+}
+
 // ── Screenshot data ──────────────────────────────────────────────────────────
 
+let screenshotFullData: string | null = null;
 let screenshotCroppedData: string | null = null;
 
 // ── Window creators ──────────────────────────────────────────────────────────
@@ -61,6 +92,7 @@ function createRegionSelectorWindow(): BrowserWindow {
 		resizable: false,
 		skipTaskbar: true,
 		focusable: true,
+		hasShadow: false,
 		show: false,
 		webPreferences: {
 			preload: path.join(__dirname, "preload.mjs"),
@@ -87,6 +119,7 @@ function createScreenshotPreviewWindow(): BrowserWindow {
 		titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
 		title: "QuickShot",
 		resizable: true,
+		show: false,
 		webPreferences: {
 			preload: path.join(__dirname, "preload.mjs"),
 			nodeIntegration: false,
@@ -123,20 +156,52 @@ function createTray() {
 
 // ── Screenshot flow ──────────────────────────────────────────────────────────
 
-function triggerScreenshot() {
+async function triggerScreenshot() {
 	if (regionSelectorWindow && !regionSelectorWindow.isDestroyed()) {
 		regionSelectorWindow.focus();
 		return;
 	}
+
+	// Hide cursor before any capture
+	hideCursorForCapture();
+
+	// Pre-capture via desktopCapturer as fallback (no cursor in thumbnails)
+	try {
+		const display = screen.getPrimaryDisplay();
+		const sf = display.scaleFactor || 2;
+		const sources = await desktopCapturer.getSources({
+			types: ["screen"],
+			thumbnailSize: {
+				width: display.size.width * sf,
+				height: display.size.height * sf,
+			},
+		});
+		if (!sources.length) {
+			restoreCursor();
+			return;
+		}
+		screenshotFullData = sources[0].thumbnail.toDataURL();
+	} catch {
+		restoreCursor();
+		return;
+	}
+
 	regionSelectorWindow = createRegionSelectorWindow();
 	regionSelectorWindow.on("closed", () => {
 		regionSelectorWindow = null;
+		restoreCursor(); // safety net
 	});
 }
 
 // ── IPC handlers ─────────────────────────────────────────────────────────────
 
 function registerIpcHandlers() {
+	ipcMain.handle("get-screen-capture", () => {
+		return screenshotFullData
+			? { success: true, imageData: screenshotFullData }
+			: { success: false };
+	});
+
 	ipcMain.handle("get-primary-screen-source-id", async () => {
 		try {
 			const sources = await desktopCapturer.getSources({
@@ -151,7 +216,27 @@ function registerIpcHandlers() {
 		}
 	});
 
+	ipcMain.handle("get-screen-capture-fallback", async (_, sourceId: string) => {
+		try {
+			const display = screen.getPrimaryDisplay();
+			const sf = display.scaleFactor || 2;
+			const sources = await desktopCapturer.getSources({
+				types: ["screen"],
+				thumbnailSize: {
+					width: display.size.width * sf,
+					height: display.size.height * sf,
+				},
+			});
+			const source = sources.find((s) => s.id === sourceId) ?? sources[0];
+			if (!source) return { success: false };
+			return { success: true, imageData: source.thumbnail.toDataURL() };
+		} catch (err) {
+			return { success: false, error: String(err) };
+		}
+	});
+
 	ipcMain.handle("show-region-selector", () => {
+		restoreCursor();
 		regionSelectorWindow?.show();
 		return { success: true };
 	});
@@ -162,6 +247,12 @@ function registerIpcHandlers() {
 		screenshotPreviewWindow = createScreenshotPreviewWindow();
 		screenshotPreviewWindow.on("closed", () => {
 			screenshotPreviewWindow = null;
+		});
+		// Ensure preview window is visible and focused after dock.hide()
+		screenshotPreviewWindow.once("ready-to-show", () => {
+			screenshotPreviewWindow?.show();
+			screenshotPreviewWindow?.moveTop();
+			screenshotPreviewWindow?.focus();
 		});
 		return { success: true };
 	});
@@ -248,6 +339,11 @@ app.whenReady().then(async () => {
 		if (status !== "granted") {
 			// Screen recording permission prompt handled by OS on first capture
 		}
+	}
+
+	// Hide dock — must be before any window creation
+	if (process.platform === "darwin") {
+		app.dock?.hide();
 	}
 
 	registerIpcHandlers();

@@ -261,6 +261,10 @@ export function ScreenshotPreview() {
 	// Keyboard shortcuts
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				window.close();
+				return;
+			}
 			if ((e.metaKey || e.ctrlKey) && e.key === "z") {
 				e.preventDefault();
 				setOps((prev) => prev.slice(0, -1));
@@ -578,6 +582,7 @@ export function ScreenshotPreview() {
 								maxWidth: "calc(100vw - 200px)",
 								maxHeight: "calc(100vh - 180px)",
 								userSelect: "none",
+								imageRendering: "-webkit-optimize-contrast" as React.CSSProperties["imageRendering"],
 							}}
 							draggable={false}
 							onLoad={() => {
