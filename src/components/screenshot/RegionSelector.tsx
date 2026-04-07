@@ -1,218 +1,238 @@
 import { useEffect, useRef, useState } from "react";
+import { decodeImageData } from "@/lib/decodeImage";
+
+function drawOverlay(
+	canvas: HTMLCanvasElement,
+	isSelecting: boolean,
+	start: { x: number; y: number },
+	current: { x: number; y: number },
+) {
+	const ctx = canvas.getContext("2d");
+	if (!ctx) return;
+
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	ctx.fillStyle = "rgba(0,0,0,0.4)";
+	ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+	if (!isSelecting) return;
+
+	const sx = Math.min(start.x, current.x);
+	const sy = Math.min(start.y, current.y);
+	const sw = Math.abs(current.x - start.x);
+	const sh = Math.abs(current.y - start.y);
+
+	ctx.clearRect(sx, sy, sw, sh);
+	ctx.strokeStyle = "#34B27B";
+	ctx.lineWidth = Math.max(2, Math.round(canvas.width / 900));
+	ctx.strokeRect(sx, sy, sw, sh);
+
+	const handleSize = Math.max(8, Math.round(canvas.width / 180));
+	ctx.fillStyle = "#34B27B";
+	for (const [hx, hy] of [
+		[sx, sy],
+		[sx + sw, sy],
+		[sx, sy + sh],
+		[sx + sw, sy + sh],
+	]) {
+		ctx.fillRect(
+			hx - handleSize / 2,
+			hy - handleSize / 2,
+			handleSize,
+			handleSize,
+		);
+	}
+
+	if (sw > 80 && sh > 48) {
+		const label = `${Math.round(sw)} × ${Math.round(sh)}`;
+		ctx.font = `bold ${Math.max(16, Math.round(canvas.width / 90))}px system-ui`;
+		const textWidth = ctx.measureText(label).width;
+		const labelX = sx + 8;
+		const labelY = sy > 44 ? sy - 36 : sy + sh + 8;
+		ctx.fillStyle = "rgba(0,0,0,0.82)";
+		ctx.fillRect(labelX, labelY, textWidth + 18, 28);
+		ctx.fillStyle = "#34B27B";
+		ctx.fillText(label, labelX + 9, labelY + 20);
+	}
+}
 
 export function RegionSelector() {
-	const canvasRef = useRef<HTMLCanvasElement>(null);
-	const imgRef = useRef<HTMLImageElement>(null);
-	const [screenSrc, setScreenSrc] = useState<string>("");
+	const sourceCanvasRef = useRef<HTMLCanvasElement>(null);
+	const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+	const activeSessionIdRef = useRef<number | null>(null);
 	const isSelectingRef = useRef(false);
 	const startRef = useRef({ x: 0, y: 0 });
 	const currentRef = useRef({ x: 0, y: 0 });
-	const [, setTick] = useState(0);
+	const [imageReady, setImageReady] = useState(false);
+	const [isSelecting, setIsSelecting] = useState(false);
 
 	useEffect(() => {
-		const captureHighRes = async (): Promise<string | null> => {
-			try {
-				const result = await window.electronAPI.getPrimaryScreenSourceId();
-				if (!result.success || !result.sourceId) return null;
+		const handleCaptureSession = async (payload: {
+			sessionId: number;
+			imageData: string;
+		}) => {
+			activeSessionIdRef.current = payload.sessionId;
+			isSelectingRef.current = false;
+			setIsSelecting(false);
+			startRef.current = { x: 0, y: 0 };
+			currentRef.current = { x: 0, y: 0 };
+			setImageReady(false);
 
-				const stream = await navigator.mediaDevices.getUserMedia({
-					audio: false,
-					video: {
-						// @ts-expect-error Electron-specific mandatory constraints
-						mandatory: {
-							chromeMediaSource: "desktop",
-							chromeMediaSourceId: result.sourceId,
-							maxWidth: 3840,
-							maxHeight: 2160,
-						},
-					},
-				});
-
-				const video = document.createElement("video");
-				video.srcObject = stream;
-				await new Promise<void>((r) => {
-					video.onloadedmetadata = () => r();
-				});
-				await video.play();
-
-				const c = document.createElement("canvas");
-				c.width = video.videoWidth;
-				c.height = video.videoHeight;
-				c.getContext("2d")?.drawImage(video, 0, 0);
-				stream.getTracks().forEach((t) => t.stop());
-
-				if (c.width < 2) return null; // sanity check
-				return c.toDataURL("image/png");
-			} catch {
-				return null;
-			}
-		};
-
-		const captureFallback = async (): Promise<string | null> => {
-			try {
-				const r = await window.electronAPI.getScreenCapture();
-				return r.success && r.imageData ? r.imageData : null;
-			} catch {
-				return null;
-			}
-		};
-
-		const init = async () => {
-			// Try getUserMedia first (native resolution), fallback to desktopCapturer thumbnail
-			let data = await captureHighRes();
-			if (!data) data = await captureFallback();
-			if (!data) {
-				window.close();
+			const image = await decodeImageData(payload.imageData);
+			if (activeSessionIdRef.current !== payload.sessionId) {
 				return;
 			}
-			setScreenSrc(data);
-			await window.electronAPI.showRegionSelector();
-		};
-		init();
 
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") window.close();
+			const sourceCanvas = sourceCanvasRef.current;
+			const overlayCanvas = overlayCanvasRef.current;
+			if (!sourceCanvas || !overlayCanvas) return;
+
+			sourceCanvas.width = image.naturalWidth;
+			sourceCanvas.height = image.naturalHeight;
+			overlayCanvas.width = image.naturalWidth;
+			overlayCanvas.height = image.naturalHeight;
+
+			const sourceContext = sourceCanvas.getContext("2d");
+			if (!sourceContext) return;
+			sourceContext.clearRect(0, 0, sourceCanvas.width, sourceCanvas.height);
+			sourceContext.drawImage(image, 0, 0);
+			drawOverlay(overlayCanvas, false, startRef.current, currentRef.current);
+
+			setImageReady(true);
+			await window.electronAPI.regionSelectorReady(payload.sessionId);
 		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
+
+		return window.electronAPI.onCaptureSession(handleCaptureSession);
 	}, []);
 
-	// Draw overlay
 	useEffect(() => {
-		const canvas = canvasRef.current;
-		if (!canvas) return;
-		canvas.width = window.innerWidth;
-		canvas.height = window.innerHeight;
-		const ctx = canvas.getContext("2d");
-		if (!ctx) return;
+		const overlayCanvas = overlayCanvasRef.current;
+		if (!overlayCanvas || !imageReady) return;
+		drawOverlay(
+			overlayCanvas,
+			isSelectingRef.current,
+			startRef.current,
+			currentRef.current,
+		);
+	}, [imageReady]);
 
-		ctx.clearRect(0, 0, canvas.width, canvas.height);
-		ctx.fillStyle = "rgba(0,0,0,0.4)";
-		ctx.fillRect(0, 0, canvas.width, canvas.height);
+	const getCanvasPoint = (e: React.MouseEvent): [number, number] => {
+		const canvas = overlayCanvasRef.current!;
+		const rect = canvas.getBoundingClientRect();
+		return [
+			Math.round(((e.clientX - rect.left) * canvas.width) / rect.width),
+			Math.round(((e.clientY - rect.top) * canvas.height) / rect.height),
+		];
+	};
 
-		if (isSelectingRef.current) {
-			const sx = Math.min(startRef.current.x, currentRef.current.x);
-			const sy = Math.min(startRef.current.y, currentRef.current.y);
-			const sw = Math.abs(currentRef.current.x - startRef.current.x);
-			const sh = Math.abs(currentRef.current.y - startRef.current.y);
-
-			ctx.clearRect(sx, sy, sw, sh);
-			ctx.strokeStyle = "#34B27B";
-			ctx.lineWidth = 2;
-			ctx.strokeRect(sx, sy, sw, sh);
-
-			const hs = 7;
-			ctx.fillStyle = "#34B27B";
-			for (const [hx, hy] of [
-				[sx, sy],
-				[sx + sw, sy],
-				[sx, sy + sh],
-				[sx + sw, sy + sh],
-			]) {
-				ctx.fillRect(hx - hs / 2, hy - hs / 2, hs, hs);
-			}
-
-			if (sw > 50 && sh > 30) {
-				const label = `${Math.round(sw)} × ${Math.round(sh)}`;
-				ctx.font = "bold 12px system-ui";
-				const tw = ctx.measureText(label).width;
-				const lx = sx + 4;
-				const ly = sy > 28 ? sy - 26 : sy + sh + 4;
-				ctx.fillStyle = "rgba(0,0,0,0.8)";
-				ctx.beginPath();
-				ctx.rect(lx, ly, tw + 10, 20);
-				ctx.fill();
-				ctx.fillStyle = "#34B27B";
-				ctx.fillText(label, lx + 5, ly + 14);
-			}
-		}
-	});
+	const redrawCurrentOverlay = () => {
+		const overlayCanvas = overlayCanvasRef.current;
+		if (!overlayCanvas || !imageReady) return;
+		drawOverlay(
+			overlayCanvas,
+			isSelectingRef.current,
+			startRef.current,
+			currentRef.current,
+		);
+	};
 
 	const handleMouseDown = (e: React.MouseEvent) => {
+		if (!imageReady) return;
+		const [x, y] = getCanvasPoint(e);
 		isSelectingRef.current = true;
-		startRef.current = { x: e.clientX, y: e.clientY };
-		currentRef.current = { x: e.clientX, y: e.clientY };
-		setTick((n) => n + 1);
+		setIsSelecting(true);
+		startRef.current = { x, y };
+		currentRef.current = { x, y };
+		redrawCurrentOverlay();
 	};
 
 	const handleMouseMove = (e: React.MouseEvent) => {
-		if (!isSelectingRef.current) return;
-		currentRef.current = { x: e.clientX, y: e.clientY };
-		setTick((n) => n + 1);
+		if (!imageReady || !isSelectingRef.current) return;
+		const [x, y] = getCanvasPoint(e);
+		currentRef.current = { x, y };
+		redrawCurrentOverlay();
 	};
 
 	const handleMouseUp = async (e: React.MouseEvent) => {
-		if (!isSelectingRef.current) return;
+		if (!imageReady || !isSelectingRef.current) return;
 		isSelectingRef.current = false;
+		setIsSelecting(false);
 
-		const cssX = Math.min(startRef.current.x, e.clientX);
-		const cssY = Math.min(startRef.current.y, e.clientY);
-		const cssW = Math.abs(e.clientX - startRef.current.x);
-		const cssH = Math.abs(e.clientY - startRef.current.y);
+		const [x, y] = getCanvasPoint(e);
+		currentRef.current = { x, y };
+		redrawCurrentOverlay();
 
-		if (cssW < 10 || cssH < 10) {
-			setTick((n) => n + 1);
+		const sx = Math.min(startRef.current.x, currentRef.current.x);
+		const sy = Math.min(startRef.current.y, currentRef.current.y);
+		const sw = Math.abs(currentRef.current.x - startRef.current.x);
+		const sh = Math.abs(currentRef.current.y - startRef.current.y);
+		if (sw < 10 || sh < 10) {
 			return;
 		}
 
-		const img = imgRef.current;
-		if (!img || !img.complete || img.clientWidth === 0) return;
-
-		const scaleX = img.naturalWidth / img.clientWidth;
-		const scaleY = img.naturalHeight / img.clientHeight;
-		const rx = Math.round(cssX * scaleX);
-		const ry = Math.round(cssY * scaleY);
-		const rw = Math.round(cssW * scaleX);
-		const rh = Math.round(cssH * scaleY);
+		const sourceCanvas = sourceCanvasRef.current;
+		const sessionId = activeSessionIdRef.current;
+		if (!sourceCanvas || sessionId === null) return;
 
 		const cropCanvas = document.createElement("canvas");
-		cropCanvas.width = rw;
-		cropCanvas.height = rh;
-		cropCanvas.getContext("2d")?.drawImage(img, rx, ry, rw, rh, 0, 0, rw, rh);
+		cropCanvas.width = sw;
+		cropCanvas.height = sh;
+		const cropContext = cropCanvas.getContext("2d");
+		if (!cropContext) return;
+		cropContext.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
 
-		await window.electronAPI.screenshotRegionSelected(
-			cropCanvas.toDataURL("image/png"),
-		);
+		await window.electronAPI.screenshotRegionSelected({
+			sessionId,
+			croppedImageData: cropCanvas.toDataURL("image/png"),
+		});
+	};
+
+	const handleCancel = async () => {
+		const sessionId = activeSessionIdRef.current;
+		if (sessionId === null) return;
+		await window.electronAPI.cancelCaptureSession(sessionId);
 	};
 
 	return (
 		<div
 			className="fixed inset-0"
-			style={{ cursor: "crosshair", background: "transparent" }}
+			style={{
+				cursor: imageReady ? "crosshair" : "wait",
+				background: "rgba(0,0,0,0.4)",
+			}}
 			onMouseDown={handleMouseDown}
 			onMouseMove={handleMouseMove}
 			onMouseUp={handleMouseUp}
+			onDoubleClick={(e) => e.preventDefault()}
 		>
-			{screenSrc && (
-				<img
-					ref={imgRef}
-					src={screenSrc}
-					className="absolute inset-0 w-full h-full"
-					style={{
-						objectFit: "fill",
-						userSelect: "none",
-						pointerEvents: "none",
-					}}
-					draggable={false}
-				/>
-			)}
 			<canvas
-				ref={canvasRef}
-				className="absolute inset-0"
+				ref={sourceCanvasRef}
+				className="absolute inset-0 w-full h-full"
+				style={{ userSelect: "none", pointerEvents: "none" }}
+			/>
+			<canvas
+				ref={overlayCanvasRef}
+				className="absolute inset-0 w-full h-full"
 				style={{ pointerEvents: "none" }}
 			/>
-			{screenSrc && !isSelectingRef.current && (
+			{imageReady && !isSelecting && (
 				<div
-					className="absolute top-5 left-1/2 -translate-x-1/2 px-5 py-2 rounded-full text-sm text-white"
+					className="absolute top-5 left-1/2 -translate-x-1/2 px-5 py-2 rounded-full text-sm text-white flex items-center gap-3"
 					style={{
 						background: "rgba(0,0,0,0.75)",
-						pointerEvents: "none",
+						pointerEvents: "auto",
 						backdropFilter: "blur(8px)",
 						userSelect: "none",
 						whiteSpace: "nowrap",
 					}}
 				>
-					拖拽选择截图区域 · Esc 取消
+					<span>拖拽选择截图区域</span>
+					<button
+						type="button"
+						onClick={handleCancel}
+						className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 transition-colors"
+					>
+						取消
+					</button>
 				</div>
 			)}
 		</div>

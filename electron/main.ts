@@ -1,6 +1,7 @@
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	BrowserWindow,
 	app,
@@ -12,76 +13,99 @@ import {
 	nativeImage,
 	screen,
 	session,
+	shell,
 	systemPreferences,
 	Tray,
 	Menu,
+	type Display,
 } from "electron";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.join(__dirname, "..");
 const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
 const RENDERER_DIST = path.join(APP_ROOT, "dist");
+const execFileAsync = promisify(execFile);
 
 process.env.APP_ROOT = APP_ROOT;
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 	? path.join(APP_ROOT, "public")
 	: RENDERER_DIST;
 
-// Menu bar removed — tray-only app
-Menu.setApplicationMenu(null);
-
-// ── Window references ────────────────────────────────────────────────────────
+type CapturePhase =
+	| "idle"
+	| "preparing-region"
+	| "selecting-region"
+	| "opening-preview";
 
 let regionSelectorWindow: BrowserWindow | null = null;
+let regionSelectorReady = false;
+let regionSelectorLoadPromise: Promise<void> | null = null;
 let screenshotPreviewWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
-
-// ── Cursor helpers (macOS) ────────────────────────────────────────────────────
-
-let savedCursorPos: { x: number; y: number } | null = null;
-
-function hideCursorForCapture() {
-	if (process.platform !== "darwin") return;
-	savedCursorPos = screen.getCursorScreenPoint();
-	try {
-		execSync(
-			`osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); $.CGWarpMouseCursorPosition($.CGPointMake(99999, 99999))'`,
-			{ timeout: 2000 },
-		);
-	} catch {}
-}
-
-function restoreCursor() {
-	if (process.platform !== "darwin" || !savedCursorPos) return;
-	try {
-		execSync(
-			`osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); $.CGWarpMouseCursorPosition($.CGPointMake(${savedCursorPos.x}, ${savedCursorPos.y}))'`,
-			{ timeout: 2000 },
-		);
-	} catch {}
-	savedCursorPos = null;
-}
-
-// ── Screenshot data ──────────────────────────────────────────────────────────
-
-let screenshotFullData: string | null = null;
 let screenshotCroppedData: string | null = null;
+let capturePhase: CapturePhase = "idle";
+let nextCaptureSessionId = 0;
+let activeCaptureSessionId: number | null = null;
+let pendingPreviewSessionId: number | null = null;
+let activeCaptureDisplay: Display | null = null;
 
-// ── Window creators ──────────────────────────────────────────────────────────
-
-function loadWindow(win: BrowserWindow, windowType: string) {
+function loadWindow(
+	win: BrowserWindow,
+	windowType: string,
+	query: Record<string, string> = {},
+) {
 	if (VITE_DEV_SERVER_URL) {
-		win.loadURL(`${VITE_DEV_SERVER_URL}?windowType=${windowType}`);
+		const url = new URL(VITE_DEV_SERVER_URL);
+		url.searchParams.set("windowType", windowType);
+		for (const [key, value] of Object.entries(query)) {
+			url.searchParams.set(key, value);
+		}
+		win.loadURL(url.toString());
 	} else {
 		win.loadFile(path.join(RENDERER_DIST, "index.html"), {
-			query: { windowType },
+			query: { windowType, ...query },
 		});
 	}
 }
 
-function createRegionSelectorWindow(): BrowserWindow {
-	const { bounds } = screen.getPrimaryDisplay();
-	const win = new BrowserWindow({
+function waitForWindowLoad(win: BrowserWindow): Promise<void> {
+	const { webContents } = win;
+	if (!webContents.isLoadingMainFrame() && webContents.getURL()) {
+		return Promise.resolve();
+	}
+
+	return new Promise((resolve) => {
+		const cleanup = () => {
+			webContents.removeListener("did-finish-load", handleLoad);
+		};
+		const handleLoad = () => {
+			cleanup();
+			resolve();
+		};
+
+		webContents.once("did-finish-load", handleLoad);
+	});
+}
+
+function syncRegionSelectorBounds(display = activeCaptureDisplay) {
+	if (!regionSelectorWindow || regionSelectorWindow.isDestroyed()) return;
+	const { bounds } = display ?? screen.getPrimaryDisplay();
+	regionSelectorWindow.setBounds(bounds);
+}
+
+async function ensureRegionSelector() {
+	if (regionSelectorWindow && !regionSelectorWindow.isDestroyed()) {
+		syncRegionSelectorBounds();
+		if (regionSelectorReady) return;
+		if (regionSelectorLoadPromise) {
+			await regionSelectorLoadPromise;
+		}
+		return;
+	}
+
+	const initialDisplay = activeCaptureDisplay ?? screen.getPrimaryDisplay();
+	const { bounds } = initialDisplay;
+	regionSelectorWindow = new BrowserWindow({
 		x: bounds.x,
 		y: bounds.y,
 		width: bounds.width,
@@ -100,14 +124,36 @@ function createRegionSelectorWindow(): BrowserWindow {
 			contextIsolation: true,
 		},
 	});
-	win.setAlwaysOnTop(true, "screen-saver");
-	win.setVisibleOnAllWorkspaces(true);
-	loadWindow(win, "screenshot-region");
-	return win;
+
+	regionSelectorWindow.setAlwaysOnTop(true, "screen-saver");
+	regionSelectorWindow.setVisibleOnAllWorkspaces(true);
+	loadWindow(regionSelectorWindow, "screenshot-region");
+
+	regionSelectorReady = false;
+	regionSelectorLoadPromise = waitForWindowLoad(regionSelectorWindow).then(() => {
+		regionSelectorReady = true;
+	});
+	regionSelectorWindow.webContents.on("did-start-loading", () => {
+		regionSelectorReady = false;
+		regionSelectorLoadPromise = waitForWindowLoad(regionSelectorWindow!).then(() => {
+			regionSelectorReady = true;
+		});
+	});
+
+	regionSelectorWindow.on("closed", () => {
+		regionSelectorWindow = null;
+		regionSelectorReady = false;
+		regionSelectorLoadPromise = null;
+	});
+
+	await regionSelectorLoadPromise;
 }
 
-function createScreenshotPreviewWindow(): BrowserWindow {
-	const { workArea } = screen.getPrimaryDisplay();
+function createPreviewWindow(
+	sessionId: number,
+	display: Display | null,
+): BrowserWindow {
+	const { workArea } = display ?? screen.getPrimaryDisplay();
 	const W = 960,
 		H = 720;
 	const win = new BrowserWindow({
@@ -115,8 +161,7 @@ function createScreenshotPreviewWindow(): BrowserWindow {
 		height: H,
 		x: Math.round(workArea.x + (workArea.width - W) / 2),
 		y: Math.round(workArea.y + (workArea.height - H) / 2),
-		frame: true,
-		titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+		frame: false,
 		title: "QuickShot",
 		resizable: true,
 		show: false,
@@ -126,27 +171,151 @@ function createScreenshotPreviewWindow(): BrowserWindow {
 			contextIsolation: true,
 		},
 	});
-	loadWindow(win, "screenshot-preview");
+	loadWindow(win, "screenshot-preview", { sessionId: String(sessionId) });
 	return win;
 }
 
-// ── Tray ─────────────────────────────────────────────────────────────────────
+function getCaptureDisplay(): Display {
+	const cursorPoint = screen.getCursorScreenPoint();
+	return screen.getDisplayNearestPoint(cursorPoint);
+}
 
-function getTrayIcon() {
-	return nativeImage
-		.createFromPath(path.join(process.env.VITE_PUBLIC || RENDERER_DIST, "icon.png"))
-		.resize({ width: 18, height: 18, quality: "best" });
+function getDisplayCaptureBounds(display: Display): string {
+	const { x, y, width, height } = display.bounds;
+	return `${x},${y},${width},${height}`;
+}
+
+async function captureDisplayWithScreencapture(
+	display: Display,
+): Promise<string | null> {
+	const filePath = path.join(
+		app.getPath("temp"),
+		`quickshot-capture-${Date.now()}-${Math.random().toString(36).slice(2)}.png`,
+	);
+
+	try {
+		await execFileAsync("/usr/sbin/screencapture", [
+			"-x",
+			"-t",
+			"png",
+			"-R",
+			getDisplayCaptureBounds(display),
+			filePath,
+		]);
+		const fs = await import("node:fs/promises");
+		const buffer = await fs.readFile(filePath);
+		return `data:image/png;base64,${buffer.toString("base64")}`;
+	} catch {
+		return null;
+	} finally {
+		try {
+			const fs = await import("node:fs/promises");
+			await fs.unlink(filePath);
+		} catch {}
+	}
+}
+
+async function captureInteractiveSelectionWithScreencapture(): Promise<string | null> {
+	const filePath = path.join(
+		app.getPath("temp"),
+		`quickshot-selection-${Date.now()}-${Math.random().toString(36).slice(2)}.png`,
+	);
+
+	try {
+		await execFileAsync("/usr/sbin/screencapture", [
+			"-i",
+			"-s",
+			"-x",
+			"-t",
+			"png",
+			filePath,
+		]);
+		const fs = await import("node:fs/promises");
+		const buffer = await fs.readFile(filePath);
+		return `data:image/png;base64,${buffer.toString("base64")}`;
+	} catch {
+		return null;
+	} finally {
+		try {
+			const fs = await import("node:fs/promises");
+			await fs.unlink(filePath);
+		} catch {}
+	}
+}
+
+async function captureDisplayWithDesktopCapturer(
+	display: Display,
+): Promise<string | null> {
+	const sf = display.scaleFactor || 2;
+	const sources = await desktopCapturer.getSources({
+		types: ["screen"],
+		thumbnailSize: {
+			width: display.size.width * sf,
+			height: display.size.height * sf,
+		},
+	});
+	if (!sources.length) {
+		return null;
+	}
+
+	const matchingSource =
+		sources.find((source) => source.display_id === String(display.id)) ??
+		sources[0];
+	return matchingSource.thumbnail.toDataURL();
+}
+
+async function captureDisplayImage(display: Display): Promise<string | null> {
+	if (process.platform === "darwin") {
+		const nativeCapture = await captureDisplayWithScreencapture(display);
+		if (nativeCapture) {
+			return nativeCapture;
+		}
+	}
+
+	return captureDisplayWithDesktopCapturer(display);
+}
+
+function openPreviewForImage(imageData: string) {
+	const sessionId = ++nextCaptureSessionId;
+	activeCaptureSessionId = sessionId;
+	screenshotCroppedData = imageData;
+	capturePhase = "opening-preview";
+	pendingPreviewSessionId = sessionId;
+
+	screenshotPreviewWindow = createPreviewWindow(sessionId, activeCaptureDisplay);
+	const previewWindow = screenshotPreviewWindow;
+	previewWindow.on("closed", () => {
+		if (screenshotPreviewWindow === previewWindow) {
+			screenshotPreviewWindow = null;
+		}
+		if (pendingPreviewSessionId === sessionId) {
+			pendingPreviewSessionId = null;
+			activeCaptureSessionId = null;
+			activeCaptureDisplay = null;
+			capturePhase = "idle";
+		}
+	});
+	previewWindow.webContents.once("did-finish-load", () => {
+		if (previewWindow.isDestroyed()) return;
+		previewWindow.webContents.send("preview-session", {
+			sessionId,
+			imageData,
+		});
+	});
 }
 
 function createTray() {
-	tray = new Tray(getTrayIcon());
-	tray.setToolTip("QuickShot — ⌘+Shift+X");
+	const icon = nativeImage
+		.createFromPath(
+			path.join(process.env.VITE_PUBLIC || RENDERER_DIST, "icon.png"),
+		)
+		.resize({ width: 18, height: 18, quality: "best" });
+
+	tray = new Tray(icon);
+	tray.setToolTip("QuickShot · ⌘+Shift+X");
 	tray.setContextMenu(
 		Menu.buildFromTemplate([
-			{
-				label: "Take Screenshot (⌘⇧X)",
-				click: () => triggerScreenshot(),
-			},
+			{ label: "Take Screenshot (⌘⇧X)", click: () => triggerScreenshot() },
 			{ type: "separator" },
 			{ label: "Quit", click: () => app.quit() },
 		]),
@@ -154,119 +323,165 @@ function createTray() {
 	tray.on("click", () => triggerScreenshot());
 }
 
-// ── Screenshot flow ──────────────────────────────────────────────────────────
-
-async function triggerScreenshot() {
-	if (regionSelectorWindow && !regionSelectorWindow.isDestroyed()) {
-		regionSelectorWindow.focus();
-		return;
-	}
-
-	// Hide cursor before any capture
-	hideCursorForCapture();
-
-	// Pre-capture via desktopCapturer as fallback (no cursor in thumbnails)
-	try {
-		const display = screen.getPrimaryDisplay();
-		const sf = display.scaleFactor || 2;
-		const sources = await desktopCapturer.getSources({
-			types: ["screen"],
-			thumbnailSize: {
-				width: display.size.width * sf,
-				height: display.size.height * sf,
-			},
+function showScreenCapturePermissionDialog() {
+	dialog
+		.showMessageBox({
+			type: "warning",
+			title: "QuickShot",
+			message: "需要「屏幕录制」权限才能截图",
+			detail:
+				"请在 系统设置 → 隐私与安全性 → 屏幕录制 中允许此应用，然后完全退出并重新打开。",
+			buttons: ["打开设置", "取消"],
+			defaultId: 0,
+		})
+		.then((r) => {
+			if (r.response === 0) {
+				shell.openExternal(
+					"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+				);
+			}
 		});
-		if (!sources.length) {
-			restoreCursor();
-			return;
-		}
-		screenshotFullData = sources[0].thumbnail.toDataURL();
-	} catch {
-		restoreCursor();
-		return;
-	}
-
-	regionSelectorWindow = createRegionSelectorWindow();
-	regionSelectorWindow.on("closed", () => {
-		regionSelectorWindow = null;
-		restoreCursor(); // safety net
-	});
 }
 
-// ── IPC handlers ─────────────────────────────────────────────────────────────
+async function triggerScreenshot() {
+	if (capturePhase !== "idle") return;
+
+	if (process.platform === "darwin") {
+		const screenStatus = systemPreferences.getMediaAccessStatus("screen");
+		if (screenStatus !== "granted") {
+			showScreenCapturePermissionDialog();
+			return;
+		}
+	}
+
+	capturePhase = "preparing-region";
+	screenshotCroppedData = null;
+	screenshotPreviewWindow?.close();
+
+	try {
+		if (process.platform === "darwin") {
+			const imageData = await captureInteractiveSelectionWithScreencapture();
+			if (!imageData) {
+				capturePhase = "idle";
+				return;
+			}
+
+			activeCaptureDisplay = getCaptureDisplay();
+			openPreviewForImage(imageData);
+			return;
+		}
+
+		activeCaptureDisplay = getCaptureDisplay();
+		await ensureRegionSelector();
+		if (!regionSelectorWindow || !regionSelectorReady) {
+			capturePhase = "idle";
+			return;
+		}
+
+		syncRegionSelectorBounds(activeCaptureDisplay);
+
+		const imageData = await captureDisplayImage(activeCaptureDisplay);
+		if (!imageData) {
+			capturePhase = "idle";
+			return;
+		}
+
+		const sessionId = ++nextCaptureSessionId;
+		activeCaptureSessionId = sessionId;
+		regionSelectorWindow.webContents.send("capture-session", {
+			sessionId,
+			imageData,
+		});
+	} catch {
+		activeCaptureSessionId = null;
+		activeCaptureDisplay = null;
+		capturePhase = "idle";
+		return;
+	}
+}
+
+function hideRegionSelector() {
+	if (regionSelectorWindow?.isVisible()) {
+		regionSelectorWindow.hide();
+	}
+	try {
+		globalShortcut.unregister("Escape");
+	} catch {}
+}
+
+function cancelActiveCapture() {
+	hideRegionSelector();
+	activeCaptureSessionId = null;
+	pendingPreviewSessionId = null;
+	activeCaptureDisplay = null;
+	capturePhase = "idle";
+}
 
 function registerIpcHandlers() {
-	ipcMain.handle("get-screen-capture", () => {
-		return screenshotFullData
-			? { success: true, imageData: screenshotFullData }
-			: { success: false };
-	});
-
-	ipcMain.handle("get-primary-screen-source-id", async () => {
-		try {
-			const sources = await desktopCapturer.getSources({
-				types: ["screen"],
-				thumbnailSize: { width: 1, height: 1 },
-			});
-			return sources.length
-				? { success: true, sourceId: sources[0].id }
-				: { success: false };
-		} catch (err) {
-			return { success: false, error: String(err) };
+	ipcMain.handle("region-selector-ready", (_, sessionId: number) => {
+		if (
+			!regionSelectorWindow ||
+			sessionId !== activeCaptureSessionId ||
+			capturePhase !== "preparing-region"
+		) {
+			return { success: false };
 		}
-	});
 
-	ipcMain.handle("get-screen-capture-fallback", async (_, sourceId: string) => {
-		try {
-			const display = screen.getPrimaryDisplay();
-			const sf = display.scaleFactor || 2;
-			const sources = await desktopCapturer.getSources({
-				types: ["screen"],
-				thumbnailSize: {
-					width: display.size.width * sf,
-					height: display.size.height * sf,
-				},
-			});
-			const source = sources.find((s) => s.id === sourceId) ?? sources[0];
-			if (!source) return { success: false };
-			return { success: true, imageData: source.thumbnail.toDataURL() };
-		} catch (err) {
-			return { success: false, error: String(err) };
+		regionSelectorWindow.showInactive();
+		if (!globalShortcut.isRegistered("Escape")) {
+			globalShortcut.register("Escape", cancelActiveCapture);
 		}
-	});
-
-	ipcMain.handle("show-region-selector", () => {
-		restoreCursor();
-		regionSelectorWindow?.show();
+		capturePhase = "selecting-region";
 		return { success: true };
 	});
 
-	ipcMain.handle("screenshot-region-selected", (_, croppedImageData: string) => {
-		screenshotCroppedData = croppedImageData;
-		regionSelectorWindow?.close();
-		screenshotPreviewWindow = createScreenshotPreviewWindow();
-		screenshotPreviewWindow.on("closed", () => {
-			screenshotPreviewWindow = null;
-		});
-		// Ensure preview window is visible and focused after dock.hide()
-		screenshotPreviewWindow.once("ready-to-show", () => {
-			screenshotPreviewWindow?.show();
-			screenshotPreviewWindow?.moveTop();
-			screenshotPreviewWindow?.focus();
-		});
+	ipcMain.handle("cancel-capture-session", (_, sessionId: number) => {
+		if (sessionId !== activeCaptureSessionId) {
+			return { success: false };
+		}
+
+		cancelActiveCapture();
 		return { success: true };
 	});
 
-	ipcMain.handle("get-screenshot-data", () => {
-		return screenshotCroppedData
-			? { success: true, imageData: screenshotCroppedData }
-			: { success: false };
+	ipcMain.handle(
+		"screenshot-region-selected",
+		(
+			_,
+			payload: { sessionId: number; croppedImageData: string },
+		) => {
+			if (payload.sessionId !== activeCaptureSessionId) {
+				return { success: false, error: "stale capture session" };
+			}
+
+			const { sessionId, croppedImageData } = payload;
+			hideRegionSelector();
+			openPreviewForImage(croppedImageData);
+			return { success: true };
+		},
+	);
+
+	ipcMain.handle("preview-session-ready", (_, sessionId: number) => {
+		if (
+			!screenshotPreviewWindow ||
+			sessionId !== pendingPreviewSessionId ||
+			capturePhase !== "opening-preview"
+		) {
+			return { success: false };
+		}
+
+		screenshotPreviewWindow.show();
+		screenshotPreviewWindow.focus();
+		pendingPreviewSessionId = null;
+		activeCaptureSessionId = null;
+		activeCaptureDisplay = null;
+		capturePhase = "idle";
+		return { success: true };
 	});
 
 	ipcMain.handle("save-screenshot-final", async (_, pngData: ArrayBuffer) => {
 		try {
-			const now = new Date();
-			const stamp = now
+			const stamp = new Date()
 				.toISOString()
 				.replace(/[:.]/g, "-")
 				.replace("T", "_")
@@ -308,7 +523,6 @@ function registerIpcHandlers() {
 
 	ipcMain.handle("get-asset-base-path", () => {
 		try {
-			const { pathToFileURL } = require("node:url");
 			if (app.isPackaged) {
 				const p = path.join(process.resourcesPath, "assets");
 				return pathToFileURL(`${p}${path.sep}`).toString();
@@ -321,48 +535,39 @@ function registerIpcHandlers() {
 	});
 }
 
-// ── App lifecycle ────────────────────────────────────────────────────────────
-
 app.whenReady().then(async () => {
-	// Media permissions for screen capture
-	session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
-		return ["media", "videoCapture", "camera"].includes(permission);
-	});
-	session.defaultSession.setPermissionRequestHandler(
-		(_wc, permission, callback) => {
-			callback(["media", "videoCapture", "camera"].includes(permission));
-		},
+	if (process.platform === "darwin") {
+		app.setActivationPolicy("accessory");
+	}
+
+	Menu.setApplicationMenu(Menu.buildFromTemplate([]));
+
+	session.defaultSession.setPermissionCheckHandler((_wc, perm) =>
+		["media", "videoCapture", "camera"].includes(perm),
 	);
-
-	if (process.platform === "darwin") {
-		const status = systemPreferences.getMediaAccessStatus("screen");
-		if (status !== "granted") {
-			// Screen recording permission prompt handled by OS on first capture
-		}
-	}
-
-	// Hide dock — must be before any window creation
-	if (process.platform === "darwin") {
-		app.dock?.hide();
-	}
+	session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) =>
+		cb(["media", "videoCapture", "camera"].includes(perm)),
+	);
 
 	registerIpcHandlers();
 	createTray();
 
-	// Global shortcut
-	globalShortcut.register("CmdOrCtrl+Shift+X", () => {
-		triggerScreenshot();
-	});
+	if (process.platform !== "darwin") {
+		await ensureRegionSelector();
+	}
+
+	const shortcutRegistered = globalShortcut.register("CmdOrCtrl+Shift+X", () =>
+		triggerScreenshot(),
+	);
+	if (!shortcutRegistered) {
+		tray?.setToolTip("QuickShot · 快捷键注册失败，请用托盘点击截图");
+	}
 });
 
-app.on("will-quit", () => {
-	globalShortcut.unregisterAll();
-});
-
+app.on("will-quit", () => globalShortcut.unregisterAll());
 app.on("window-all-closed", () => {
-	// Keep running — tray-based app
+	/* tray app */
 });
-
 app.on("activate", () => {
-	// No-op: screenshots triggered via shortcut or tray
+	/* no-op */
 });

@@ -9,25 +9,19 @@ declare namespace NodeJS {
 
 interface Window {
 	electronAPI: {
-		getScreenCapture: () => Promise<{ success: boolean; imageData?: string }>;
-		getPrimaryScreenSourceId: () => Promise<{
-			success: boolean;
-			sourceId?: string;
-			error?: string;
-		}>;
-		getScreenCaptureFallback: (sourceId: string) => Promise<{
-			success: boolean;
-			imageData?: string;
-			error?: string;
-		}>;
-		showRegionSelector: () => Promise<{ success: boolean }>;
-		screenshotRegionSelected: (
-			croppedImageData: string,
-		) => Promise<{ success: boolean; error?: string }>;
-		getScreenshotData: () => Promise<{
-			success: boolean;
-			imageData?: string;
-		}>;
+		regionSelectorReady: (
+			sessionId: number,
+		) => Promise<{ success: boolean }>;
+		cancelCaptureSession: (
+			sessionId: number,
+		) => Promise<{ success: boolean }>;
+		screenshotRegionSelected: (payload: {
+			sessionId: number;
+			croppedImageData: string;
+		}) => Promise<{ success: boolean; error?: string }>;
+		previewSessionReady: (
+			sessionId: number,
+		) => Promise<{ success: boolean }>;
 		saveScreenshotFinal: (
 			pngData: ArrayBuffer,
 		) => Promise<{
@@ -40,5 +34,11 @@ interface Window {
 			pngData: Uint8Array,
 		) => Promise<{ success: boolean; error?: string }>;
 		getAssetBasePath: () => Promise<string | null>;
+		onCaptureSession: (
+			callback: (payload: { sessionId: number; imageData: string }) => void,
+		) => () => void;
+		onPreviewSession: (
+			callback: (payload: { sessionId: number; imageData: string }) => void,
+		) => () => void;
 	};
 }

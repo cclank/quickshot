@@ -1,18 +1,43 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("electronAPI", {
-	getScreenCapture: () => ipcRenderer.invoke("get-screen-capture"),
-	getPrimaryScreenSourceId: () =>
-		ipcRenderer.invoke("get-primary-screen-source-id"),
-	getScreenCaptureFallback: (sourceId: string) =>
-		ipcRenderer.invoke("get-screen-capture-fallback", sourceId),
-	showRegionSelector: () => ipcRenderer.invoke("show-region-selector"),
-	screenshotRegionSelected: (croppedImageData: string) =>
-		ipcRenderer.invoke("screenshot-region-selected", croppedImageData),
-	getScreenshotData: () => ipcRenderer.invoke("get-screenshot-data"),
+	regionSelectorReady: (sessionId: number) =>
+		ipcRenderer.invoke("region-selector-ready", sessionId),
+	cancelCaptureSession: (sessionId: number) =>
+		ipcRenderer.invoke("cancel-capture-session", sessionId),
+	screenshotRegionSelected: (payload: {
+		sessionId: number;
+		croppedImageData: string;
+	}) => ipcRenderer.invoke("screenshot-region-selected", payload),
+	previewSessionReady: (sessionId: number) =>
+		ipcRenderer.invoke("preview-session-ready", sessionId),
 	saveScreenshotFinal: (pngData: ArrayBuffer) =>
 		ipcRenderer.invoke("save-screenshot-final", pngData),
 	copyToClipboard: (pngData: Uint8Array) =>
 		ipcRenderer.invoke("copy-to-clipboard", pngData),
 	getAssetBasePath: () => ipcRenderer.invoke("get-asset-base-path"),
+	onCaptureSession: (
+		callback: (payload: { sessionId: number; imageData: string }) => void,
+	) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			payload: { sessionId: number; imageData: string },
+		) => callback(payload);
+		ipcRenderer.on("capture-session", listener);
+		return () => {
+			ipcRenderer.removeListener("capture-session", listener);
+		};
+	},
+	onPreviewSession: (
+		callback: (payload: { sessionId: number; imageData: string }) => void,
+	) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			payload: { sessionId: number; imageData: string },
+		) => callback(payload);
+		ipcRenderer.on("preview-session", listener);
+		return () => {
+			ipcRenderer.removeListener("preview-session", listener);
+		};
+	},
 });

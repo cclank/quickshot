@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { getAssetPath } from "@/lib/assetPath";
+import { decodeImageData } from "@/lib/decodeImage";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -240,13 +242,22 @@ export function ScreenshotPreview() {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const imgRef = useRef<HTMLImageElement>(null);
 
-	// Load pre-cropped screenshot
 	useEffect(() => {
-		window.electronAPI.getScreenshotData().then((result) => {
-			if (result.success && result.imageData) {
-				setScreenshotSrc(result.imageData);
-			}
-		});
+		const handlePreviewSession = async (payload: {
+			sessionId: number;
+			imageData: string;
+		}) => {
+			const image = await decodeImageData(payload.imageData);
+
+			flushSync(() => {
+				setScreenshotSrc(payload.imageData);
+				setNaturalSize({ w: image.naturalWidth, h: image.naturalHeight });
+			});
+
+			await window.electronAPI.previewSessionReady(payload.sessionId);
+		};
+
+		return window.electronAPI.onPreviewSession(handlePreviewSession);
 	}, []);
 
 	// Load wallpaper bg
@@ -478,9 +489,12 @@ export function ScreenshotPreview() {
 	return (
 		<div className="flex flex-col h-screen bg-[#111118] text-white select-none overflow-hidden">
 			{/* ── Toolbar ───────────────────────────────────────────── */}
-			<div className="flex items-center gap-2 pl-[76px] pr-3 py-1.5 bg-[#0a0a10] border-b border-white/[0.08] flex-shrink-0">
+			<div
+				className="flex items-center gap-2 px-3 py-1.5 bg-[#0a0a10] border-b border-white/[0.08] flex-shrink-0"
+				style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+			>
 				{/* Annotation tools */}
-				<div className="flex items-center gap-0.5 pr-2 border-r border-white/10">
+				<div className="flex items-center gap-0.5 pr-2 border-r border-white/10" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
 					{toolBtn("pen", "画笔", "✏️")}
 					{toolBtn("arrow", "箭头", "➤")}
 					{toolBtn("rect", "矩形", "⬜")}
@@ -489,7 +503,7 @@ export function ScreenshotPreview() {
 				</div>
 
 				{/* Color palette */}
-				<div className="flex items-center gap-1 pr-2 border-r border-white/10">
+				<div className="flex items-center gap-1 pr-2 border-r border-white/10" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
 					{PRESET_COLORS.map((c) => (
 						<button
 							key={c}
@@ -510,7 +524,7 @@ export function ScreenshotPreview() {
 				</div>
 
 				{/* Brush size */}
-				<div className="flex items-center gap-1 pr-2 border-r border-white/10">
+				<div className="flex items-center gap-1 pr-2 border-r border-white/10" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
 					{BRUSH_SIZES.map((s, i) => (
 						<button
 							key={s}
@@ -530,6 +544,7 @@ export function ScreenshotPreview() {
 					disabled={ops.length === 0}
 					className="flex items-center justify-center w-8 h-8 rounded-md text-white/60 hover:text-white hover:bg-white/10 disabled:opacity-30 transition-all"
 					title="撤销 (⌘Z)"
+					style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
 				>
 					↩
 				</button>
@@ -537,27 +552,29 @@ export function ScreenshotPreview() {
 				<div className="flex-1" />
 
 				{/* Copy & Save */}
-				<button
-					onClick={handleCopy}
-					className="px-3 py-1.5 rounded-md text-xs font-medium bg-white/10 hover:bg-white/15 transition-all"
-					title="复制到剪贴板"
-				>
-					{copied ? "✓ 已复制" : "复制"}
-				</button>
-				<button
-					onClick={handleSave}
-					className="px-3 py-1.5 rounded-md text-xs font-medium bg-[#34B27B] hover:bg-[#34B27B]/80 transition-all"
-					title="保存 PNG"
-				>
-					{saved ? "✓ 已保存" : "保存"}
-				</button>
-				<button
-					onClick={() => window.close()}
-					className="flex items-center justify-center w-7 h-7 rounded-md text-white/50 hover:text-white hover:bg-white/10 transition-all"
-					title="关闭"
-				>
-					✕
-				</button>
+				<div className="flex items-center gap-2" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+					<button
+						onClick={handleCopy}
+						className="px-3 py-1.5 rounded-md text-xs font-medium bg-white/10 hover:bg-white/15 transition-all"
+						title="复制到剪贴板"
+					>
+						{copied ? "✓ 已复制" : "复制"}
+					</button>
+					<button
+						onClick={handleSave}
+						className="px-3 py-1.5 rounded-md text-xs font-medium bg-[#34B27B] hover:bg-[#34B27B]/80 transition-all"
+						title="保存 PNG"
+					>
+						{saved ? "✓ 已保存" : "保存"}
+					</button>
+					<button
+						onClick={() => window.close()}
+						className="flex items-center justify-center w-7 h-7 rounded-md text-white/50 hover:text-white hover:bg-white/10 transition-all"
+						title="关闭"
+					>
+						✕
+					</button>
+				</div>
 			</div>
 
 			{/* ── Main canvas area ───────────────────────────────────── */}
