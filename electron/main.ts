@@ -153,6 +153,7 @@ function createPreviewWindow(
 	sessionId: number,
 	display: Display | null,
 ): BrowserWindow {
+	const isMac = process.platform === "darwin";
 	const { workArea } = display ?? screen.getPrimaryDisplay();
 	const W = 960,
 		H = 720;
@@ -161,7 +162,8 @@ function createPreviewWindow(
 		height: H,
 		x: Math.round(workArea.x + (workArea.width - W) / 2),
 		y: Math.round(workArea.y + (workArea.height - H) / 2),
-		frame: false,
+		frame: isMac,
+		titleBarStyle: isMac ? "hiddenInset" : "default",
 		title: "QuickShot",
 		resizable: true,
 		show: false,
@@ -343,6 +345,15 @@ function showScreenCapturePermissionDialog() {
 		});
 }
 
+function buildDefaultScreenshotPath() {
+	const stamp = new Date()
+		.toISOString()
+		.replace(/[:.]/g, "-")
+		.replace("T", "_")
+		.slice(0, 19);
+	return path.join(app.getPath("downloads"), `quickshot-${stamp}.png`);
+}
+
 async function triggerScreenshot() {
 	if (capturePhase !== "idle") return;
 
@@ -481,17 +492,9 @@ function registerIpcHandlers() {
 
 	ipcMain.handle("save-screenshot-final", async (_, pngData: ArrayBuffer) => {
 		try {
-			const stamp = new Date()
-				.toISOString()
-				.replace(/[:.]/g, "-")
-				.replace("T", "_")
-				.slice(0, 19);
 			const result = await dialog.showSaveDialog({
 				title: "Save Screenshot",
-				defaultPath: path.join(
-					app.getPath("downloads"),
-					`quickshot-${stamp}.png`,
-				),
+				defaultPath: buildDefaultScreenshotPath(),
 				filters: [{ name: "PNG Image", extensions: ["png"] }],
 				properties: ["createDirectory", "showOverwriteConfirmation"],
 			});
@@ -501,6 +504,17 @@ function registerIpcHandlers() {
 			const fs = await import("node:fs/promises");
 			await fs.writeFile(result.filePath, Buffer.from(pngData));
 			return { success: true, path: result.filePath };
+		} catch (err) {
+			return { success: false, error: String(err) };
+		}
+	});
+
+	ipcMain.handle("quick-save-screenshot-final", async (_, pngData: ArrayBuffer) => {
+		try {
+			const filePath = buildDefaultScreenshotPath();
+			const fs = await import("node:fs/promises");
+			await fs.writeFile(filePath, Buffer.from(pngData));
+			return { success: true, path: filePath };
 		} catch (err) {
 			return { success: false, error: String(err) };
 		}

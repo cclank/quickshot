@@ -30,6 +30,13 @@ interface Window {
 			canceled?: boolean;
 			error?: string;
 		}>;
+		quickSaveScreenshotFinal: (
+			pngData: ArrayBuffer,
+		) => Promise<{
+			success: boolean;
+			path?: string;
+			error?: string;
+		}>;
 		copyToClipboard: (
 			pngData: Uint8Array,
 		) => Promise<{ success: boolean; error?: string }>;

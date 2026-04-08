@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.invoke("preview-session-ready", sessionId),
 	saveScreenshotFinal: (pngData: ArrayBuffer) =>
 		ipcRenderer.invoke("save-screenshot-final", pngData),
+	quickSaveScreenshotFinal: (pngData: ArrayBuffer) =>
+		ipcRenderer.invoke("quick-save-screenshot-final", pngData),
 	copyToClipboard: (pngData: Uint8Array) =>
 		ipcRenderer.invoke("copy-to-clipboard", pngData),
 	getAssetBasePath: () => ipcRenderer.invoke("get-asset-base-path"),
