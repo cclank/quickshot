@@ -48,6 +48,64 @@ let nextCaptureSessionId = 0;
 let activeCaptureSessionId: number | null = null;
 let pendingPreviewSessionId: number | null = null;
 let activeCaptureDisplay: Display | null = null;
+let screenPermissionDialogVisible = false;
+
+function normalizeAssetRelativePath(relativePath: string): string {
+	return relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function getAssetRootCandidates(): string[] {
+	const appPath = app.getAppPath();
+	return [path.join(appPath, "dist"), path.join(appPath, "public")];
+}
+
+function isWithinRoot(root: string, target: string): boolean {
+	const normalizedRoot = path.resolve(root);
+	const normalizedTarget = path.resolve(target);
+	return (
+		normalizedTarget === normalizedRoot ||
+		normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`)
+	);
+}
+
+async function resolveExistingAssetPath(relativePath: string): Promise<string> {
+	const fs = await import("node:fs/promises");
+	const sanitizedPath = normalizeAssetRelativePath(relativePath);
+	if (!sanitizedPath || sanitizedPath.includes("..")) {
+		throw new Error("Invalid asset path");
+	}
+
+	for (const root of getAssetRootCandidates()) {
+		const candidate = path.resolve(root, sanitizedPath);
+		if (!isWithinRoot(root, candidate)) {
+			continue;
+		}
+		try {
+			await fs.access(candidate);
+			return candidate;
+		} catch {
+			// keep trying
+		}
+	}
+
+	throw new Error(`Asset not found: ${sanitizedPath}`);
+}
+
+function getAssetMimeType(filePath: string): string {
+	switch (path.extname(filePath).toLowerCase()) {
+		case ".jpg":
+		case ".jpeg":
+			return "image/jpeg";
+		case ".png":
+			return "image/png";
+		case ".webp":
+			return "image/webp";
+		case ".svg":
+			return "image/svg+xml";
+		default:
+			return "application/octet-stream";
+	}
+}
 
 function loadWindow(
 	win: BrowserWindow,
@@ -326,6 +384,8 @@ function createTray() {
 }
 
 function showScreenCapturePermissionDialog() {
+	if (screenPermissionDialogVisible) return;
+	screenPermissionDialogVisible = true;
 	dialog
 		.showMessageBox({
 			type: "warning",
@@ -342,6 +402,9 @@ function showScreenCapturePermissionDialog() {
 					"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
 				);
 			}
+		})
+		.finally(() => {
+			screenPermissionDialogVisible = false;
 		});
 }
 
@@ -357,14 +420,6 @@ function buildDefaultScreenshotPath() {
 async function triggerScreenshot() {
 	if (capturePhase !== "idle") return;
 
-	if (process.platform === "darwin") {
-		const screenStatus = systemPreferences.getMediaAccessStatus("screen");
-		if (screenStatus !== "granted") {
-			showScreenCapturePermissionDialog();
-			return;
-		}
-	}
-
 	capturePhase = "preparing-region";
 	screenshotCroppedData = null;
 	screenshotPreviewWindow?.close();
@@ -373,7 +428,11 @@ async function triggerScreenshot() {
 		if (process.platform === "darwin") {
 			const imageData = await captureInteractiveSelectionWithScreencapture();
 			if (!imageData) {
+				const screenStatus = systemPreferences.getMediaAccessStatus("screen");
 				capturePhase = "idle";
+				if (screenStatus !== "granted") {
+					showScreenCapturePermissionDialog();
+				}
 				return;
 			}
 
@@ -535,13 +594,20 @@ function registerIpcHandlers() {
 		},
 	);
 
+	ipcMain.handle("read-asset-data-url", async (_, relativePath: string) => {
+		try {
+			const fs = await import("node:fs/promises");
+			const assetPath = await resolveExistingAssetPath(relativePath);
+			const fileBuffer = await fs.readFile(assetPath);
+			return `data:${getAssetMimeType(assetPath)};base64,${fileBuffer.toString("base64")}`;
+		} catch {
+			return null;
+		}
+	});
+
 	ipcMain.handle("get-asset-base-path", () => {
 		try {
-			if (app.isPackaged) {
-				const p = path.join(process.resourcesPath, "assets");
-				return pathToFileURL(`${p}${path.sep}`).toString();
-			}
-			const p = path.join(app.getAppPath(), "public");
+			const p = path.join(app.getAppPath(), "dist");
 			return pathToFileURL(`${p}${path.sep}`).toString();
 		} catch {
 			return null;

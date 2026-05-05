@@ -13,7 +13,7 @@ type DrawOp =
 	| { type: "arrow"; from: [number, number]; to: [number, number]; color: string; width: number }
 	| { type: "rect"; x: number; y: number; w: number; h: number; color: string; width: number }
 	| { type: "text"; x: number; y: number; text: string; color: string; size: number }
-	| { type: "mosaic"; cells: [number, number][]; blockSize: number };
+	| { type: "mosaic"; x: number; y: number; w: number; h: number; blockSize: number };
 
 type BgType =
 	| { kind: "wallpaper"; value: string }
@@ -30,9 +30,14 @@ type ActionToast = {
 	detail?: string;
 };
 
+type WatermarkPalette = {
+	fill: string;
+	outline: string;
+};
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const WALLPAPER_COUNT = 18;
+const WALLPAPER_COUNT = 12;
 const WALLPAPERS = Array.from(
 	{ length: WALLPAPER_COUNT },
 	(_, i) => `wallpapers/wallpaper${i + 1}.jpg`,
@@ -94,6 +99,20 @@ const BRUSH_SIZES = [2, 4, 8];
 const PADDING = 48; // background padding around screenshot in export
 const IS_MAC = navigator.userAgent.includes("Mac");
 const CHROME_STYLE_STORAGE_KEY = "quickshot.chrome-style";
+const WATERMARK_TEXT_STORAGE_KEY = "quickshot.watermark-text";
+const WATERMARK_ENABLED_STORAGE_KEY = "quickshot.watermark-enabled";
+const WATERMARK_OPACITY_STORAGE_KEY = "quickshot.watermark-opacity";
+const WATERMARK_COLOR_STORAGE_KEY = "quickshot.watermark-color";
+const AUTO_WATERMARK_COLOR = "auto";
+const DEFAULT_WATERMARK_OPACITY = 22;
+const DEFAULT_WATERMARK_COLOR = AUTO_WATERMARK_COLOR;
+const WATERMARK_PRESET_COLORS = [
+	"#FFFFFF",
+	"#D1D5DB",
+	"#6B7280",
+	"#1F2937",
+	"#0F172A",
+];
 const EXPORT_OUTER_PADDING = PADDING + 12;
 const EXPORT_FRAME_INSET = 18;
 const EXPORT_TOP_BAR_HEIGHT = 38;
@@ -368,7 +387,10 @@ function drawArrow(
 
 function applyMosaic(
 	ctx: CanvasRenderingContext2D,
-	cells: [number, number][],
+	x: number,
+	y: number,
+	w: number,
+	h: number,
 	blockSize: number,
 	srcImg: HTMLImageElement,
 	scale: number,
@@ -381,23 +403,42 @@ function applyMosaic(
 	tc.drawImage(srcImg, 0, 0);
 
 	const tile = Math.max(8, Math.round(blockSize));
-	const brushR = Math.round(20 / scale);
+	const rectX = w >= 0 ? x : x + w;
+	const rectY = h >= 0 ? y : y + h;
+	const rectW = Math.abs(w);
+	const rectH = Math.abs(h);
+	const minPreviewSize = tile * 2;
+	const previewX = rectW < 2 ? rectX - minPreviewSize / 2 : rectX;
+	const previewY = rectH < 2 ? rectY - minPreviewSize / 2 : rectY;
+	const previewW = rectW < 2 ? minPreviewSize : rectW;
+	const previewH = rectH < 2 ? minPreviewSize : rectH;
 
-	for (const [cx, cy] of cells) {
-		const imgX = Math.round(cx / scale);
-		const imgY = Math.round(cy / scale);
+	const imgX = Math.max(0, Math.floor(previewX / scale));
+	const imgY = Math.max(0, Math.floor(previewY / scale));
+	const imgRight = Math.min(
+		srcImg.naturalWidth,
+		Math.ceil((previewX + previewW) / scale),
+	);
+	const imgBottom = Math.min(
+		srcImg.naturalHeight,
+		Math.ceil((previewY + previewH) / scale),
+	);
 
-		for (let bx = imgX - brushR; bx < imgX + brushR; bx += tile) {
-			for (let by = imgY - brushR; by < imgY + brushR; by += tile) {
-				const sx = Math.max(0, bx);
-				const sy = Math.max(0, by);
-				const sw = Math.min(tile, srcImg.naturalWidth - sx);
-				const sh = Math.min(tile, srcImg.naturalHeight - sy);
-				if (sw <= 0 || sh <= 0) continue;
-				const px = tc.getImageData(sx + Math.floor(sw / 2), sy + Math.floor(sh / 2), 1, 1).data;
-				ctx.fillStyle = `rgb(${px[0]},${px[1]},${px[2]})`;
-				ctx.fillRect(sx * scale, sy * scale, sw * scale, sh * scale);
-			}
+	for (let bx = imgX; bx < imgRight; bx += tile) {
+		for (let by = imgY; by < imgBottom; by += tile) {
+			const sx = Math.max(0, bx);
+			const sy = Math.max(0, by);
+			const sw = Math.min(tile, imgRight - sx);
+			const sh = Math.min(tile, imgBottom - sy);
+			if (sw <= 0 || sh <= 0) continue;
+			const px = tc.getImageData(
+				sx + Math.floor(sw / 2),
+				sy + Math.floor(sh / 2),
+				1,
+				1,
+			).data;
+			ctx.fillStyle = `rgb(${px[0]},${px[1]},${px[2]})`;
+			ctx.fillRect(sx * scale, sy * scale, sw * scale, sh * scale);
 		}
 	}
 }
@@ -438,7 +479,7 @@ function drawOp(
 			ctx.shadowBlur = 0;
 			break;
 		case "mosaic":
-			applyMosaic(ctx, op.cells, op.blockSize, srcImg, scale);
+			applyMosaic(ctx, op.x, op.y, op.w, op.h, op.blockSize, srcImg, scale);
 			break;
 	}
 }
@@ -560,6 +601,286 @@ function getFileName(path?: string) {
 	return path.split(/[\\/]/).pop() || path;
 }
 
+function clamp(value: number, min: number, max: number) {
+	return Math.min(max, Math.max(min, value));
+}
+
+function hexToRgb(color: string) {
+	const normalized = color.trim().replace("#", "");
+	const hex =
+		normalized.length === 3
+			? normalized
+					.split("")
+					.map((part) => `${part}${part}`)
+					.join("")
+			: normalized;
+	if (!/^[0-9a-fA-F]{6}$/.test(hex)) {
+		return null;
+	}
+	const value = Number.parseInt(hex, 16);
+	return {
+		r: (value >> 16) & 255,
+		g: (value >> 8) & 255,
+		b: value & 255,
+	};
+}
+
+function isLightColor(color: string) {
+	const rgb = hexToRgb(color);
+	if (!rgb) return true;
+	const luminance =
+		(0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+	return luminance >= 0.62;
+}
+
+function withAlpha(color: string, alpha: number) {
+	const clampedAlpha = clamp(alpha, 0, 1);
+	const rgb = hexToRgb(color);
+	if (rgb) {
+		return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${clampedAlpha})`;
+	}
+
+	const match = color.match(/rgba?\(([^)]+)\)/i);
+	if (!match) {
+		return color;
+	}
+
+	const [r = "255", g = "255", b = "255"] = match[1]
+		.split(",")
+		.map((part) => part.trim());
+	return `rgba(${r}, ${g}, ${b}, ${clampedAlpha})`;
+}
+
+function getWatermarkOutlineColor(color: string) {
+	return isLightColor(color) ? "rgba(0,0,0,0.46)" : "rgba(255,255,255,0.52)";
+}
+
+function getWatermarkMetrics(imageWidth: number, imageHeight: number) {
+	return {
+		fontSize: clamp(Math.round(imageWidth * 0.024), 16, 30),
+		right: clamp(Math.round(imageWidth * 0.032), 18, 42),
+		bottom: clamp(Math.round(imageHeight * 0.04), 18, 36),
+		maxWidth: Math.round(imageWidth * 0.42),
+	};
+}
+
+function getWatermarkFont(size: number) {
+	return `600 ${size}px "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif`;
+}
+
+function getWatermarkPalette(
+	requestedColor: string,
+	backgroundLuminance: number | null,
+): WatermarkPalette {
+	const fill =
+		requestedColor === AUTO_WATERMARK_COLOR
+			? backgroundLuminance !== null && backgroundLuminance >= 0.58
+				? "#111827"
+				: "#F8FAFC"
+			: requestedColor;
+	return {
+		fill,
+		outline: getWatermarkOutlineColor(fill),
+	};
+}
+
+function truncateTextToWidth(
+	ctx: CanvasRenderingContext2D,
+	text: string,
+	maxWidth: number,
+) {
+	if (ctx.measureText(text).width <= maxWidth) {
+		return text;
+	}
+
+	const ellipsis = "…";
+	let trimmed = text;
+	while (trimmed.length > 1) {
+		trimmed = trimmed.slice(0, -1);
+		if (ctx.measureText(`${trimmed}${ellipsis}`).width <= maxWidth) {
+			return `${trimmed}${ellipsis}`;
+		}
+	}
+
+	return ellipsis;
+}
+
+function getWatermarkLayout(
+	ctx: CanvasRenderingContext2D,
+	text: string,
+	imageX: number,
+	imageY: number,
+	imageWidth: number,
+	imageHeight: number,
+) {
+	const metrics = getWatermarkMetrics(imageWidth, imageHeight);
+	ctx.save();
+	ctx.font = getWatermarkFont(metrics.fontSize);
+	const textToDraw = truncateTextToWidth(ctx, text.trim(), metrics.maxWidth);
+	const measured = ctx.measureText(textToDraw);
+	ctx.restore();
+
+	const ascent = Math.max(
+		metrics.fontSize * 0.78,
+		measured.actualBoundingBoxAscent || 0,
+	);
+	const descent = Math.max(
+		metrics.fontSize * 0.2,
+		measured.actualBoundingBoxDescent || 0,
+	);
+	const textWidth = Math.min(measured.width, metrics.maxWidth);
+	const anchorX = imageX + imageWidth - metrics.right;
+	const anchorY = imageY + imageHeight - metrics.bottom;
+	const sampleInsetX = clamp(Math.round(metrics.fontSize * 0.35), 6, 12);
+	const sampleInsetY = clamp(Math.round(metrics.fontSize * 0.24), 4, 8);
+	const boxWidth = Math.ceil(textWidth) + sampleInsetX * 2;
+	const boxHeight = Math.ceil(ascent + descent) + sampleInsetY * 2;
+	const boxX = anchorX - boxWidth;
+	const boxY = anchorY - ascent - sampleInsetY;
+	return {
+		metrics,
+		text: textToDraw,
+		anchorX,
+		anchorY,
+		boxX,
+		boxY,
+		boxWidth,
+		boxHeight,
+	};
+}
+
+function getAverageLuminance(
+	ctx: CanvasRenderingContext2D,
+	x: number,
+	y: number,
+	width: number,
+	height: number,
+) {
+	const safeX = Math.max(0, Math.floor(x));
+	const safeY = Math.max(0, Math.floor(y));
+	const safeWidth = Math.max(
+		1,
+		Math.min(Math.ceil(width), ctx.canvas.width - safeX),
+	);
+	const safeHeight = Math.max(
+		1,
+		Math.min(Math.ceil(height), ctx.canvas.height - safeY),
+	);
+	try {
+		const data = ctx.getImageData(safeX, safeY, safeWidth, safeHeight).data;
+		let total = 0;
+		let count = 0;
+		for (let i = 0; i < data.length; i += 16) {
+			const alpha = data[i + 3] / 255;
+			if (alpha <= 0) continue;
+			total +=
+				((0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) /
+					255) *
+				alpha;
+			count += 1;
+		}
+		return count > 0 ? total / count : null;
+	} catch {
+		return null;
+	}
+}
+
+function samplePreviewWatermarkLuminance(
+	img: HTMLImageElement,
+	annoCanvas: HTMLCanvasElement | null,
+	text: string,
+) {
+	if (!img.complete || img.naturalWidth === 0) return null;
+	const sampleCanvas = document.createElement("canvas");
+	sampleCanvas.width = img.naturalWidth;
+	sampleCanvas.height = img.naturalHeight;
+	const sampleCtx = sampleCanvas.getContext("2d");
+	if (!sampleCtx) return null;
+	sampleCtx.drawImage(img, 0, 0);
+	if (annoCanvas) {
+		sampleCtx.drawImage(annoCanvas, 0, 0);
+	}
+	const layout = getWatermarkLayout(
+		sampleCtx,
+		text,
+		0,
+		0,
+		img.naturalWidth,
+		img.naturalHeight,
+	);
+	return getAverageLuminance(
+		sampleCtx,
+		layout.boxX,
+		layout.boxY,
+		layout.boxWidth,
+		layout.boxHeight,
+	);
+}
+
+function getWatermarkAlphaSet(opacity: number) {
+	const text = clamp(opacity, 0, 100) / 100;
+	return {
+		text,
+		stroke: clamp(text * 0.82, 0, 0.7),
+	};
+}
+
+function drawWatermarkSignature(
+	ctx: CanvasRenderingContext2D,
+	text: string,
+	imageX: number,
+	imageY: number,
+	imageWidth: number,
+	imageHeight: number,
+	opacity: number,
+	fillColor: string,
+) {
+	const content = text.trim();
+	if (!content) return;
+
+	const layout = getWatermarkLayout(
+		ctx,
+		content,
+		imageX,
+		imageY,
+		imageWidth,
+		imageHeight,
+	);
+	const backgroundLuminance = getAverageLuminance(
+		ctx,
+		layout.boxX,
+		layout.boxY,
+		layout.boxWidth,
+		layout.boxHeight,
+	);
+	const palette = getWatermarkPalette(fillColor, backgroundLuminance);
+	const alphaSet = getWatermarkAlphaSet(opacity);
+
+	ctx.save();
+	ctx.font = getWatermarkFont(layout.metrics.fontSize);
+	ctx.textAlign = "right";
+	ctx.textBaseline = "bottom";
+	ctx.globalAlpha = alphaSet.text;
+	ctx.fillStyle = palette.fill;
+	ctx.strokeStyle = withAlpha(palette.outline, alphaSet.stroke);
+	ctx.lineWidth = clamp(layout.metrics.fontSize * 0.08, 0.9, 1.8);
+	ctx.lineJoin = "round";
+	ctx.miterLimit = 2;
+	ctx.strokeText(
+		layout.text,
+		layout.anchorX,
+		layout.anchorY,
+		layout.metrics.maxWidth,
+	);
+	ctx.fillText(
+		layout.text,
+		layout.anchorX,
+		layout.anchorY,
+		layout.metrics.maxWidth,
+	);
+	ctx.restore();
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function ScreenshotPreview() {
@@ -573,10 +894,36 @@ export function ScreenshotPreview() {
 		}
 		return "glass";
 	});
+	const [watermarkText, setWatermarkText] = useState(() => {
+		if (typeof window === "undefined") return "";
+		return window.localStorage.getItem(WATERMARK_TEXT_STORAGE_KEY) || "";
+	});
+	const [watermarkEnabled, setWatermarkEnabled] = useState(() => {
+		if (typeof window === "undefined") return false;
+		return window.localStorage.getItem(WATERMARK_ENABLED_STORAGE_KEY) === "1";
+	});
+	const [watermarkOpacity, setWatermarkOpacity] = useState(() => {
+		if (typeof window === "undefined") return DEFAULT_WATERMARK_OPACITY;
+		const stored = Number(window.localStorage.getItem(WATERMARK_OPACITY_STORAGE_KEY));
+		return Number.isFinite(stored)
+			? clamp(Math.round(stored), 0, 80)
+			: DEFAULT_WATERMARK_OPACITY;
+	});
+	const [watermarkColor, setWatermarkColor] = useState(() => {
+		if (typeof window === "undefined") return DEFAULT_WATERMARK_COLOR;
+		return (
+			window.localStorage.getItem(WATERMARK_COLOR_STORAGE_KEY) ||
+			DEFAULT_WATERMARK_COLOR
+		);
+	});
+	const [previewWatermarkPalette, setPreviewWatermarkPalette] =
+		useState<WatermarkPalette>(() =>
+			getWatermarkPalette(DEFAULT_WATERMARK_COLOR, null),
+		);
 	const [tool, setTool] = useState<Tool>("pen");
 	const [color, setColor] = useState("#FF3B30");
 	const [brushSize, setBrushSize] = useState(1); // index into BRUSH_SIZES
-	const [bg, setBg] = useState<BgType>({ kind: "wallpaper", value: WALLPAPERS[0] });
+	const [bg, setBg] = useState<BgType>(GRADIENTS[4]);
 	const [bgSrc, setBgSrc] = useState<string>("");
 	const [ops, setOps] = useState<DrawOp[]>([]);
 	const [pendingOp, setPendingOp] = useState<DrawOp | null>(null);
@@ -596,6 +943,9 @@ export function ScreenshotPreview() {
 	const previewChromeTheme = isBorderless ? CHROME_THEMES.glass : chromeTheme;
 	const stageChromeTheme = chromeTheme;
 	const previewIsBorderless = stageChromeTheme.frameless;
+	const watermarkContent = watermarkText.trim();
+	const showWatermark = watermarkEnabled && watermarkContent.length > 0;
+	const watermarkAlphaSet = getWatermarkAlphaSet(watermarkOpacity);
 
 	useEffect(() => {
 		const handlePreviewSession = async (payload: {
@@ -618,6 +968,64 @@ export function ScreenshotPreview() {
 	useEffect(() => {
 		window.localStorage.setItem(CHROME_STYLE_STORAGE_KEY, chromeStyle);
 	}, [chromeStyle]);
+
+	useEffect(() => {
+		window.localStorage.setItem(WATERMARK_TEXT_STORAGE_KEY, watermarkText);
+	}, [watermarkText]);
+
+	useEffect(() => {
+		window.localStorage.setItem(
+			WATERMARK_ENABLED_STORAGE_KEY,
+			watermarkEnabled ? "1" : "0",
+		);
+	}, [watermarkEnabled]);
+
+	useEffect(() => {
+		window.localStorage.setItem(
+			WATERMARK_OPACITY_STORAGE_KEY,
+			String(watermarkOpacity),
+		);
+	}, [watermarkOpacity]);
+
+	useEffect(() => {
+		window.localStorage.setItem(WATERMARK_COLOR_STORAGE_KEY, watermarkColor);
+	}, [watermarkColor]);
+
+	useEffect(() => {
+		if (!showWatermark) {
+			setPreviewWatermarkPalette(getWatermarkPalette(watermarkColor, null));
+			return;
+		}
+
+		if (watermarkColor !== AUTO_WATERMARK_COLOR) {
+			setPreviewWatermarkPalette(getWatermarkPalette(watermarkColor, null));
+			return;
+		}
+
+		const img = imgRef.current;
+		if (!img || !img.complete || img.naturalWidth === 0) {
+			setPreviewWatermarkPalette(getWatermarkPalette(watermarkColor, null));
+			return;
+		}
+
+		const backgroundLuminance = samplePreviewWatermarkLuminance(
+			img,
+			canvasRef.current,
+			watermarkContent,
+		);
+		setPreviewWatermarkPalette(
+			getWatermarkPalette(watermarkColor, backgroundLuminance),
+		);
+	}, [
+		naturalSize.h,
+		naturalSize.w,
+		ops,
+		pendingOp,
+		showWatermark,
+		screenshotSrc,
+		watermarkColor,
+		watermarkContent,
+	]);
 
 	useEffect(
 		() => () => {
@@ -717,7 +1125,14 @@ export function ScreenshotPreview() {
 				setTextInput({ x: pos[0], y: pos[1], value: "" });
 				break;
 			case "mosaic":
-				setPendingOp({ type: "mosaic", cells: [pos], blockSize: 14 });
+				setPendingOp({
+					type: "mosaic",
+					x: pos[0],
+					y: pos[1],
+					w: 0,
+					h: 0,
+					blockSize: 14,
+				});
 				break;
 		}
 	};
@@ -736,7 +1151,7 @@ export function ScreenshotPreview() {
 				setPendingOp({ ...pendingOp, w: pos[0] - pendingOp.x, h: pos[1] - pendingOp.y });
 				break;
 			case "mosaic":
-				setPendingOp({ ...pendingOp, cells: [...pendingOp.cells, pos] });
+				setPendingOp({ ...pendingOp, w: pos[0] - pendingOp.x, h: pos[1] - pendingOp.y });
 				break;
 		}
 	};
@@ -835,6 +1250,18 @@ export function ScreenshotPreview() {
 			ctx.drawImage(img, imageX, imageY);
 			if (annoCanvas) {
 				ctx.drawImage(annoCanvas, imageX, imageY);
+			}
+			if (showWatermark) {
+				drawWatermarkSignature(
+					ctx,
+					watermarkContent,
+					imageX,
+					imageY,
+					img.naturalWidth,
+					img.naturalHeight,
+					watermarkOpacity,
+					watermarkColor,
+				);
 			}
 
 			const blob = await new Promise<Blob | null>((r) => exportCanvas.toBlob(r, "image/png"));
@@ -1020,6 +1447,19 @@ export function ScreenshotPreview() {
 		ctx.fillRect(imageX, imageY, img.naturalWidth, img.naturalHeight);
 		ctx.restore();
 
+		if (showWatermark) {
+			drawWatermarkSignature(
+				ctx,
+				watermarkContent,
+				imageX,
+				imageY,
+				img.naturalWidth,
+				img.naturalHeight,
+				watermarkOpacity,
+				watermarkColor,
+			);
+		}
+
 		if (!isBorderless) {
 			strokeRoundedRect(
 				ctx,
@@ -1064,38 +1504,74 @@ export function ScreenshotPreview() {
 	};
 
 	const handleCopy = async () => {
-		const buf = await getCompositeBuffer();
-		if (!buf) return;
-		const result = await window.electronAPI.copyToClipboard(new Uint8Array(buf));
-		if (result.success) {
-			showActionToast("copy", "success", "已复制到剪贴板", "可以直接粘贴分享");
-			return;
+		try {
+			const buf = await getCompositeBuffer();
+			if (!buf) {
+				showActionToast("copy", "error", "复制失败", "导出图像生成失败");
+				return;
+			}
+			const result = await window.electronAPI.copyToClipboard(new Uint8Array(buf));
+			if (result.success) {
+				showActionToast("copy", "success", "已复制到剪贴板", "可以直接粘贴分享");
+				return;
+			}
+			showActionToast("copy", "error", "复制失败", result.error || "请重试");
+		} catch (error) {
+			showActionToast(
+				"copy",
+				"error",
+				"复制失败",
+				error instanceof Error ? error.message : "导出图像生成失败",
+			);
 		}
-		showActionToast("copy", "error", "复制失败", result.error || "请重试");
 	};
 
 	const handleSave = async () => {
-		const buf = await getCompositeBuffer();
-		if (!buf) return;
-		const result = await window.electronAPI.saveScreenshotFinal(buf);
-		if (result.success) {
-			showActionToast("save", "success", "已保存 PNG", getFileName(result.path));
-			return;
-		}
-		if (!result.canceled) {
-			showActionToast("save", "error", "保存失败", result.error || "请重试");
+		try {
+			const buf = await getCompositeBuffer();
+			if (!buf) {
+				showActionToast("save", "error", "保存失败", "导出图像生成失败");
+				return;
+			}
+			const result = await window.electronAPI.saveScreenshotFinal(buf);
+			if (result.success) {
+				showActionToast("save", "success", "已保存 PNG", getFileName(result.path));
+				return;
+			}
+			if (!result.canceled) {
+				showActionToast("save", "error", "保存失败", result.error || "请重试");
+			}
+		} catch (error) {
+			showActionToast(
+				"save",
+				"error",
+				"保存失败",
+				error instanceof Error ? error.message : "导出图像生成失败",
+			);
 		}
 	};
 
 	const handleQuickSave = async () => {
-		const buf = await getCompositeBuffer();
-		if (!buf) return;
-		const result = await window.electronAPI.quickSaveScreenshotFinal(buf);
-		if (result.success) {
-			showActionToast("quick-save", "success", "已保存到下载目录", getFileName(result.path));
-			return;
+		try {
+			const buf = await getCompositeBuffer();
+			if (!buf) {
+				showActionToast("quick-save", "error", "快速保存失败", "导出图像生成失败");
+				return;
+			}
+			const result = await window.electronAPI.quickSaveScreenshotFinal(buf);
+			if (result.success) {
+				showActionToast("quick-save", "success", "已保存到下载目录", getFileName(result.path));
+				return;
+			}
+			showActionToast("quick-save", "error", "快速保存失败", result.error || "请重试");
+		} catch (error) {
+			showActionToast(
+				"quick-save",
+				"error",
+				"快速保存失败",
+				error instanceof Error ? error.message : "导出图像生成失败",
+			);
 		}
-		showActionToast("quick-save", "error", "快速保存失败", result.error || "请重试");
 	};
 
 	// Background CSS style for preview
@@ -1107,6 +1583,7 @@ export function ScreenshotPreview() {
 				: { backgroundColor: (bg as { kind: "solid"; value: string }).value };
 	const stageImageWidth = naturalSize.w || 800;
 	const stageImageHeight = naturalSize.h || 600;
+	const watermarkMetrics = getWatermarkMetrics(stageImageWidth, stageImageHeight);
 	const previewStageInset = previewIsBorderless ? 0 : EXPORT_FRAME_INSET;
 	const previewTopBarHeight = previewIsBorderless ? 0 : EXPORT_TOP_BAR_HEIGHT;
 	const previewStageWidth = stageImageWidth + previewStageInset * 2;
@@ -1539,6 +2016,32 @@ export function ScreenshotPreview() {
 													}}
 												/>
 											)}
+											{showWatermark && (
+												<div
+													className="pointer-events-none absolute select-none overflow-hidden text-ellipsis whitespace-nowrap"
+													style={{
+														right: watermarkMetrics.right,
+														bottom: watermarkMetrics.bottom,
+														maxWidth: watermarkMetrics.maxWidth,
+														color: withAlpha(
+															previewWatermarkPalette.fill,
+															watermarkAlphaSet.text,
+														),
+														fontSize: watermarkMetrics.fontSize,
+														fontWeight: 600,
+														letterSpacing: "0.01em",
+														fontFamily:
+															'"SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif',
+														WebkitTextStroke: `0.72px ${withAlpha(
+															previewWatermarkPalette.outline,
+															watermarkAlphaSet.stroke,
+														)}`,
+													}}
+													title={watermarkContent}
+												>
+													{watermarkContent}
+												</div>
+											)}
 										</div>
 									</div>
 								</div>
@@ -1554,16 +2057,6 @@ export function ScreenshotPreview() {
 					className="flex items-center gap-3 overflow-x-auto rounded-[24px] border border-white/10 px-4 py-3"
 					style={previewChromeTheme.surface}
 				>
-					<div className="flex items-center gap-2 pr-1">
-						<div className="flex h-8 w-8 items-center justify-center rounded-2xl bg-white/7 text-white/72">
-							✦
-						</div>
-						<div>
-							<div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Backdrop</div>
-							<div className="text-xs text-white/62">导出背景</div>
-						</div>
-					</div>
-					<div className="h-8 w-px shrink-0 bg-white/8" />
 					<div className="flex items-center gap-2 flex-shrink-0">
 						<span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Styles</span>
 						<div className="flex gap-1.5">
@@ -1597,28 +2090,113 @@ export function ScreenshotPreview() {
 					</div>
 					<div className="h-8 w-px shrink-0 bg-white/8" />
 					<div className="flex items-center gap-2 flex-shrink-0">
-						<span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Wallpapers</span>
-						<div className="flex gap-1.5">
-					{WALLPAPERS.slice(0, 12).map((wp) => (
+						<span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Signature</span>
 						<button
-							key={wp}
-							onClick={() => setBg({ kind: "wallpaper", value: wp })}
-							className={`h-9 w-14 rounded-2xl overflow-hidden border transition-all ${
-								bg.kind === "wallpaper" && bg.value === wp
-									? "border-white/60 scale-[1.04]"
-									: "border-white/10 hover:border-white/28"
+							onClick={() => setWatermarkEnabled((prev) => !prev)}
+							className={`rounded-2xl px-3 py-2 text-[11px] font-medium transition-all ${
+								watermarkEnabled
+									? "text-white shadow-[0_10px_24px_rgba(0,0,0,0.2)]"
+									: "text-white/62 hover:text-white"
 							}`}
 							style={{
-								backgroundImage: `url(/${wp})`,
-								backgroundSize: "cover",
-								backgroundPosition: "center",
-								boxShadow:
-									bg.kind === "wallpaper" && bg.value === wp
-										? "0 10px 24px rgba(0,0,0,0.24)"
-										: undefined,
+								...(watermarkEnabled
+									? previewChromeTheme.primaryButton
+									: previewChromeTheme.group),
+								border: "1px solid rgba(255,255,255,0.12)",
 							}}
-						/>
-					))}
+						>
+							{watermarkEnabled ? "已开启" : "已关闭"}
+						</button>
+						<div
+							className="flex items-center gap-3 rounded-2xl px-3 py-2"
+							style={previewChromeTheme.group}
+						>
+							<input
+								type="text"
+								value={watermarkText}
+								onChange={(e) => {
+									const nextValue = e.target.value;
+									setWatermarkText(nextValue);
+									setWatermarkEnabled(nextValue.trim().length > 0);
+								}}
+								placeholder="输入右下角签名"
+								className="h-8 w-[180px] bg-transparent text-sm text-white outline-none placeholder:text-white/28"
+							/>
+							<div className="flex items-center gap-1.5">
+								<button
+									onClick={() => setWatermarkColor(AUTO_WATERMARK_COLOR)}
+									className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] transition-all ${
+										watermarkColor === AUTO_WATERMARK_COLOR
+											? "text-white"
+											: "text-white/56 hover:text-white"
+									}`}
+									style={{
+										background:
+											watermarkColor === AUTO_WATERMARK_COLOR
+												? "linear-gradient(135deg, rgba(255,255,255,0.26), rgba(255,255,255,0.1))"
+												: "rgba(255,255,255,0.08)",
+										border:
+											watermarkColor === AUTO_WATERMARK_COLOR
+												? "1px solid rgba(255,255,255,0.36)"
+												: "1px solid rgba(255,255,255,0.14)",
+										boxShadow:
+											watermarkColor === AUTO_WATERMARK_COLOR
+												? "0 8px 18px rgba(0,0,0,0.16)"
+												: "none",
+									}}
+									title="根据画面自动调节水印明暗"
+								>
+									Auto
+								</button>
+								{WATERMARK_PRESET_COLORS.map((presetColor) => (
+									<button
+										key={presetColor}
+										onClick={() => setWatermarkColor(presetColor)}
+										className="h-6 w-6 rounded-full border transition-transform hover:scale-105"
+										style={{
+											background: presetColor,
+											borderColor:
+												watermarkColor === presetColor
+													? "rgba(255,255,255,0.92)"
+													: "rgba(255,255,255,0.22)",
+											boxShadow:
+												watermarkColor === presetColor
+													? "0 0 0 2px rgba(255,255,255,0.18)"
+													: "inset 0 1px 0 rgba(255,255,255,0.28)",
+										}}
+										title={presetColor}
+									/>
+								))}
+								<input
+									type="color"
+									value={
+										watermarkColor === AUTO_WATERMARK_COLOR
+											? "#FFFFFF"
+											: watermarkColor
+									}
+									onChange={(e) => setWatermarkColor(e.target.value)}
+									className="h-6 w-6 cursor-pointer rounded-full border border-white/18 bg-transparent"
+									title="自定义签名颜色"
+								/>
+							</div>
+							<div className="flex items-center gap-2">
+								<span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">
+									Opacity
+								</span>
+								<input
+									type="range"
+									min={0}
+									max={80}
+									value={watermarkOpacity}
+									onChange={(e) =>
+										setWatermarkOpacity(clamp(Number(e.target.value), 0, 80))
+									}
+									className="w-24 accent-white/80"
+								/>
+								<span className="w-9 text-right text-[11px] text-white/62">
+									{watermarkOpacity}%
+								</span>
+							</div>
 						</div>
 					</div>
 					<div className="h-8 w-px shrink-0 bg-white/8" />
@@ -1672,6 +2250,32 @@ export function ScreenshotPreview() {
 							/>
 						);
 					})}
+						</div>
+					</div>
+					<div className="h-8 w-px shrink-0 bg-white/8" />
+					<div className="flex items-center gap-2 flex-shrink-0">
+						<span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Wallpapers</span>
+						<div className="flex gap-1.5">
+					{WALLPAPERS.map((wp) => (
+						<button
+							key={wp}
+							onClick={() => setBg({ kind: "wallpaper", value: wp })}
+							className={`h-9 w-14 rounded-2xl overflow-hidden border transition-all ${
+								bg.kind === "wallpaper" && bg.value === wp
+									? "border-white/60 scale-[1.04]"
+									: "border-white/10 hover:border-white/28"
+							}`}
+							style={{
+								backgroundImage: `url(/${wp})`,
+								backgroundSize: "cover",
+								backgroundPosition: "center",
+								boxShadow:
+									bg.kind === "wallpaper" && bg.value === wp
+										? "0 10px 24px rgba(0,0,0,0.24)"
+										: undefined,
+							}}
+						/>
+					))}
 						</div>
 					</div>
 				</div>

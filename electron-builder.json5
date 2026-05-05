@@ -12,7 +12,11 @@
 	],
 	"mac": {
 		"target": ["dmg"],
-		"artifactName": "${productName}-Mac-${arch}-${version}-Installer.${ext}"
+		"icon": "icons/icon.icns",
+		"artifactName": "${productName}-Mac-${arch}-${version}.${ext}",
+		"extendInfo": {
+			"LSUIElement": true
+		}
 	},
 	"win": {
 		"target": ["nsis"],

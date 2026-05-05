@@ -40,6 +40,7 @@ interface Window {
 		copyToClipboard: (
 			pngData: Uint8Array,
 		) => Promise<{ success: boolean; error?: string }>;
+		readAssetDataUrl: (relativePath: string) => Promise<string | null>;
 		getAssetBasePath: () => Promise<string | null>;
 		onCaptureSession: (
 			callback: (payload: { sessionId: number; imageData: string }) => void,
