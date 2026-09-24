@@ -1,8 +1,36 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { flushSync } from "react-dom";
-import { Copy, Download, Save } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+	ArrowUpRight,
+	Copy,
+	Download,
+	Grid2X2,
+	Pencil,
+	Pin,
+	Pipette,
+	Save,
+	ScanText,
+	Square,
+	Type,
+	Undo2,
+	X,
+	type LucideIcon,
+} from "lucide-react";
 import { getAssetPath } from "@/lib/assetPath";
+import {
+	calculateCanvasBackingSize,
+	type CanvasBackingSize,
+} from "@/lib/canvasBacking";
 import { decodeImageData } from "@/lib/decodeImage";
+import { createPngBlob } from "@/lib/pngBytes";
+import {
+	BACKGROUND_PADDING_STEP,
+	DEFAULT_BACKGROUND_PADDING,
+	MAX_BACKGROUND_PADDING,
+	MIN_BACKGROUND_PADDING,
+	calculateScreenshotCompositionLayout,
+	normalizeBackgroundPadding,
+} from "@/lib/screenshotComposition";
+import { TextExtractionPanel } from "./TextExtractionPanel";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -21,7 +49,7 @@ type BgType =
 	| { kind: "solid"; value: string };
 
 type ChromeStyle = "glass" | "graphite" | "aurora" | "ember" | "borderless";
-type ActionType = "copy" | "quick-save" | "save";
+type ActionType = "copy" | "pin" | "quick-save" | "save";
 type ActionToast = {
 	id: number;
 	action: ActionType;
@@ -35,12 +63,20 @@ type WatermarkPalette = {
 	outline: string;
 };
 
+type WallpaperOption = {
+	value: string;
+	thumbnail: string;
+};
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const WALLPAPER_COUNT = 12;
-const WALLPAPERS = Array.from(
+const WALLPAPERS: WallpaperOption[] = Array.from(
 	{ length: WALLPAPER_COUNT },
-	(_, i) => `wallpapers/wallpaper${i + 1}.jpg`,
+	(_, i) => ({
+		value: `wallpapers/wallpaper${i + 1}.jpg`,
+		thumbnail: `wallpapers/thumbnails/wallpaper${i + 1}.jpg`,
+	}),
 );
 
 const GRADIENTS: BgType[] = [
@@ -96,15 +132,22 @@ const GRADIENTS: BgType[] = [
 
 const PRESET_COLORS = ["#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#007AFF", "#FFFFFF", "#000000"];
 const BRUSH_SIZES = [2, 4, 8];
-const PADDING = 48; // background padding around screenshot in export
 const IS_MAC = navigator.userAgent.includes("Mac");
+const MIN_PREVIEW_PIXEL_RATIO = 2;
+const MAX_PREVIEW_CANVAS_DIMENSION = 3072;
+const MAX_PREVIEW_CANVAS_PIXELS = 6_000_000;
+const MAX_PINNED_COMPOSITE_DIMENSION = 3072;
+const MAX_PINNED_COMPOSITE_PIXELS = 6_000_000;
 const CHROME_STYLE_STORAGE_KEY = "quickshot.chrome-style";
+const BACKGROUND_PADDING_STORAGE_KEY = "quickshot.background-padding";
 const WATERMARK_TEXT_STORAGE_KEY = "quickshot.watermark-text";
 const WATERMARK_ENABLED_STORAGE_KEY = "quickshot.watermark-enabled";
 const WATERMARK_OPACITY_STORAGE_KEY = "quickshot.watermark-opacity";
 const WATERMARK_COLOR_STORAGE_KEY = "quickshot.watermark-color";
 const AUTO_WATERMARK_COLOR = "auto";
-const DEFAULT_WATERMARK_OPACITY = 22;
+const MIN_WATERMARK_OPACITY = 24;
+const MAX_WATERMARK_OPACITY = 80;
+const DEFAULT_WATERMARK_OPACITY = 42;
 const DEFAULT_WATERMARK_COLOR = AUTO_WATERMARK_COLOR;
 const WATERMARK_PRESET_COLORS = [
 	"#FFFFFF",
@@ -113,11 +156,32 @@ const WATERMARK_PRESET_COLORS = [
 	"#1F2937",
 	"#0F172A",
 ];
-const EXPORT_OUTER_PADDING = PADDING + 12;
-const EXPORT_FRAME_INSET = 18;
-const EXPORT_TOP_BAR_HEIGHT = 38;
 const EXPORT_FRAME_RADIUS = 30;
 const EXPORT_IMAGE_RADIUS = 24;
+const ACTIVE_CANVAS_IDLE_RELEASE_MS = 1600;
+
+const TOOL_OPTIONS: {
+	value: Tool;
+	label: string;
+	icon: LucideIcon;
+}[] = [
+	{ value: "pen", label: "画笔", icon: Pencil },
+	{ value: "arrow", label: "箭头", icon: ArrowUpRight },
+	{ value: "rect", label: "矩形", icon: Square },
+	{ value: "text", label: "文字", icon: Type },
+	{ value: "mosaic", label: "马赛克", icon: Grid2X2 },
+];
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+	if (!(target instanceof HTMLElement)) return false;
+	return (
+		target.isContentEditable ||
+		target instanceof HTMLInputElement ||
+		target instanceof HTMLTextAreaElement ||
+		target instanceof HTMLSelectElement
+	);
+}
+
 const CHROME_THEMES: Record<
 	ChromeStyle,
 	{
@@ -393,15 +457,8 @@ function applyMosaic(
 	h: number,
 	blockSize: number,
 	srcImg: HTMLImageElement,
-	scale: number,
+	pixelCanvas: HTMLCanvasElement,
 ) {
-	const tmp = document.createElement("canvas");
-	tmp.width = srcImg.naturalWidth;
-	tmp.height = srcImg.naturalHeight;
-	const tc = tmp.getContext("2d");
-	if (!tc) return;
-	tc.drawImage(srcImg, 0, 0);
-
 	const tile = Math.max(8, Math.round(blockSize));
 	const rectX = w >= 0 ? x : x + w;
 	const rectY = h >= 0 ? y : y + h;
@@ -413,75 +470,272 @@ function applyMosaic(
 	const previewW = rectW < 2 ? minPreviewSize : rectW;
 	const previewH = rectH < 2 ? minPreviewSize : rectH;
 
-	const imgX = Math.max(0, Math.floor(previewX / scale));
-	const imgY = Math.max(0, Math.floor(previewY / scale));
+	const imgX = Math.max(0, Math.floor(previewX));
+	const imgY = Math.max(0, Math.floor(previewY));
 	const imgRight = Math.min(
 		srcImg.naturalWidth,
-		Math.ceil((previewX + previewW) / scale),
+		Math.ceil(previewX + previewW),
 	);
 	const imgBottom = Math.min(
 		srcImg.naturalHeight,
-		Math.ceil((previewY + previewH) / scale),
+		Math.ceil(previewY + previewH),
 	);
+	const sourceWidth = imgRight - imgX;
+	const sourceHeight = imgBottom - imgY;
+	if (sourceWidth <= 0 || sourceHeight <= 0) return;
 
-	for (let bx = imgX; bx < imgRight; bx += tile) {
-		for (let by = imgY; by < imgBottom; by += tile) {
-			const sx = Math.max(0, bx);
-			const sy = Math.max(0, by);
-			const sw = Math.min(tile, imgRight - sx);
-			const sh = Math.min(tile, imgBottom - sy);
-			if (sw <= 0 || sh <= 0) continue;
-			const px = tc.getImageData(
-				sx + Math.floor(sw / 2),
-				sy + Math.floor(sh / 2),
-				1,
-				1,
-			).data;
-			ctx.fillStyle = `rgb(${px[0]},${px[1]},${px[2]})`;
-			ctx.fillRect(sx * scale, sy * scale, sw * scale, sh * scale);
-		}
+	const columns = Math.max(1, Math.ceil(sourceWidth / tile));
+	const rows = Math.max(1, Math.ceil(sourceHeight / tile));
+	if (pixelCanvas.width < columns || pixelCanvas.height < rows) {
+		const nextPowerOfTwo = (value: number) =>
+			2 ** Math.ceil(Math.log2(Math.max(1, value)));
+		pixelCanvas.width = Math.max(
+			pixelCanvas.width,
+			nextPowerOfTwo(columns),
+		);
+		pixelCanvas.height = Math.max(
+			pixelCanvas.height,
+			nextPowerOfTwo(rows),
+		);
 	}
+	const pixelContext = pixelCanvas.getContext("2d");
+	if (!pixelContext) return;
+
+	pixelContext.clearRect(0, 0, columns, rows);
+	pixelContext.imageSmoothingEnabled = false;
+	const fullColumns = Math.floor(sourceWidth / tile);
+	const fullRows = Math.floor(sourceHeight / tile);
+	const partialWidth = sourceWidth - fullColumns * tile;
+	const partialHeight = sourceHeight - fullRows * tile;
+
+	if (fullColumns > 0 && fullRows > 0) {
+		pixelContext.drawImage(
+			srcImg,
+			imgX,
+			imgY,
+			fullColumns * tile,
+			fullRows * tile,
+			0,
+			0,
+			fullColumns,
+			fullRows,
+		);
+	}
+	if (partialWidth > 0 && fullRows > 0) {
+		pixelContext.drawImage(
+			srcImg,
+			imgX + fullColumns * tile,
+			imgY,
+			partialWidth,
+			fullRows * tile,
+			fullColumns,
+			0,
+			1,
+			fullRows,
+		);
+	}
+	if (partialHeight > 0 && fullColumns > 0) {
+		pixelContext.drawImage(
+			srcImg,
+			imgX,
+			imgY + fullRows * tile,
+			fullColumns * tile,
+			partialHeight,
+			0,
+			fullRows,
+			fullColumns,
+			1,
+		);
+	}
+	if (partialWidth > 0 && partialHeight > 0) {
+		pixelContext.drawImage(
+			srcImg,
+			imgX + fullColumns * tile,
+			imgY + fullRows * tile,
+			partialWidth,
+			partialHeight,
+			fullColumns,
+			fullRows,
+			1,
+			1,
+		);
+	}
+
+	ctx.save();
+	ctx.beginPath();
+	ctx.rect(imgX, imgY, sourceWidth, sourceHeight);
+	ctx.clip();
+	ctx.imageSmoothingEnabled = false;
+	ctx.drawImage(
+		pixelCanvas,
+		0,
+		0,
+		columns,
+		rows,
+		imgX,
+		imgY,
+		columns * tile,
+		rows * tile,
+	);
+	ctx.restore();
 }
 
 function drawOp(
 	ctx: CanvasRenderingContext2D,
 	op: DrawOp,
 	srcImg: HTMLImageElement,
-	scale: number,
+	getMosaicCanvas: () => HTMLCanvasElement,
 ) {
+	ctx.save();
+	try {
+		switch (op.type) {
+			case "pen":
+				if (op.points.length < 2) return;
+				ctx.strokeStyle = op.color;
+				ctx.lineWidth = op.width;
+				ctx.lineCap = "round";
+				ctx.lineJoin = "round";
+				ctx.beginPath();
+				ctx.moveTo(op.points[0][0], op.points[0][1]);
+				for (let i = 1; i < op.points.length; i++) {
+					ctx.lineTo(op.points[i][0], op.points[i][1]);
+				}
+				ctx.stroke();
+				break;
+			case "arrow":
+				drawArrow(ctx, op.from, op.to, op.color, op.width);
+				break;
+			case "rect":
+				ctx.strokeStyle = op.color;
+				ctx.lineWidth = op.width;
+				ctx.beginPath();
+				ctx.strokeRect(op.x, op.y, op.w, op.h);
+				break;
+			case "text":
+				ctx.font = `bold ${op.size}px system-ui`;
+				ctx.fillStyle = op.color;
+				ctx.shadowColor = "rgba(0,0,0,0.5)";
+				ctx.shadowBlur = 3;
+				ctx.fillText(op.text, op.x, op.y);
+				break;
+			case "mosaic":
+				applyMosaic(
+					ctx,
+					op.x,
+					op.y,
+					op.w,
+					op.h,
+					op.blockSize,
+					srcImg,
+					getMosaicCanvas(),
+				);
+				break;
+		}
+	} finally {
+		ctx.restore();
+	}
+}
+
+function cloneDrawOp(op: DrawOp): DrawOp {
+	if (op.type === "pen") {
+		return { ...op, points: op.points.map(([x, y]) => [x, y]) };
+	}
+	return { ...op };
+}
+
+function isMeaningfulDrawOp(op: DrawOp) {
 	switch (op.type) {
 		case "pen":
-			if (op.points.length < 2) return;
-			ctx.strokeStyle = op.color;
-			ctx.lineWidth = op.width;
-			ctx.lineCap = "round";
-			ctx.lineJoin = "round";
-			ctx.beginPath();
-			ctx.moveTo(op.points[0][0], op.points[0][1]);
-			for (let i = 1; i < op.points.length; i++) ctx.lineTo(op.points[i][0], op.points[i][1]);
-			ctx.stroke();
-			break;
+			return op.points.some(([x, y], index) => {
+				if (index === 0) return false;
+				const [previousX, previousY] = op.points[index - 1];
+				return Math.hypot(x - previousX, y - previousY) >= 1;
+			});
 		case "arrow":
-			drawArrow(ctx, op.from, op.to, op.color, op.width);
-			break;
+			return Math.hypot(op.to[0] - op.from[0], op.to[1] - op.from[1]) >= 1;
 		case "rect":
-			ctx.strokeStyle = op.color;
-			ctx.lineWidth = op.width;
-			ctx.beginPath();
-			ctx.strokeRect(op.x, op.y, op.w, op.h);
-			break;
-		case "text":
-			ctx.font = `bold ${op.size}px system-ui`;
-			ctx.fillStyle = op.color;
-			ctx.shadowColor = "rgba(0,0,0,0.5)";
-			ctx.shadowBlur = 3;
-			ctx.fillText(op.text, op.x, op.y);
-			ctx.shadowBlur = 0;
-			break;
 		case "mosaic":
-			applyMosaic(ctx, op.x, op.y, op.w, op.h, op.blockSize, srcImg, scale);
-			break;
+			return Math.abs(op.w) >= 1 && Math.abs(op.h) >= 1;
+		case "text":
+			return op.text.trim().length > 0;
 	}
+}
+
+function drawPenSegment(
+	ctx: CanvasRenderingContext2D,
+	points: [number, number][],
+	startIndex: number,
+	color: string,
+	width: number,
+) {
+	if (points.length < 2) return;
+	const safeStartIndex = Math.max(1, startIndex);
+	if (safeStartIndex >= points.length) return;
+	ctx.save();
+	ctx.strokeStyle = color;
+	ctx.lineWidth = width;
+	ctx.lineCap = "round";
+	ctx.lineJoin = "round";
+	ctx.beginPath();
+	ctx.moveTo(points[safeStartIndex - 1][0], points[safeStartIndex - 1][1]);
+	for (let index = safeStartIndex; index < points.length; index += 1) {
+		ctx.lineTo(points[index][0], points[index][1]);
+	}
+	ctx.stroke();
+	ctx.restore();
+}
+
+function getPreviewCanvasBackingSize(
+	canvas: HTMLCanvasElement,
+): CanvasBackingSize | null {
+	const rect = canvas.getBoundingClientRect();
+	return calculateCanvasBackingSize(
+		rect.width,
+		rect.height,
+		window.devicePixelRatio || 1,
+		MAX_PREVIEW_CANVAS_DIMENSION,
+		MAX_PREVIEW_CANVAS_PIXELS,
+	);
+}
+
+function resetAnnotationCanvas(
+	canvas: HTMLCanvasElement,
+	img: HTMLImageElement,
+	backingSize?: CanvasBackingSize,
+) {
+	if (!img.complete || img.naturalWidth <= 0 || img.naturalHeight <= 0) {
+		return null;
+	}
+	const nextSize = backingSize ?? getPreviewCanvasBackingSize(canvas);
+	if (!nextSize) return null;
+
+	if (
+		canvas.width !== nextSize.width ||
+		canvas.height !== nextSize.height
+	) {
+		canvas.width = nextSize.width;
+		canvas.height = nextSize.height;
+	}
+	const ctx = canvas.getContext("2d");
+	if (!ctx) return null;
+
+	ctx.setTransform(1, 0, 0, 1, 0, 0);
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	ctx.setTransform(
+		canvas.width / img.naturalWidth,
+		0,
+		0,
+		canvas.height / img.naturalHeight,
+		0,
+		0,
+	);
+	return ctx;
+}
+
+function releaseCanvas(canvas: HTMLCanvasElement | null) {
+	if (!canvas || (canvas.width === 0 && canvas.height === 0)) return;
+	canvas.width = 0;
+	canvas.height = 0;
 }
 
 function drawGradient(
@@ -505,6 +759,47 @@ function drawGradient(
 	grad.addColorStop(1, stops[1]);
 	ctx.fillStyle = grad;
 	ctx.fillRect(0, 0, w, h);
+}
+
+function drawImageCover(
+	ctx: CanvasRenderingContext2D,
+	image: HTMLImageElement,
+	targetWidth: number,
+	targetHeight: number,
+) {
+	const sourceWidth = image.naturalWidth || image.width;
+	const sourceHeight = image.naturalHeight || image.height;
+	if (sourceWidth <= 0 || sourceHeight <= 0) return;
+	const scale = Math.max(targetWidth / sourceWidth, targetHeight / sourceHeight);
+	const cropWidth = targetWidth / scale;
+	const cropHeight = targetHeight / scale;
+	const cropX = (sourceWidth - cropWidth) / 2;
+	const cropY = (sourceHeight - cropHeight) / 2;
+	ctx.drawImage(
+		image,
+		cropX,
+		cropY,
+		cropWidth,
+		cropHeight,
+		0,
+		0,
+		targetWidth,
+		targetHeight,
+	);
+}
+
+async function canvasToPngBuffer(canvas: HTMLCanvasElement) {
+	let blob: Blob | null;
+	try {
+		blob = await new Promise<Blob | null>((resolve) =>
+			canvas.toBlob(resolve, "image/png"),
+		);
+	} finally {
+		canvas.width = 0;
+		canvas.height = 0;
+	}
+	if (!blob) return null;
+	return blob.arrayBuffer();
 }
 
 function fillRoundedRect(
@@ -567,35 +862,6 @@ function drawRotatedPanel(
 	ctx.restore();
 }
 
-function drawNoiseOverlay(
-	ctx: CanvasRenderingContext2D,
-	w: number,
-	h: number,
-	opacity: number,
-) {
-	const noiseCanvas = document.createElement("canvas");
-	noiseCanvas.width = 120;
-	noiseCanvas.height = 120;
-	const noiseCtx = noiseCanvas.getContext("2d");
-	if (!noiseCtx) return;
-	const imageData = noiseCtx.createImageData(noiseCanvas.width, noiseCanvas.height);
-	for (let i = 0; i < imageData.data.length; i += 4) {
-		const value = Math.random() * 255;
-		imageData.data[i] = value;
-		imageData.data[i + 1] = value;
-		imageData.data[i + 2] = value;
-		imageData.data[i + 3] = Math.random() > 0.82 ? 42 : 0;
-	}
-	noiseCtx.putImageData(imageData, 0, 0);
-	const pattern = ctx.createPattern(noiseCanvas, "repeat");
-	if (!pattern) return;
-	ctx.save();
-	ctx.globalAlpha = opacity;
-	ctx.fillStyle = pattern;
-	ctx.fillRect(0, 0, w, h);
-	ctx.restore();
-}
-
 function getFileName(path?: string) {
 	if (!path) return undefined;
 	return path.split(/[\\/]/).pop() || path;
@@ -603,6 +869,17 @@ function getFileName(path?: string) {
 
 function clamp(value: number, min: number, max: number) {
 	return Math.min(max, Math.max(min, value));
+}
+
+function normalizeWatermarkOpacity(value: number) {
+	const rounded = Math.round(value);
+	return Number.isFinite(rounded)
+		? clamp(rounded, MIN_WATERMARK_OPACITY, MAX_WATERMARK_OPACITY)
+		: DEFAULT_WATERMARK_OPACITY;
+}
+
+function ensureWatermarkReadableOpacity(value: number) {
+	return Math.max(normalizeWatermarkOpacity(value), DEFAULT_WATERMARK_OPACITY);
 }
 
 function hexToRgb(color: string) {
@@ -791,38 +1068,156 @@ function samplePreviewWatermarkLuminance(
 	text: string,
 ) {
 	if (!img.complete || img.naturalWidth === 0) return null;
-	const sampleCanvas = document.createElement("canvas");
-	sampleCanvas.width = img.naturalWidth;
-	sampleCanvas.height = img.naturalHeight;
-	const sampleCtx = sampleCanvas.getContext("2d");
-	if (!sampleCtx) return null;
-	sampleCtx.drawImage(img, 0, 0);
-	if (annoCanvas) {
-		sampleCtx.drawImage(annoCanvas, 0, 0);
-	}
+	const measureCanvas = document.createElement("canvas");
+	measureCanvas.width = 1;
+	measureCanvas.height = 1;
+	const measureContext = measureCanvas.getContext("2d");
+	if (!measureContext) return null;
 	const layout = getWatermarkLayout(
-		sampleCtx,
+		measureContext,
 		text,
 		0,
 		0,
 		img.naturalWidth,
 		img.naturalHeight,
 	);
+	const sourceX = Math.max(0, Math.floor(layout.boxX));
+	const sourceY = Math.max(0, Math.floor(layout.boxY));
+	const sourceWidth = Math.max(
+		1,
+		Math.min(Math.ceil(layout.boxWidth), img.naturalWidth - sourceX),
+	);
+	const sourceHeight = Math.max(
+		1,
+		Math.min(Math.ceil(layout.boxHeight), img.naturalHeight - sourceY),
+	);
+	const sampleScale = Math.min(1, 320 / sourceWidth, 96 / sourceHeight);
+	const sampleCanvas = document.createElement("canvas");
+	sampleCanvas.width = Math.max(1, Math.ceil(sourceWidth * sampleScale));
+	sampleCanvas.height = Math.max(1, Math.ceil(sourceHeight * sampleScale));
+	const sampleCtx = sampleCanvas.getContext("2d");
+	if (!sampleCtx) return null;
+	sampleCtx.drawImage(
+		img,
+		sourceX,
+		sourceY,
+		sourceWidth,
+		sourceHeight,
+		0,
+		0,
+		sampleCanvas.width,
+		sampleCanvas.height,
+	);
+	if (annoCanvas) {
+		const annotationScaleX = annoCanvas.width / img.naturalWidth;
+		const annotationScaleY = annoCanvas.height / img.naturalHeight;
+		if (annotationScaleX > 0 && annotationScaleY > 0) {
+			sampleCtx.drawImage(
+				annoCanvas,
+				sourceX * annotationScaleX,
+				sourceY * annotationScaleY,
+				sourceWidth * annotationScaleX,
+				sourceHeight * annotationScaleY,
+				0,
+				0,
+				sampleCanvas.width,
+				sampleCanvas.height,
+			);
+		}
+	}
 	return getAverageLuminance(
 		sampleCtx,
-		layout.boxX,
-		layout.boxY,
-		layout.boxWidth,
-		layout.boxHeight,
+		0,
+		0,
+		sampleCanvas.width,
+		sampleCanvas.height,
 	);
 }
 
 function getWatermarkAlphaSet(opacity: number) {
-	const text = clamp(opacity, 0, 100) / 100;
+	const text = normalizeWatermarkOpacity(opacity) / 100;
 	return {
 		text,
 		stroke: clamp(text * 0.82, 0, 0.7),
 	};
+}
+
+function getTextOpFromInput(
+	textInput: { x: number; y: number; value: string },
+	color: string,
+): DrawOp | null {
+	if (!textInput.value.trim()) return null;
+	return {
+		type: "text",
+		x: textInput.x,
+		y: textInput.y,
+		text: textInput.value,
+		color,
+		size: 20,
+	};
+}
+
+function AnnotationTextInput({
+	style,
+	color,
+	onDraftChange,
+	onCommit,
+	onCancel,
+}: {
+	style: React.CSSProperties;
+	color: string;
+	onDraftChange: (value: string) => void;
+	onCommit: (value: string) => void;
+	onCancel: () => void;
+}) {
+	const [draft, setDraft] = useState("");
+	const finishedRef = useRef(false);
+
+	const commit = () => {
+		if (finishedRef.current) return;
+		finishedRef.current = true;
+		onCommit(draft);
+	};
+
+	return (
+		<input
+			autoFocus
+			value={draft}
+			onChange={(event) => {
+				const nextValue = event.target.value;
+				setDraft(nextValue);
+				onDraftChange(nextValue);
+			}}
+			onKeyDown={(event) => {
+				if (event.key === "Enter") {
+					event.preventDefault();
+					commit();
+				}
+				if (event.key === "Escape") {
+					event.preventDefault();
+					event.stopPropagation();
+					finishedRef.current = true;
+					onCancel();
+				}
+			}}
+			onBlur={commit}
+			style={{
+				position: "absolute",
+				...style,
+				background: "rgba(7,10,16,0.18)",
+				border: "none",
+				borderBottom: `2px solid ${color}`,
+				outline: "none",
+				color,
+				fontSize: 20,
+				fontWeight: "bold",
+				minWidth: 60,
+				fontFamily: "system-ui",
+				backdropFilter: "blur(8px)",
+			}}
+			aria-label="输入标注文字"
+		/>
+	);
 }
 
 function drawWatermarkSignature(
@@ -886,6 +1281,11 @@ function drawWatermarkSignature(
 export function ScreenshotPreview() {
 	const [screenshotSrc, setScreenshotSrc] = useState<string>("");
 	const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
+	const [imageLoaded, setImageLoaded] = useState(false);
+	const [compositionPreviewReady, setCompositionPreviewReady] = useState(false);
+	const [previewDevicePixelRatio, setPreviewDevicePixelRatio] = useState(
+		() => window.devicePixelRatio || 1,
+	);
 	const [chromeStyle, setChromeStyle] = useState<ChromeStyle>(() => {
 		if (typeof window === "undefined") return "glass";
 		const stored = window.localStorage.getItem(CHROME_STYLE_STORAGE_KEY);
@@ -904,9 +1304,11 @@ export function ScreenshotPreview() {
 	});
 	const [watermarkOpacity, setWatermarkOpacity] = useState(() => {
 		if (typeof window === "undefined") return DEFAULT_WATERMARK_OPACITY;
-		const stored = Number(window.localStorage.getItem(WATERMARK_OPACITY_STORAGE_KEY));
+		const storedValue = window.localStorage.getItem(WATERMARK_OPACITY_STORAGE_KEY);
+		if (storedValue === null) return DEFAULT_WATERMARK_OPACITY;
+		const stored = Number(storedValue);
 		return Number.isFinite(stored)
-			? clamp(Math.round(stored), 0, 80)
+			? normalizeWatermarkOpacity(stored)
 			: DEFAULT_WATERMARK_OPACITY;
 	});
 	const [watermarkColor, setWatermarkColor] = useState(() => {
@@ -924,20 +1326,72 @@ export function ScreenshotPreview() {
 	const [color, setColor] = useState("#FF3B30");
 	const [brushSize, setBrushSize] = useState(1); // index into BRUSH_SIZES
 	const [bg, setBg] = useState<BgType>(GRADIENTS[4]);
+	const [backgroundPadding, setBackgroundPadding] = useState(() => {
+		if (typeof window === "undefined") return DEFAULT_BACKGROUND_PADDING;
+		const storedValue = window.localStorage.getItem(
+			BACKGROUND_PADDING_STORAGE_KEY,
+		);
+		if (storedValue === null || storedValue.trim() === "") {
+			return DEFAULT_BACKGROUND_PADDING;
+		}
+		return normalizeBackgroundPadding(Number(storedValue));
+	});
 	const [bgSrc, setBgSrc] = useState<string>("");
+	const [wallpaperThumbnailSrcs, setWallpaperThumbnailSrcs] = useState<
+		Record<string, string>
+	>({});
 	const [ops, setOps] = useState<DrawOp[]>([]);
-	const [pendingOp, setPendingOp] = useState<DrawOp | null>(null);
-	const [isDrawing, setIsDrawing] = useState(false);
 	const [textInput, setTextInput] = useState<{ x: number; y: number; value: string } | null>(null);
 	const [actionToast, setActionToast] = useState<ActionToast | null>(null);
-	const [viewportSize, setViewportSize] = useState({
-		w: window.innerWidth,
-		h: window.innerHeight,
+	const [textPanelOpen, setTextPanelOpen] = useState(false);
+	const [previewViewportSize, setPreviewViewportSize] = useState({
+		w: Math.max(1, window.innerWidth - 32),
+		h: Math.max(1, window.innerHeight - 136),
 	});
 
 	const canvasRef = useRef<HTMLCanvasElement>(null);
+	const activeCanvasRef = useRef<HTMLCanvasElement>(null);
+	const compositionCanvasRef = useRef<HTMLCanvasElement>(null);
 	const imgRef = useRef<HTMLImageElement>(null);
+	const previewViewportRef = useRef<HTMLDivElement>(null);
 	const toastTimerRef = useRef<number | null>(null);
+	const pendingOpRef = useRef<DrawOp | null>(null);
+	const isDrawingRef = useRef(false);
+	const annotationFrameRef = useRef<number | null>(null);
+	const resizeFrameRef = useRef<number | null>(null);
+	const activeCanvasReleaseTimerRef = useRef<number | null>(null);
+	const renderedPenPointCountRef = useRef(0);
+	const committedRenderStateRef = useRef({
+		opCount: 0,
+		source: "",
+		naturalWidth: 0,
+		naturalHeight: 0,
+	});
+	const canvasCoordinateSpaceRef = useRef<{
+		left: number;
+		top: number;
+		width: number;
+		height: number;
+		naturalWidth: number;
+		naturalHeight: number;
+	} | null>(null);
+	const mosaicCanvasRef = useRef<HTMLCanvasElement | null>(null);
+	const screenshotObjectUrlRef = useRef<string | null>(null);
+	const screenshotBlobRef = useRef<Blob | null>(null);
+	const textPanelTriggerRef = useRef<HTMLButtonElement>(null);
+	const textInputDraftRef = useRef("");
+	const previewSessionIdRef = useRef<number | null>(null);
+	const previewReadySentRef = useRef(false);
+	const wallpaperImageCacheRef = useRef<{
+		src: string;
+		promise: Promise<HTMLImageElement>;
+	} | null>(null);
+	const wallpaperAssetRequestRef = useRef<{
+		value: string;
+		promise: Promise<string>;
+	} | null>(null);
+	const exportInProgressRef = useRef(false);
+	const compositionRenderRequestRef = useRef(0);
 	const chromeTheme = CHROME_THEMES[chromeStyle];
 	const isBorderless = chromeTheme.frameless;
 	const previewChromeTheme = isBorderless ? CHROME_THEMES.glass : chromeTheme;
@@ -946,28 +1400,146 @@ export function ScreenshotPreview() {
 	const watermarkContent = watermarkText.trim();
 	const showWatermark = watermarkEnabled && watermarkContent.length > 0;
 	const watermarkAlphaSet = getWatermarkAlphaSet(watermarkOpacity);
+	const getMosaicCanvas = useCallback(() => {
+		if (!mosaicCanvasRef.current) {
+			const canvas = document.createElement("canvas");
+			canvas.width = 1;
+			canvas.height = 1;
+			mosaicCanvasRef.current = canvas;
+		}
+		return mosaicCanvasRef.current;
+	}, []);
 
 	useEffect(() => {
-		const handlePreviewSession = async (payload: {
-			sessionId: number;
-			imageData: string;
-		}) => {
-			const image = await decodeImageData(payload.imageData);
+		let cancelled = false;
+		let pendingObjectUrl: string | null = null;
+		const searchParams = new URLSearchParams(window.location.search);
+		const sessionId = Number(searchParams.get("sessionId"));
 
-			flushSync(() => {
-				setScreenshotSrc(payload.imageData);
-				setNaturalSize({ w: image.naturalWidth, h: image.naturalHeight });
-			});
+		const loadPreviewSession = async () => {
+			if (!Number.isInteger(sessionId)) {
+				window.close();
+				return;
+			}
 
-			await window.electronAPI.previewSessionReady(payload.sessionId);
+			try {
+				const payload = await window.electronAPI.getPreviewSession(sessionId);
+				if (!payload.success || !payload.imageBytes || cancelled) {
+					if (!cancelled) window.close();
+					return;
+				}
+
+				const screenshotBlob = createPngBlob(payload.imageBytes);
+				pendingObjectUrl = URL.createObjectURL(screenshotBlob);
+				if (cancelled) return;
+				if (screenshotObjectUrlRef.current) {
+					URL.revokeObjectURL(screenshotObjectUrlRef.current);
+				}
+				screenshotObjectUrlRef.current = pendingObjectUrl;
+				screenshotBlobRef.current = screenshotBlob;
+				pendingObjectUrl = null;
+				previewSessionIdRef.current = sessionId;
+				previewReadySentRef.current = false;
+				setImageLoaded(false);
+				setNaturalSize({ w: 0, h: 0 });
+				setScreenshotSrc(screenshotObjectUrlRef.current);
+			} catch (error) {
+				console.error("QuickShot preview failed to load", error);
+				if (!cancelled) window.close();
+			}
 		};
 
-		return window.electronAPI.onPreviewSession(handlePreviewSession);
+		void loadPreviewSession();
+		return () => {
+			cancelled = true;
+			previewSessionIdRef.current = null;
+			previewReadySentRef.current = false;
+			screenshotBlobRef.current = null;
+			if (pendingObjectUrl) {
+				URL.revokeObjectURL(pendingObjectUrl);
+				pendingObjectUrl = null;
+			}
+			if (screenshotObjectUrlRef.current) {
+				URL.revokeObjectURL(screenshotObjectUrlRef.current);
+				screenshotObjectUrlRef.current = null;
+			}
+		};
 	}, []);
+
+	const handleScreenshotImageLoad = async () => {
+		const image = imgRef.current;
+		const objectUrl = screenshotObjectUrlRef.current;
+		const sessionId = previewSessionIdRef.current;
+		if (
+			!image ||
+			!objectUrl ||
+			sessionId === null ||
+			image.naturalWidth <= 0 ||
+			image.naturalHeight <= 0
+		) {
+			window.close();
+			return;
+		}
+
+		try {
+			if (typeof image.decode === "function") {
+				await image.decode();
+			}
+		} catch (error) {
+			if (!image.complete || image.naturalWidth <= 0) {
+				console.error("QuickShot preview image decode failed", error);
+				window.close();
+				return;
+			}
+		}
+
+		if (
+			imgRef.current !== image ||
+			screenshotObjectUrlRef.current !== objectUrl ||
+			previewSessionIdRef.current !== sessionId
+		) {
+			return;
+		}
+
+		setNaturalSize({
+			w: image.naturalWidth,
+			h: image.naturalHeight,
+		});
+		setImageLoaded(true);
+		if (previewReadySentRef.current) return;
+		previewReadySentRef.current = true;
+
+		try {
+			const result = await window.electronAPI.previewSessionReady(sessionId);
+			if (!result.success) window.close();
+		} catch (error) {
+			console.error("QuickShot preview readiness failed", error);
+			window.close();
+		}
+	};
+
+	const handleScreenshotImageError = () => {
+		if (
+			!screenshotObjectUrlRef.current ||
+			previewSessionIdRef.current === null
+		) {
+			return;
+		}
+		previewReadySentRef.current = true;
+		console.error("QuickShot preview image failed to render");
+		window.close();
+	};
 
 	useEffect(() => {
 		window.localStorage.setItem(CHROME_STYLE_STORAGE_KEY, chromeStyle);
 	}, [chromeStyle]);
+
+	useEffect(() => {
+		window.localStorage.setItem(
+			BACKGROUND_PADDING_STORAGE_KEY,
+			String(normalizeBackgroundPadding(backgroundPadding)),
+		);
+	}, [backgroundPadding]);
 
 	useEffect(() => {
 		window.localStorage.setItem(WATERMARK_TEXT_STORAGE_KEY, watermarkText);
@@ -983,7 +1555,7 @@ export function ScreenshotPreview() {
 	useEffect(() => {
 		window.localStorage.setItem(
 			WATERMARK_OPACITY_STORAGE_KEY,
-			String(watermarkOpacity),
+			String(normalizeWatermarkOpacity(watermarkOpacity)),
 		);
 	}, [watermarkOpacity]);
 
@@ -1003,24 +1575,27 @@ export function ScreenshotPreview() {
 		}
 
 		const img = imgRef.current;
-		if (!img || !img.complete || img.naturalWidth === 0) {
+		if (!imageLoaded || !img || !img.complete || img.naturalWidth === 0) {
 			setPreviewWatermarkPalette(getWatermarkPalette(watermarkColor, null));
 			return;
 		}
 
-		const backgroundLuminance = samplePreviewWatermarkLuminance(
-			img,
-			canvasRef.current,
-			watermarkContent,
-		);
-		setPreviewWatermarkPalette(
-			getWatermarkPalette(watermarkColor, backgroundLuminance),
-		);
+		const timer = window.setTimeout(() => {
+			const backgroundLuminance = samplePreviewWatermarkLuminance(
+				img,
+				canvasRef.current,
+				watermarkContent,
+			);
+			setPreviewWatermarkPalette(
+				getWatermarkPalette(watermarkColor, backgroundLuminance),
+			);
+		}, 120);
+		return () => window.clearTimeout(timer);
 	}, [
+		imageLoaded,
 		naturalSize.h,
 		naturalSize.w,
 		ops,
-		pendingOp,
 		showWatermark,
 		screenshotSrc,
 		watermarkColor,
@@ -1032,85 +1607,404 @@ export function ScreenshotPreview() {
 			if (toastTimerRef.current) {
 				window.clearTimeout(toastTimerRef.current);
 			}
+			if (annotationFrameRef.current !== null) {
+				window.cancelAnimationFrame(annotationFrameRef.current);
+			}
+			if (resizeFrameRef.current !== null) {
+				window.cancelAnimationFrame(resizeFrameRef.current);
+			}
+			if (activeCanvasReleaseTimerRef.current !== null) {
+				window.clearTimeout(activeCanvasReleaseTimerRef.current);
+			}
+			releaseCanvas(canvasRef.current);
+			releaseCanvas(activeCanvasRef.current);
+			releaseCanvas(compositionCanvasRef.current);
+			releaseCanvas(mosaicCanvasRef.current);
+			mosaicCanvasRef.current = null;
+			canvasCoordinateSpaceRef.current = null;
 		},
 		[],
 	);
 
+	useEffect(() => {
+		let cancelled = false;
+		void Promise.all(
+			WALLPAPERS.map(async (wallpaper) => {
+				const src = await getAssetPath(wallpaper.thumbnail);
+				return [wallpaper.value, src] as const;
+			}),
+		).then((entries) => {
+			if (!cancelled) {
+				setWallpaperThumbnailSrcs(Object.fromEntries(entries));
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	const handleExtractText = useCallback(async () => {
+		const screenshotBlob = screenshotBlobRef.current;
+		if (!screenshotBlob) {
+			throw new Error("原始截图尚未准备好");
+		}
+
+		const result = await window.electronAPI.extractText(
+			await screenshotBlob.arrayBuffer(),
+		);
+		if (!result.success) {
+			throw new Error(result.error);
+		}
+		return {
+			text: result.text,
+			lineCount: result.lineCount,
+		};
+	}, []);
+
+	const handleCopyText = useCallback(async (text: string) => {
+		const result = await window.electronAPI.copyTextToClipboard(text);
+		if (!result.success) {
+			throw new Error(result.error || "复制文本失败，请重试");
+		}
+	}, []);
+
+	const handleCloseTextPanel = useCallback(() => {
+		setTextPanelOpen(false);
+		window.requestAnimationFrame(() => {
+			textPanelTriggerRef.current?.focus();
+		});
+	}, []);
+
 	// Load wallpaper bg
 	useEffect(() => {
+		let cancelled = false;
+		wallpaperImageCacheRef.current = null;
 		if (bg.kind === "wallpaper") {
-			getAssetPath(bg.value).then(setBgSrc);
+			setBgSrc("");
+			const request = {
+				value: bg.value,
+				promise: getAssetPath(bg.value, { cache: false }),
+			};
+			wallpaperAssetRequestRef.current = request;
+			void request.promise.then((src) => {
+				if (!cancelled) setBgSrc(src);
+			});
 		} else {
+			wallpaperAssetRequestRef.current = null;
 			setBgSrc("");
 		}
+		return () => {
+			cancelled = true;
+		};
 	}, [bg]);
 
-	// Keyboard shortcuts
+	// Moving between displays can change pixel density without changing CSS size.
 	useEffect(() => {
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
-				window.close();
-				return;
-			}
-			if ((e.metaKey || e.ctrlKey) && e.key === "z") {
-				e.preventDefault();
-				setOps((prev) => prev.slice(0, -1));
-			}
+		let resolutionQuery: MediaQueryList | null = null;
+		const updatePixelRatio = () => {
+			const pixelRatio = window.devicePixelRatio || 1;
+			setPreviewDevicePixelRatio(pixelRatio);
+			resolutionQuery?.removeEventListener("change", updatePixelRatio);
+			resolutionQuery = window.matchMedia(`(resolution: ${pixelRatio}dppx)`);
+			resolutionQuery.addEventListener("change", updatePixelRatio);
 		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
+		updatePixelRatio();
+		window.addEventListener("resize", updatePixelRatio);
+		return () => {
+			resolutionQuery?.removeEventListener("change", updatePixelRatio);
+			window.removeEventListener("resize", updatePixelRatio);
+		};
 	}, []);
 
-	useEffect(() => {
-		const handleResize = () => {
-			setViewportSize({ w: window.innerWidth, h: window.innerHeight });
+	useLayoutEffect(() => {
+		const viewport = previewViewportRef.current;
+		if (!viewport) return;
+
+		const measureViewport = () => {
+			const styles = window.getComputedStyle(viewport);
+			const width = Math.max(
+				1,
+				viewport.clientWidth -
+					Number.parseFloat(styles.paddingLeft || "0") -
+					Number.parseFloat(styles.paddingRight || "0"),
+			);
+			const height = Math.max(
+				1,
+				viewport.clientHeight -
+					Number.parseFloat(styles.paddingTop || "0") -
+					Number.parseFloat(styles.paddingBottom || "0"),
+			);
+			setPreviewViewportSize((current) =>
+				Math.abs(current.w - width) < 0.5 &&
+				Math.abs(current.h - height) < 0.5
+					? current
+					: { w: width, h: height },
+			);
+			canvasCoordinateSpaceRef.current = null;
 		};
-		window.addEventListener("resize", handleResize);
-		return () => window.removeEventListener("resize", handleResize);
+		const scheduleMeasurement = () => {
+			if (resizeFrameRef.current !== null) return;
+			resizeFrameRef.current = window.requestAnimationFrame(() => {
+				resizeFrameRef.current = null;
+				measureViewport();
+			});
+		};
+
+		measureViewport();
+		const observer = new ResizeObserver(scheduleMeasurement);
+		observer.observe(viewport);
+		return () => {
+			observer.disconnect();
+			if (resizeFrameRef.current !== null) {
+				window.cancelAnimationFrame(resizeFrameRef.current);
+				resizeFrameRef.current = null;
+			}
+		};
 	}, []);
 
-	// Redraw annotation canvas
-	const redraw = useCallback(() => {
+	const redrawActiveAnnotation = useCallback(() => {
+		const canvas = activeCanvasRef.current;
+		const img = imgRef.current;
+		if (!canvas || !img || !img.complete || img.naturalWidth === 0) return;
+		const committedCanvas = canvasRef.current;
+		const backingSize =
+			committedCanvas &&
+			committedCanvas.width > 0 &&
+			committedCanvas.height > 0
+				? {
+						width: committedCanvas.width,
+						height: committedCanvas.height,
+					}
+				: undefined;
+		const ctx = resetAnnotationCanvas(canvas, img, backingSize);
+		if (!ctx) return;
+
+		const pendingOp = pendingOpRef.current;
+		if (!pendingOp) return;
+		drawOp(ctx, pendingOp, img, getMosaicCanvas);
+		if (pendingOp.type === "pen") {
+			renderedPenPointCountRef.current = pendingOp.points.length;
+		}
+	}, [getMosaicCanvas]);
+
+	const clearActiveAnnotationCanvas = useCallback((releaseAfterIdle = true) => {
+		if (activeCanvasReleaseTimerRef.current !== null) {
+			window.clearTimeout(activeCanvasReleaseTimerRef.current);
+			activeCanvasReleaseTimerRef.current = null;
+		}
+		const canvas = activeCanvasRef.current;
+		if (canvas?.width && canvas.height) {
+			const context = canvas.getContext("2d");
+			context?.setTransform(1, 0, 0, 1, 0, 0);
+			context?.clearRect(0, 0, canvas.width, canvas.height);
+		}
+		if (!releaseAfterIdle) return;
+		activeCanvasReleaseTimerRef.current = window.setTimeout(() => {
+			activeCanvasReleaseTimerRef.current = null;
+			if (!isDrawingRef.current && !pendingOpRef.current) {
+				releaseCanvas(activeCanvasRef.current);
+			}
+		}, ACTIVE_CANVAS_IDLE_RELEASE_MS);
+	}, []);
+
+	const syncCommittedAnnotations = useCallback((forceReplay = false) => {
 		const canvas = canvasRef.current;
 		const img = imgRef.current;
 		if (!canvas || !img || !img.complete || img.naturalWidth === 0) return;
-		const ctx = canvas.getContext("2d");
-		if (!ctx) return;
+		const backingSize = getPreviewCanvasBackingSize(canvas);
+		if (!backingSize) return;
 
-		ctx.clearRect(0, 0, canvas.width, canvas.height);
-		const scale = canvas.width / img.naturalWidth;
-		const allOps = pendingOp ? [...ops, pendingOp] : ops;
-		for (const op of allOps) drawOp(ctx, op, img, scale);
-	}, [ops, pendingOp]);
+		const renderState = committedRenderStateRef.current;
+		const sourceChanged =
+			renderState.source !== screenshotSrc ||
+			renderState.naturalWidth !== img.naturalWidth ||
+			renderState.naturalHeight !== img.naturalHeight;
+		const canvasResized =
+			canvas.width !== backingSize.width ||
+			canvas.height !== backingSize.height;
+		const historyRewound = renderState.opCount > ops.length;
+		const replayAll =
+			forceReplay || sourceChanged || canvasResized || historyRewound;
 
-	useEffect(() => {
-		redraw();
-	}, [redraw]);
+		let committedContext: CanvasRenderingContext2D | null;
+		let startIndex: number;
+		if (replayAll) {
+			committedContext = resetAnnotationCanvas(canvas, img, backingSize);
+			startIndex = 0;
+		} else {
+			committedContext = canvas.getContext("2d");
+			if (committedContext) {
+				committedContext.setTransform(
+					canvas.width / img.naturalWidth,
+					0,
+					0,
+					canvas.height / img.naturalHeight,
+					0,
+					0,
+				);
+			}
+			startIndex = renderState.opCount;
+		}
+		if (!committedContext) return;
 
-	const getCanvasCoords = (e: React.MouseEvent): [number, number] => {
-		const canvas = canvasRef.current!;
+		for (let index = startIndex; index < ops.length; index += 1) {
+			drawOp(committedContext, ops[index], img, getMosaicCanvas);
+		}
+
+		committedRenderStateRef.current = {
+			opCount: ops.length,
+			source: screenshotSrc,
+			naturalWidth: img.naturalWidth,
+			naturalHeight: img.naturalHeight,
+		};
+	}, [getMosaicCanvas, ops, screenshotSrc]);
+
+	useLayoutEffect(() => {
+		syncCommittedAnnotations();
+		if (pendingOpRef.current && isDrawingRef.current) {
+			redrawActiveAnnotation();
+		} else {
+			clearActiveAnnotationCanvas();
+		}
+		}, [
+			backgroundPadding,
+			chromeStyle,
+			clearActiveAnnotationCanvas,
+		imageLoaded,
+		naturalSize.h,
+		naturalSize.w,
+		previewDevicePixelRatio,
+		previewViewportSize.h,
+		previewViewportSize.w,
+		redrawActiveAnnotation,
+		screenshotSrc,
+		syncCommittedAnnotations,
+	]);
+
+	const drawPendingAnnotationFrame = useCallback(() => {
+		annotationFrameRef.current = null;
+		const pendingOp = pendingOpRef.current;
+		if (!pendingOp) return;
+
+		if (pendingOp.type !== "pen") {
+			redrawActiveAnnotation();
+			return;
+		}
+
+		const canvas = activeCanvasRef.current;
+		const ctx = canvas?.getContext("2d");
+		if (!canvas || !ctx) return;
+		drawPenSegment(
+			ctx,
+			pendingOp.points,
+			renderedPenPointCountRef.current,
+			pendingOp.color,
+			pendingOp.width,
+		);
+		renderedPenPointCountRef.current = pendingOp.points.length;
+	}, [redrawActiveAnnotation]);
+
+	const schedulePendingAnnotationFrame = useCallback(() => {
+		if (annotationFrameRef.current !== null) return;
+		annotationFrameRef.current = window.requestAnimationFrame(
+			drawPendingAnnotationFrame,
+		);
+	}, [drawPendingAnnotationFrame]);
+
+	const refreshCanvasCoordinateSpace = () => {
+		const canvas = canvasRef.current;
+		const img = imgRef.current;
+		if (!canvas) return null;
 		const rect = canvas.getBoundingClientRect();
+		const coordinateSpace = {
+			left: rect.left,
+			top: rect.top,
+			width: rect.width,
+			height: rect.height,
+			naturalWidth: img?.naturalWidth || naturalSize.w,
+			naturalHeight: img?.naturalHeight || naturalSize.h,
+		};
+		canvasCoordinateSpaceRef.current = coordinateSpace;
+		return coordinateSpace;
+	};
+
+	const getCanvasCoords = (
+		e: React.PointerEvent<HTMLCanvasElement>,
+		refreshCoordinateSpace = false,
+	): [number, number] => {
+		const coordinateSpace =
+			(refreshCoordinateSpace ? refreshCanvasCoordinateSpace() : null) ??
+			canvasCoordinateSpaceRef.current ??
+			refreshCanvasCoordinateSpace();
+		if (
+			!coordinateSpace ||
+			coordinateSpace.width <= 0 ||
+			coordinateSpace.height <= 0
+		) {
+			return [0, 0];
+		}
 		return [
-			((e.clientX - rect.left) * canvas.width) / rect.width,
-			((e.clientY - rect.top) * canvas.height) / rect.height,
+			((e.clientX - coordinateSpace.left) * coordinateSpace.naturalWidth) /
+				coordinateSpace.width,
+			((e.clientY - coordinateSpace.top) * coordinateSpace.naturalHeight) /
+				coordinateSpace.height,
 		];
 	};
 
-	const handlePointerDown = (e: React.MouseEvent) => {
+	const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
 		if (textInput) return;
 		e.preventDefault();
-		const pos = getCanvasCoords(e);
-		setIsDrawing(true);
+		const pos = getCanvasCoords(e, true);
+		if (tool === "text") {
+			textInputDraftRef.current = "";
+			setTextInput({ x: pos[0], y: pos[1], value: "" });
+			return;
+		}
+		const committedCanvas = canvasRef.current;
+		const activeCanvas = activeCanvasRef.current;
+		const img = imgRef.current;
+		if (
+			!committedCanvas ||
+			!activeCanvas ||
+			!img ||
+			committedCanvas.width <= 0 ||
+			committedCanvas.height <= 0
+			) {
+				return;
+			}
+			clearActiveAnnotationCanvas(false);
+			if (
+				!resetAnnotationCanvas(activeCanvas, img, {
+					width: committedCanvas.width,
+				height: committedCanvas.height,
+			})
+			) {
+				return;
+			}
+			e.currentTarget.setPointerCapture(e.pointerId);
+			isDrawingRef.current = true;
 
 		switch (tool) {
 			case "pen":
-				setPendingOp({ type: "pen", points: [pos], color, width: BRUSH_SIZES[brushSize] });
+				pendingOpRef.current = {
+					type: "pen",
+					points: [pos],
+					color,
+					width: BRUSH_SIZES[brushSize],
+				};
+				renderedPenPointCountRef.current = 1;
 				break;
 			case "arrow":
-				setPendingOp({ type: "arrow", from: pos, to: pos, color, width: BRUSH_SIZES[brushSize] });
+				pendingOpRef.current = {
+					type: "arrow",
+					from: pos,
+					to: pos,
+					color,
+					width: BRUSH_SIZES[brushSize],
+				};
 				break;
 			case "rect":
-				setPendingOp({
+				pendingOpRef.current = {
 					type: "rect",
 					x: pos[0],
 					y: pos[1],
@@ -1118,61 +2012,95 @@ export function ScreenshotPreview() {
 					h: 0,
 					color,
 					width: BRUSH_SIZES[brushSize],
-				});
-				break;
-			case "text":
-				setIsDrawing(false);
-				setTextInput({ x: pos[0], y: pos[1], value: "" });
+				};
 				break;
 			case "mosaic":
-				setPendingOp({
+				pendingOpRef.current = {
 					type: "mosaic",
 					x: pos[0],
 					y: pos[1],
 					w: 0,
 					h: 0,
 					blockSize: 14,
-				});
+				};
 				break;
+		}
+		if (pendingOpRef.current) {
+			schedulePendingAnnotationFrame();
 		}
 	};
 
-	const handlePointerMove = (e: React.MouseEvent) => {
-		if (!isDrawing || !pendingOp) return;
+	const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+		const pendingOp = pendingOpRef.current;
+		if (!isDrawingRef.current || !pendingOp) return;
 		const pos = getCanvasCoords(e);
 		switch (pendingOp.type) {
 			case "pen":
-				setPendingOp({ ...pendingOp, points: [...pendingOp.points, pos] });
+				pendingOp.points.push(pos);
 				break;
 			case "arrow":
-				setPendingOp({ ...pendingOp, to: pos });
+				pendingOp.to = pos;
 				break;
 			case "rect":
-				setPendingOp({ ...pendingOp, w: pos[0] - pendingOp.x, h: pos[1] - pendingOp.y });
+				pendingOp.w = pos[0] - pendingOp.x;
+				pendingOp.h = pos[1] - pendingOp.y;
 				break;
 			case "mosaic":
-				setPendingOp({ ...pendingOp, w: pos[0] - pendingOp.x, h: pos[1] - pendingOp.y });
+				pendingOp.w = pos[0] - pendingOp.x;
+				pendingOp.h = pos[1] - pendingOp.y;
 				break;
 		}
+		schedulePendingAnnotationFrame();
 	};
 
-	const handlePointerUp = () => {
-		if (pendingOp) {
-			setOps((prev) => [...prev, pendingOp]);
-			setPendingOp(null);
+	const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+		const wasDrawing = isDrawingRef.current;
+		isDrawingRef.current = false;
+		if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+			e.currentTarget.releasePointerCapture(e.pointerId);
 		}
-		setIsDrawing(false);
+		if (!wasDrawing) return;
+		if (annotationFrameRef.current !== null) {
+			window.cancelAnimationFrame(annotationFrameRef.current);
+			annotationFrameRef.current = null;
+		}
+		const pendingOp = pendingOpRef.current;
+		pendingOpRef.current = null;
+		clearActiveAnnotationCanvas();
+		if (pendingOp && isMeaningfulDrawOp(pendingOp)) {
+			setOps((prev) => [...prev, cloneDrawOp(pendingOp)]);
+		}
 	};
 
-	const commitText = () => {
-		if (!textInput || !textInput.value.trim()) {
+	const handlePointerCancel = (
+		e: React.PointerEvent<HTMLCanvasElement>,
+	) => {
+		const wasDrawing = isDrawingRef.current;
+		isDrawingRef.current = false;
+		if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+			e.currentTarget.releasePointerCapture(e.pointerId);
+		}
+		if (!wasDrawing) return;
+		if (annotationFrameRef.current !== null) {
+			window.cancelAnimationFrame(annotationFrameRef.current);
+			annotationFrameRef.current = null;
+		}
+		pendingOpRef.current = null;
+		clearActiveAnnotationCanvas();
+	};
+
+	const commitText = (draft = textInputDraftRef.current) => {
+		if (!textInput) {
 			setTextInput(null);
 			return;
 		}
-		setOps((prev) => [
-			...prev,
-			{ type: "text", x: textInput.x, y: textInput.y, text: textInput.value, color, size: 20 },
-		]);
+		const textOp = getTextOpFromInput({ ...textInput, value: draft }, color);
+		if (!textOp) {
+			setTextInput(null);
+			return;
+		}
+		setOps((prev) => [...prev, textOp]);
+		textInputDraftRef.current = "";
 		setTextInput(null);
 	};
 
@@ -1198,47 +2126,148 @@ export function ScreenshotPreview() {
 	// Text input display position
 	const getTextInputStyle = (): React.CSSProperties => {
 		const canvas = canvasRef.current;
+		const img = imgRef.current;
 		if (!canvas || !textInput) return {};
 		const rect = canvas.getBoundingClientRect();
-		const dispX = (textInput.x * rect.width) / canvas.width;
-		const dispY = (textInput.y * rect.height) / canvas.height;
+		const sourceWidth = img?.naturalWidth || naturalSize.w;
+		const sourceHeight = img?.naturalHeight || naturalSize.h;
+		if (sourceWidth <= 0 || sourceHeight <= 0) return {};
+		const dispX = (textInput.x * rect.width) / sourceWidth;
+		const dispY = (textInput.y * rect.height) / sourceHeight;
 		return { left: dispX, top: dispY - 12 };
 	};
 
-	// Composite export
-	const getCompositeBuffer = async (): Promise<ArrayBuffer | null> => {
-		const img = imgRef.current;
-		const annoCanvas = canvasRef.current;
-		if (!img || !img.complete || img.naturalWidth === 0) return null;
+	const getExportRenderOps = () => {
+		const renderOps = ops.map(cloneDrawOp);
+		const pendingOp = pendingOpRef.current;
+		if (pendingOp) {
+			renderOps.push(cloneDrawOp(pendingOp));
+		}
+		if (textInput) {
+			const textOp = getTextOpFromInput(
+				{ ...textInput, value: textInputDraftRef.current },
+				color,
+			);
+			if (textOp) renderOps.push(textOp);
+		}
+		return renderOps;
+	};
 
-		const outerPadding = isBorderless ? 20 : EXPORT_OUTER_PADDING;
-		const frameInset = isBorderless ? 0 : EXPORT_FRAME_INSET;
-		const topBarHeight = isBorderless ? 0 : EXPORT_TOP_BAR_HEIGHT;
+	const drawExportAnnotations = (
+		ctx: CanvasRenderingContext2D,
+		img: HTMLImageElement,
+		renderOps: DrawOp[],
+		imageX: number,
+		imageY: number,
+	) => {
+		if (renderOps.length === 0) return;
+		ctx.save();
+		ctx.translate(imageX, imageY);
+		ctx.beginPath();
+		ctx.rect(0, 0, img.naturalWidth, img.naturalHeight);
+		ctx.clip();
+		for (const op of renderOps) {
+			drawOp(ctx, op, img, getMosaicCanvas);
+		}
+		ctx.restore();
+	};
+
+	const getWallpaperImage = async (src: string) => {
+		const cached = wallpaperImageCacheRef.current;
+		if (cached?.src === src) return cached.promise;
+
+		let entry: { src: string; promise: Promise<HTMLImageElement> };
+		const promise = decodeImageData(src).catch((error) => {
+			if (wallpaperImageCacheRef.current === entry) {
+				wallpaperImageCacheRef.current = null;
+			}
+			throw error;
+		});
+		entry = { src, promise };
+		wallpaperImageCacheRef.current = entry;
+		return promise;
+	};
+
+	// Preview and export share the same renderer. Export stays at the screenshot's
+	// natural pixel size; preview is supersampled for crisp text on 1x displays.
+	const renderCompositeToCanvas = async (
+		exportCanvas: HTMLCanvasElement,
+		renderOps: DrawOp[],
+		purpose: "export" | "pin" | "preview" = "export",
+		previewScale = 1,
+	): Promise<boolean> => {
+		const img = imgRef.current;
+		if (!img || !img.complete || img.naturalWidth === 0) return false;
+
+		const composition = calculateScreenshotCompositionLayout(
+			img.naturalWidth,
+			img.naturalHeight,
+			backgroundPadding,
+			isBorderless,
+		);
+		const frameInset = composition.frameInset;
+		const topBarHeight = composition.topBarHeight;
 		const frameRadius = EXPORT_FRAME_RADIUS;
 		const imageRadius = EXPORT_IMAGE_RADIUS;
-		const frameW = img.naturalWidth + frameInset * 2;
-		const frameH = topBarHeight + img.naturalHeight + frameInset * 2;
-		const frameX = outerPadding;
-		const frameY = outerPadding;
-		const imageX = frameX + frameInset;
-		const imageY = frameY + topBarHeight + frameInset;
-		const W = frameW + outerPadding * 2;
-		const H = frameH + outerPadding * 2;
+		const frameW = composition.frameWidth;
+		const frameH = composition.frameHeight;
+		const frameX = composition.frameX;
+		const frameY = composition.frameY;
+		const imageX = composition.imageX;
+		const imageY = composition.imageY;
+		const W = composition.width;
+		const H = composition.height;
 
-		const exportCanvas = document.createElement("canvas");
-		exportCanvas.width = W;
-		exportCanvas.height = H;
+		const backingSize =
+			purpose === "pin"
+				? calculateCanvasBackingSize(
+						W,
+						H,
+						1,
+						MAX_PINNED_COMPOSITE_DIMENSION,
+						MAX_PINNED_COMPOSITE_PIXELS,
+					)
+				: purpose === "preview"
+					? calculateCanvasBackingSize(
+							W * previewScale,
+							H * previewScale,
+							Math.max(
+								MIN_PREVIEW_PIXEL_RATIO,
+								previewDevicePixelRatio,
+							),
+							Math.min(MAX_PREVIEW_CANVAS_DIMENSION, Math.max(W, H)),
+							Math.min(MAX_PREVIEW_CANVAS_PIXELS, W * H),
+						)
+					: { width: W, height: H };
+		if (!backingSize) return false;
+		exportCanvas.width = backingSize.width;
+		exportCanvas.height = backingSize.height;
 		const ctx = exportCanvas.getContext("2d")!;
+		ctx.imageSmoothingEnabled = true;
+		ctx.imageSmoothingQuality = "high";
+		ctx.setTransform(
+			backingSize.width / W,
+			0,
+			0,
+			backingSize.height / H,
+			0,
+			0,
+		);
 
 		// Background
-		if (bg.kind === "wallpaper" && bgSrc) {
-			const bgImg = new Image();
-			bgImg.src = bgSrc;
-			await new Promise<void>((r) => {
-				bgImg.onload = () => r();
-				bgImg.onerror = () => r();
-			});
-			ctx.drawImage(bgImg, 0, 0, W, H);
+		if (bg.kind === "wallpaper") {
+			try {
+				const request = wallpaperAssetRequestRef.current;
+				const wallpaperSrc =
+					request?.value === bg.value
+						? await request.promise
+						: await getAssetPath(bg.value, { cache: false });
+				const bgImg = await getWallpaperImage(wallpaperSrc);
+				drawImageCover(ctx, bgImg, W, H);
+			} catch {
+				ctx.fillStyle = "#0f172a";
+				ctx.fillRect(0, 0, W, H);
+			}
 		} else if (bg.kind === "gradient") {
 			drawGradient(ctx, W, H, bg.stops, bg.angle);
 		} else {
@@ -1248,9 +2277,7 @@ export function ScreenshotPreview() {
 
 		if (isBorderless) {
 			ctx.drawImage(img, imageX, imageY);
-			if (annoCanvas) {
-				ctx.drawImage(annoCanvas, imageX, imageY);
-			}
+			drawExportAnnotations(ctx, img, renderOps, imageX, imageY);
 			if (showWatermark) {
 				drawWatermarkSignature(
 					ctx,
@@ -1264,10 +2291,25 @@ export function ScreenshotPreview() {
 				);
 			}
 
-			const blob = await new Promise<Blob | null>((r) => exportCanvas.toBlob(r, "image/png"));
-			if (!blob) return null;
-			return blob.arrayBuffer();
+			return true;
 		}
+
+		// Keep atmosphere effects behind the captured pixels. Tinting the image
+		// itself lowers text contrast and makes an otherwise lossless PNG look soft.
+		ctx.save();
+		const vignette = ctx.createRadialGradient(
+			W / 2,
+			H / 2,
+			Math.min(W, H) * 0.14,
+			W / 2,
+			H / 2,
+			Math.max(W, H) * 0.7,
+		);
+		vignette.addColorStop(0, "rgba(0,0,0,0)");
+		vignette.addColorStop(1, "rgba(4,6,12,0.1)");
+		ctx.fillStyle = vignette;
+		ctx.fillRect(0, 0, W, H);
+		ctx.restore();
 
 		ctx.save();
 		const stageLight = ctx.createRadialGradient(
@@ -1435,16 +2477,7 @@ export function ScreenshotPreview() {
 		ctx.roundRect(imageX, imageY, img.naturalWidth, img.naturalHeight, imageRadius);
 		ctx.clip();
 		ctx.drawImage(img, imageX, imageY);
-		if (annoCanvas) {
-			ctx.drawImage(annoCanvas, imageX, imageY);
-		}
-		const imageGloss = ctx.createLinearGradient(imageX, imageY, imageX + img.naturalWidth, imageY + img.naturalHeight);
-		imageGloss.addColorStop(0, isBorderless ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.09)");
-		imageGloss.addColorStop(0.22, isBorderless ? "rgba(255,255,255,0.012)" : "rgba(255,255,255,0.025)");
-		imageGloss.addColorStop(0.52, "rgba(255,255,255,0)");
-		imageGloss.addColorStop(1, isBorderless ? "rgba(0,0,0,0.03)" : "rgba(0,0,0,0.06)");
-		ctx.fillStyle = imageGloss;
-		ctx.fillRect(imageX, imageY, img.naturalWidth, img.naturalHeight);
+		drawExportAnnotations(ctx, img, renderOps, imageX, imageY);
 		ctx.restore();
 
 		if (showWatermark) {
@@ -1481,29 +2514,25 @@ export function ScreenshotPreview() {
 			ctx.restore();
 		}
 
-		ctx.save();
-		const vignette = ctx.createRadialGradient(
-			W / 2,
-			H / 2,
-			Math.min(W, H) * 0.14,
-			W / 2,
-			H / 2,
-			Math.max(W, H) * 0.7,
+		return true;
+	};
+
+	const getCompositeBuffer = async (
+		purpose: "export" | "pin" = "export",
+	): Promise<ArrayBuffer | null> => {
+		const exportCanvas = document.createElement("canvas");
+		const rendered = await renderCompositeToCanvas(
+			exportCanvas,
+			getExportRenderOps(),
+			purpose,
 		);
-		vignette.addColorStop(0, "rgba(0,0,0,0)");
-		vignette.addColorStop(1, "rgba(4,6,12,0.1)");
-		ctx.fillStyle = vignette;
-		ctx.fillRect(0, 0, W, H);
-		ctx.restore();
-
-		drawNoiseOverlay(ctx, W, H, isBorderless ? 0.008 : 0.014);
-
-		const blob = await new Promise<Blob | null>((r) => exportCanvas.toBlob(r, "image/png"));
-		if (!blob) return null;
-		return blob.arrayBuffer();
+		if (!rendered) return null;
+		return canvasToPngBuffer(exportCanvas);
 	};
 
 	const handleCopy = async () => {
+		if (exportInProgressRef.current) return;
+		exportInProgressRef.current = true;
 		try {
 			const buf = await getCompositeBuffer();
 			if (!buf) {
@@ -1521,12 +2550,55 @@ export function ScreenshotPreview() {
 				"copy",
 				"error",
 				"复制失败",
-				error instanceof Error ? error.message : "导出图像生成失败",
+					error instanceof Error ? error.message : "导出图像生成失败",
 			);
+		} finally {
+			exportInProgressRef.current = false;
+		}
+	};
+
+	const handlePin = async () => {
+		if (exportInProgressRef.current) return;
+		exportInProgressRef.current = true;
+		try {
+			const buf = await getCompositeBuffer("pin");
+			if (!buf) {
+				showActionToast(
+					"pin",
+					"error",
+					"置顶失败",
+					"导出图像生成失败",
+				);
+				return;
+			}
+			const result = await window.electronAPI.pinScreenshot(
+				new Uint8Array(buf),
+			);
+			if (result.success) {
+				showActionToast(
+					"pin",
+					"success",
+					"已悬浮置顶",
+					"可拖动、缩放和调节透明度",
+				);
+				return;
+			}
+			showActionToast("pin", "error", "置顶失败", result.error);
+		} catch (error) {
+			showActionToast(
+				"pin",
+				"error",
+				"置顶失败",
+				error instanceof Error ? error.message : "悬浮截图创建失败",
+			);
+		} finally {
+			exportInProgressRef.current = false;
 		}
 	};
 
 	const handleSave = async () => {
+		if (exportInProgressRef.current) return;
+		exportInProgressRef.current = true;
 		try {
 			const buf = await getCompositeBuffer();
 			if (!buf) {
@@ -1546,12 +2618,16 @@ export function ScreenshotPreview() {
 				"save",
 				"error",
 				"保存失败",
-				error instanceof Error ? error.message : "导出图像生成失败",
+					error instanceof Error ? error.message : "导出图像生成失败",
 			);
+		} finally {
+			exportInProgressRef.current = false;
 		}
 	};
 
 	const handleQuickSave = async () => {
+		if (exportInProgressRef.current) return;
+		exportInProgressRef.current = true;
 		try {
 			const buf = await getCompositeBuffer();
 			if (!buf) {
@@ -1569,10 +2645,60 @@ export function ScreenshotPreview() {
 				"quick-save",
 				"error",
 				"快速保存失败",
-				error instanceof Error ? error.message : "导出图像生成失败",
+					error instanceof Error ? error.message : "导出图像生成失败",
 			);
+		} finally {
+			exportInProgressRef.current = false;
 		}
 	};
+
+	// Keyboard shortcuts
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				if (textPanelOpen) {
+					event.preventDefault();
+					handleCloseTextPanel();
+					return;
+				}
+				window.close();
+				return;
+			}
+			if (isEditableKeyboardTarget(event.target)) return;
+			if (
+				(event.metaKey || event.ctrlKey) &&
+				event.shiftKey &&
+				event.key.toLowerCase() === "t"
+			) {
+				event.preventDefault();
+				if (IS_MAC && imageLoaded) setTextPanelOpen(true);
+				return;
+			}
+			if (
+				(event.metaKey || event.ctrlKey) &&
+				event.shiftKey &&
+				event.key.toLowerCase() === "p"
+			) {
+				event.preventDefault();
+				if (imageLoaded) void handlePin();
+				return;
+			}
+			if (
+				(event.metaKey || event.ctrlKey) &&
+				event.key.toLowerCase() === "z"
+			) {
+				event.preventDefault();
+				setOps((prev) => prev.slice(0, -1));
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [
+		handleCloseTextPanel,
+		handlePin,
+		imageLoaded,
+		textPanelOpen,
+	]);
 
 	// Background CSS style for preview
 	const bgStyle: React.CSSProperties =
@@ -1584,33 +2710,97 @@ export function ScreenshotPreview() {
 	const stageImageWidth = naturalSize.w || 800;
 	const stageImageHeight = naturalSize.h || 600;
 	const watermarkMetrics = getWatermarkMetrics(stageImageWidth, stageImageHeight);
-	const previewStageInset = previewIsBorderless ? 0 : EXPORT_FRAME_INSET;
-	const previewTopBarHeight = previewIsBorderless ? 0 : EXPORT_TOP_BAR_HEIGHT;
-	const previewStageWidth = stageImageWidth + previewStageInset * 2;
-	const previewStageHeight =
-		stageImageHeight + previewTopBarHeight + previewStageInset * 2;
-	const previewAvailableWidth = Math.max(420, viewportSize.w - 104);
-	const previewAvailableHeight = Math.max(320, viewportSize.h - 176);
+	const previewComposition = calculateScreenshotCompositionLayout(
+		stageImageWidth,
+		stageImageHeight,
+		backgroundPadding,
+		previewIsBorderless,
+	);
+	const previewStageInset = previewComposition.frameInset;
+	const previewTopBarHeight = previewComposition.topBarHeight;
+	const previewStageWidth = previewComposition.frameWidth;
+	const previewStageHeight = previewComposition.frameHeight;
+	const previewAvailableWidth = Math.max(1, previewViewportSize.w - 24);
+	const previewAvailableHeight = Math.max(1, previewViewportSize.h - 24);
 	const previewStageScale = Math.min(
 		1,
-		previewAvailableWidth / previewStageWidth,
-		previewAvailableHeight / previewStageHeight,
+		previewAvailableWidth / previewComposition.width,
+		previewAvailableHeight / previewComposition.height,
 	);
 
-	const toolBtn = (t: Tool, label: string, icon: string) => (
-		<button
-			key={t}
-			onClick={() => setTool(t)}
-			title={label}
-			className={`flex items-center justify-center w-9 h-9 rounded-xl text-[15px] transition-all ${
-				tool === t
-					? "bg-white/14 text-white ring-1 ring-white/10 shadow-[0_8px_20px_rgba(25,181,122,0.28)]"
-					: "text-white/55 hover:bg-white/8 hover:text-white"
-			}`}
-		>
-			{icon}
-		</button>
-	);
+	useEffect(() => {
+		if (!imageLoaded || !screenshotSrc) {
+			setCompositionPreviewReady(false);
+			return;
+		}
+
+		const visibleCanvas = compositionCanvasRef.current;
+		if (!visibleCanvas) return;
+		const requestId = ++compositionRenderRequestRef.current;
+		let cancelled = false;
+		const renderCanvas = document.createElement("canvas");
+
+		const renderPreview = async () => {
+			try {
+				const rendered = await renderCompositeToCanvas(
+					renderCanvas,
+					ops.map(cloneDrawOp),
+					"preview",
+					previewStageScale,
+				);
+				if (
+					!rendered ||
+					cancelled ||
+					requestId !== compositionRenderRequestRef.current
+				) {
+					return;
+				}
+
+				visibleCanvas.width = renderCanvas.width;
+				visibleCanvas.height = renderCanvas.height;
+				const context = visibleCanvas.getContext("2d");
+				if (context) {
+					context.imageSmoothingEnabled = true;
+					context.imageSmoothingQuality = "high";
+					context.drawImage(renderCanvas, 0, 0);
+				}
+				setCompositionPreviewReady(Boolean(context));
+			} catch {
+				if (
+					!cancelled &&
+					requestId === compositionRenderRequestRef.current
+				) {
+					setCompositionPreviewReady(false);
+				}
+			} finally {
+				releaseCanvas(renderCanvas);
+			}
+		};
+
+		const frameId = window.requestAnimationFrame(() => void renderPreview());
+		return () => {
+			cancelled = true;
+			window.cancelAnimationFrame(frameId);
+		};
+	}, [
+		backgroundPadding,
+		bg,
+		bgSrc,
+		chromeStyle,
+		imageLoaded,
+		ops,
+		previewDevicePixelRatio,
+		previewStageScale,
+		screenshotSrc,
+		showWatermark,
+		watermarkColor,
+		watermarkContent,
+		watermarkOpacity,
+	]);
+
+	const showInkControls = tool !== "mosaic";
+	const showWeightControls =
+		tool === "pen" || tool === "arrow" || tool === "rect";
 
 	return (
 		<div
@@ -1674,233 +2864,374 @@ export function ScreenshotPreview() {
 			)}
 			{/* ── Toolbar ───────────────────────────────────────────── */}
 			<div
-				className={`relative z-10 mx-3 mt-3 flex shrink-0 items-center gap-3 rounded-[22px] border border-white/10 ${IS_MAC ? "pl-[88px] pr-3" : "px-3"} py-2.5`}
+				data-quickshot-toolbar
+				className={`relative z-10 mx-2.5 mt-2.5 flex shrink-0 items-center gap-2 rounded-[18px] border border-white/10 ${IS_MAC ? "pl-[88px] pr-2" : "px-2"} py-1.5`}
 				style={{ ...previewChromeTheme.surface, WebkitAppRegion: "drag" } as React.CSSProperties}
 			>
 				<div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
 				<div
-					className="min-w-0 flex flex-1 items-center gap-3 overflow-x-auto pr-1"
+					className="min-w-0 flex flex-1 items-center gap-2 overflow-x-auto overscroll-x-contain scroll-smooth pr-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 					style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
 				>
-				<div
-					className="hidden shrink-0 rounded-full border border-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.28em] text-white/38 lg:block"
-					style={previewChromeTheme.group}
-				>
-					Markup Studio
-				</div>
-				<div
-					className="flex shrink-0 items-center gap-1 rounded-2xl px-1.5 py-1"
-					style={previewChromeTheme.group}
-				>
-					{toolBtn("pen", "画笔", "✎")}
-					{toolBtn("arrow", "箭头", "➜")}
-					{toolBtn("rect", "矩形", "▭")}
-					{toolBtn("text", "文字", "T")}
-					{toolBtn("mosaic", "马赛克", "◼︎")}
-				</div>
-
-				<div
-					className="flex shrink-0 items-center gap-2 rounded-2xl px-3 py-2"
-					style={previewChromeTheme.group}
-				>
-					<span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/42">Ink</span>
-					<div className="flex items-center gap-1.5">
-						{PRESET_COLORS.map((c) => (
+					<div
+						className="flex shrink-0 items-center gap-0.5 rounded-xl p-0.5"
+						style={previewChromeTheme.group}
+						role="group"
+						aria-label="标注工具"
+					>
+						{TOOL_OPTIONS.map(({ value, label, icon: Icon }) => (
 							<button
-								key={c}
-								onClick={() => setColor(c)}
-								style={{
-									background: c,
-									boxShadow:
-										color === c
-											? "0 0 0 2px rgba(255,255,255,0.88), 0 6px 18px rgba(255,255,255,0.12)"
-											: "inset 0 1px 0 rgba(255,255,255,0.45)",
-								}}
-								className="h-5 w-5 rounded-full transition-transform hover:scale-105"
-							/>
+								type="button"
+								key={value}
+								onClick={() => setTool(value)}
+								title={label}
+								aria-label={label}
+								aria-pressed={tool === value}
+								className={`flex h-9 w-9 items-center justify-center rounded-[10px] transition-[background-color,color,box-shadow] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 motion-reduce:transition-none ${
+									tool === value
+										? "bg-white/14 text-white ring-1 ring-inset ring-white/16 shadow-[0_5px_14px_rgba(25,181,122,0.2)]"
+										: "text-white/58 hover:bg-white/8 hover:text-white"
+								}`}
+							>
+								<Icon size={15} strokeWidth={1.75} />
+							</button>
 						))}
-						<input
-							type="color"
-							value={color}
-							onChange={(e) => setColor(e.target.value)}
-							className="h-6 w-6 cursor-pointer rounded-full border border-white/15 bg-transparent"
-							title="自定义颜色"
-						/>
 					</div>
-				</div>
 
-				<div
-					className="flex shrink-0 items-center gap-2 rounded-2xl px-3 py-2"
-					style={previewChromeTheme.group}
-				>
-					<span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/42">Weight</span>
-					<div className="flex items-center gap-1">
+					{showInkControls && (
+						<div
+							className="flex shrink-0 items-center gap-0.5 rounded-xl p-0.5"
+							style={previewChromeTheme.group}
+							role="group"
+							aria-label="标注颜色"
+						>
+							{PRESET_COLORS.map((presetColor, index) => (
+								<button
+									type="button"
+									key={presetColor}
+									onClick={() => setColor(presetColor)}
+									title={`标注颜色 ${presetColor}`}
+									aria-label={`标注颜色 ${presetColor}`}
+									aria-pressed={color === presetColor}
+									className={`flex h-8 w-8 items-center justify-center rounded-[9px] transition-[background-color,box-shadow] duration-150 ease-out hover:bg-white/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 motion-reduce:transition-none ${
+										index >= 5 ? "max-[860px]:hidden" : ""
+									}`}
+								>
+									<span
+										className="h-4 w-4 rounded-full border border-white/20"
+										style={{
+											background: presetColor,
+											boxShadow:
+												color === presetColor
+													? "0 0 0 2px rgba(255,255,255,0.88)"
+													: "inset 0 1px 0 rgba(255,255,255,0.45)",
+										}}
+									/>
+								</button>
+							))}
+							<label
+								className="relative flex h-8 w-8 cursor-pointer items-center justify-center rounded-[9px] text-white/58 transition-[background-color,color] duration-150 ease-out hover:bg-white/8 hover:text-white focus-within:ring-2 focus-within:ring-white/55 motion-reduce:transition-none"
+								title="自定义颜色"
+							>
+								<Pipette size={14} strokeWidth={1.75} aria-hidden="true" />
+								<span
+									className="absolute bottom-1 h-1 w-3 rounded-full"
+									style={{ background: color }}
+								/>
+								<input
+									type="color"
+									value={color}
+									onChange={(e) => setColor(e.target.value)}
+									className="absolute inset-0 cursor-pointer opacity-0"
+									aria-label="自定义标注颜色"
+								/>
+							</label>
+						</div>
+					)}
+
+					{showWeightControls && (
+						<div
+							className="flex shrink-0 items-center gap-0.5 rounded-xl p-0.5"
+							style={previewChromeTheme.group}
+							role="group"
+							aria-label="标注粗细"
+						>
 						{BRUSH_SIZES.map((s, i) => (
 							<button
+								type="button"
 								key={s}
 								onClick={() => setBrushSize(i)}
-								className={`flex h-9 w-9 items-center justify-center rounded-xl transition-all ${
-									brushSize === i ? "bg-white/12 ring-1 ring-white/10" : "hover:bg-white/8"
+								title={`线宽 ${s}px`}
+								aria-label={`线宽 ${s}px`}
+								aria-pressed={brushSize === i}
+								className={`flex h-8 w-8 items-center justify-center rounded-[9px] transition-[background-color,box-shadow] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 motion-reduce:transition-none ${
+									brushSize === i
+										? "bg-white/12 ring-1 ring-inset ring-white/14"
+										: "hover:bg-white/8"
 								}`}
 							>
 								<div className="rounded-full bg-white" style={{ width: s + 4, height: s + 4, opacity: brushSize === i ? 1 : 0.82 }} />
 							</button>
 						))}
-					</div>
-				</div>
+						</div>
+					)}
 
-				<button
-					onClick={() => setOps((prev) => prev.slice(0, -1))}
-					disabled={ops.length === 0}
-					className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-white/65 transition-all hover:bg-white/8 hover:text-white disabled:opacity-30"
-					title="撤销 (⌘Z)"
-					style={previewChromeTheme.group}
-				>
-					↩
-				</button>
-
-				<div className="hidden shrink-0 items-center gap-2 rounded-2xl px-3 py-2 text-[11px] text-white/55 xl:flex" style={previewChromeTheme.group}>
-					<span className="font-semibold tracking-[0.18em] uppercase text-white/38">Canvas</span>
-					<span>{naturalSize.w > 0 ? `${naturalSize.w} × ${naturalSize.h}` : "Preparing"}</span>
-				</div>
-				</div>
-
-				<div className="flex shrink-0 items-center gap-2" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
 					<button
+						type="button"
+						onClick={() => setOps((prev) => prev.slice(0, -1))}
+						disabled={ops.length === 0}
+						className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/65 transition-[background-color,color,opacity] duration-150 ease-out hover:bg-white/8 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:opacity-30 motion-reduce:transition-none"
+						title={IS_MAC ? "撤销 (⌘Z)" : "撤销 (Ctrl+Z)"}
+						aria-label="撤销"
+						style={previewChromeTheme.group}
+					>
+						<Undo2 size={15} strokeWidth={1.75} />
+					</button>
+				</div>
+
+				<div className="flex shrink-0 items-center gap-1.5" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+					{IS_MAC && (
+						<button
+							ref={textPanelTriggerRef}
+							type="button"
+							onClick={() => {
+								if (textPanelOpen) {
+									handleCloseTextPanel();
+								} else {
+									setTextPanelOpen(true);
+								}
+							}}
+							disabled={!imageLoaded}
+							className={`flex h-9 w-9 items-center justify-center rounded-xl border text-white/86 transition-[background-color,border-color,box-shadow,opacity] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:cursor-not-allowed disabled:opacity-35 motion-reduce:transition-none ${
+								textPanelOpen
+									? "border-white/28 ring-1 ring-inset ring-white/16 shadow-[0_6px_18px_rgba(255,255,255,0.07)]"
+									: "border-white/12 hover:bg-white/12"
+							}`}
+							style={previewChromeTheme.copyButton}
+							title="提取文字 (⌘⇧T)"
+							aria-label="提取文字"
+							aria-expanded={textPanelOpen}
+							aria-controls="text-extraction-panel"
+						>
+							<ScanText size={15} strokeWidth={1.8} />
+						</button>
+					)}
+					<button
+						type="button"
+						onClick={() => void handlePin()}
+						disabled={!imageLoaded}
+						className={`flex h-9 w-9 items-center justify-center rounded-xl border text-white/86 transition-[background-color,border-color,box-shadow,opacity] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 disabled:cursor-not-allowed disabled:opacity-35 motion-reduce:transition-none ${
+							actionToast?.action === "pin" &&
+							actionToast.tone === "success"
+								? "border-white/28 ring-1 ring-inset ring-white/16 shadow-[0_6px_18px_rgba(255,255,255,0.07)]"
+								: "border-white/12 hover:bg-white/12"
+						}`}
+						style={previewChromeTheme.copyButton}
+						title={
+							IS_MAC
+								? "悬浮置顶 (⌘⇧P)"
+								: "悬浮置顶 (Ctrl+Shift+P)"
+						}
+						aria-label="悬浮置顶"
+					>
+						<Pin size={15} strokeWidth={1.8} />
+					</button>
+					<button
+						type="button"
 						onClick={handleCopy}
-						className={`flex h-10 w-10 items-center justify-center rounded-2xl border text-white/86 transition-all ${
+						className={`flex h-9 w-9 items-center justify-center rounded-xl border text-white/86 transition-[background-color,border-color,box-shadow] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 motion-reduce:transition-none ${
 							actionToast?.action === "copy" && actionToast.tone === "success"
-								? "scale-[1.03] border-white/26 shadow-[0_10px_30px_rgba(255,255,255,0.08)]"
+								? "border-white/28 ring-1 ring-inset ring-white/16 shadow-[0_6px_18px_rgba(255,255,255,0.07)]"
 								: "border-white/12 hover:bg-white/12"
 						}`}
 						style={previewChromeTheme.copyButton}
 						title="复制到剪贴板"
+						aria-label="复制到剪贴板"
 					>
-						<Copy size={16} strokeWidth={2} />
+						<Copy size={15} strokeWidth={1.8} />
 					</button>
 					<button
+						type="button"
 						onClick={handleQuickSave}
-						className={`flex h-10 w-10 items-center justify-center rounded-2xl text-white transition-all ${
+						className={`flex h-9 w-9 items-center justify-center rounded-xl text-white transition-[filter,box-shadow] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 motion-reduce:transition-none ${
 							actionToast?.action === "quick-save" && actionToast.tone === "success"
-								? "scale-[1.04] shadow-[0_18px_34px_rgba(31,181,118,0.32)]"
-								: "hover:scale-[1.01]"
+								? "shadow-[0_10px_24px_rgba(31,181,118,0.3)] brightness-110"
+								: "hover:brightness-110"
 						}`}
 						style={previewChromeTheme.primaryButton}
 						title="快速保存到下载目录"
+						aria-label="快速保存到下载目录"
 					>
-						<Download size={16} strokeWidth={2} />
+						<Download size={15} strokeWidth={1.8} />
 					</button>
 					<button
+						type="button"
 						onClick={handleSave}
-						className={`flex h-10 w-10 items-center justify-center rounded-2xl border text-white/86 transition-all ${
+						className={`flex h-9 w-9 items-center justify-center rounded-xl border text-white/86 transition-[background-color,border-color,box-shadow] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 motion-reduce:transition-none ${
 							actionToast?.action === "save" && actionToast.tone === "success"
-								? "scale-[1.03] border-white/26 shadow-[0_10px_30px_rgba(255,255,255,0.08)]"
+								? "border-white/28 ring-1 ring-inset ring-white/16 shadow-[0_6px_18px_rgba(255,255,255,0.07)]"
 								: "border-white/12 hover:bg-white/12"
 						}`}
 						style={previewChromeTheme.copyButton}
 						title="保存 PNG"
+						aria-label="保存 PNG"
 					>
-						<Save size={16} strokeWidth={2} />
+						<Save size={15} strokeWidth={1.8} />
 					</button>
 					{!IS_MAC && (
 						<button
+							type="button"
 							onClick={() => window.close()}
-							className="flex h-10 w-10 items-center justify-center rounded-2xl text-white/50 transition-all hover:bg-white/10 hover:text-white"
+							className="flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-[background-color,color] duration-150 ease-out hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 motion-reduce:transition-none"
 							title="关闭"
+							aria-label="关闭"
 							style={previewChromeTheme.group}
 						>
-							✕
+							<X size={15} strokeWidth={1.8} />
 						</button>
 					)}
 				</div>
 			</div>
 
-			{/* ── Main canvas area ───────────────────────────────────── */}
 			<div
-				className="relative z-10 flex-1 overflow-auto px-3 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3"
-				style={bgStyle}
+				data-quickshot-workspace
+				className="relative z-10 flex min-h-0 flex-1 overflow-hidden"
 			>
+				{/* ── Main canvas area ───────────────────────────────── */}
 				<div
-					className="pointer-events-none absolute inset-0"
+					ref={previewViewportRef}
+					data-quickshot-viewport
+					className="relative min-h-0 min-w-0 flex-1 overflow-auto px-2.5 pb-2 pt-1.5 sm:px-3 sm:pb-2.5 sm:pt-2"
 					style={{
 						background:
-							"radial-gradient(circle at 50% 26%, rgba(255,255,255,0.14), transparent 34%), linear-gradient(180deg, rgba(255,255,255,0.04), transparent 28%)",
+							"radial-gradient(circle at 50% 24%, rgba(255,255,255,0.055), transparent 42%), rgba(4,7,12,0.34)",
 					}}
-				/>
+				>
+					<div
+						className="pointer-events-none absolute inset-0"
+						style={{
+							background:
+								"linear-gradient(rgba(255,255,255,0.018) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.018) 1px, transparent 1px)",
+							backgroundSize: "20px 20px",
+						}}
+					/>
 				<div className="relative flex min-h-full items-center justify-center">
 					{screenshotSrc && (
-						<div className="relative flex flex-col items-center">
+						<div
+							data-quickshot-composition
+							className="relative m-2 flex-shrink-0 overflow-hidden sm:m-3"
+							style={{
+								width: previewComposition.width * previewStageScale,
+								height: previewComposition.height * previewStageScale,
+							}}
+						>
+							<div
+								className="absolute left-0 top-0 overflow-hidden"
+								style={{
+									...bgStyle,
+									width: previewComposition.width,
+									height: previewComposition.height,
+									transform: `scale(${previewStageScale})`,
+									transformOrigin: "top left",
+								}}
+							>
 							{!previewIsBorderless && (
 								<>
 									<div
-										className="pointer-events-none absolute left-1/2 top-6 h-24 w-[72%] -translate-x-1/2 rounded-full blur-3xl"
+										className="pointer-events-none absolute inset-0"
 										style={{
-											background: `radial-gradient(circle, ${stageChromeTheme.exportGlow}, rgba(255,255,255,0))`,
-											opacity: 0.85,
+											background: `radial-gradient(circle ${Math.max(previewStageWidth, previewStageHeight) * 0.88}px at ${previewComposition.frameX + previewStageWidth * 0.5}px ${previewComposition.frameY + previewStageHeight * 0.3}px, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.035) 42%, rgba(255,255,255,0) 100%)`,
 										}}
 									/>
 									<div
-										className="pointer-events-none absolute left-1/2 top-[calc(100%-18px)] h-16 w-[68%] -translate-x-1/2 rounded-full blur-2xl"
+										className="pointer-events-none absolute inset-0"
 										style={{
-											background:
-												"radial-gradient(circle, rgba(0,0,0,0.18), rgba(0,0,0,0))",
+											background: `radial-gradient(circle ${Math.max(previewStageWidth, previewStageHeight) * 0.8}px at ${previewComposition.frameX + previewStageWidth * 0.2}px ${previewComposition.frameY + previewStageHeight * 0.08}px, ${stageChromeTheme.exportGlow} 0%, rgba(0,0,0,0) 100%)`,
+										}}
+									/>
+									<div
+										className="pointer-events-none absolute"
+										style={{
+											left: previewComposition.frameX - 30,
+											top: previewComposition.frameY + previewStageHeight - 6,
+											width: previewStageWidth + 60,
+											height: 86,
+											background: `radial-gradient(circle ${previewStageWidth * 0.44}px at 50% 24px, rgba(0,0,0,0.16) 0%, rgba(0,0,0,0.16) 22.7%, rgba(0,0,0,0) 100%)`,
 										}}
 									/>
 								</>
 							)}
 							<div
-								className="relative m-2 flex-shrink-0 sm:m-3"
+								className="absolute flex-shrink-0"
 								style={{
-									width: previewStageWidth * previewStageScale,
-									height: previewStageHeight * previewStageScale,
+									left: previewComposition.frameX,
+									top: previewComposition.frameY,
+									width: previewStageWidth,
+									height: previewStageHeight,
 								}}
 							>
 								{!previewIsBorderless && (
 									<div
-										className="pointer-events-none absolute left-0 top-0 rounded-[34px]"
+										className="pointer-events-none absolute rounded-[32px]"
 										style={{
-											width: previewStageWidth * previewStageScale,
-											height: previewStageHeight * previewStageScale,
-											transform: `translateY(${18 * previewStageScale}px) rotate(-0.5deg)`,
+											left: 8,
+											top: 18,
+											width: previewStageWidth - 16,
+											height: previewStageHeight - 12,
+											transform: "rotate(-0.458deg)",
 											transformOrigin: "center center",
 											background: "rgba(255,255,255,0.028)",
-											boxShadow: "0 16px 36px rgba(0,0,0,0.1)",
+											boxShadow: "0 18px 34px rgba(0,0,0,0.1)",
 										}}
 									/>
 								)}
 								<div
-									className={`absolute left-0 top-0 overflow-hidden ${previewIsBorderless ? "" : "border"}`}
+									className="absolute left-0 top-0 overflow-hidden"
 									style={{
 										width: previewStageWidth,
 										height: previewStageHeight,
-										transform: `scale(${previewStageScale})`,
-										transformOrigin: "top left",
+										boxSizing: "border-box",
 										borderRadius: previewIsBorderless ? 0 : EXPORT_FRAME_RADIUS,
 										background: previewIsBorderless ? "transparent" : stageChromeTheme.exportFrameFill,
-										borderColor: stageChromeTheme.exportFrameStroke,
 										boxShadow: previewIsBorderless
 											? "none"
-											: "inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 0 rgba(255,255,255,0.04)",
+											: "0 14px 44px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.12)",
 									}}
 								>
 									{!previewIsBorderless && (
 										<>
 											<div
-												className="pointer-events-none absolute inset-x-0 top-0"
+												className="pointer-events-none absolute"
 												style={{
-													height: EXPORT_TOP_BAR_HEIGHT,
+													left: 1,
+													top: 1,
+													width: previewStageWidth - 2,
+													height: previewTopBarHeight,
+													borderRadius: EXPORT_FRAME_RADIUS - 1,
 													background: stageChromeTheme.exportTopBarFill,
 												}}
 											/>
-											<div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
 											<div
-												className="pointer-events-none absolute right-0 top-0 w-[180px]"
+												className="pointer-events-none absolute"
 												style={{
-													height: EXPORT_TOP_BAR_HEIGHT,
+													left: 1,
+													top: 1,
+													width: previewStageWidth - 2,
+													height: previewTopBarHeight,
+													borderRadius: EXPORT_FRAME_RADIUS - 1,
+													background:
+														"linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0) 70%)",
+												}}
+											/>
+											<div className="pointer-events-none absolute left-6 right-6 top-px h-px bg-white/20" />
+											<div
+												className="pointer-events-none absolute right-[30px] top-1 w-[150px]"
+												style={{
+													height: previewTopBarHeight - 8,
 													background: `linear-gradient(90deg, rgba(255,255,255,0), ${stageChromeTheme.exportAccent}16, rgba(255,255,255,0))`,
 												}}
 											/>
-											<div className="pointer-events-none absolute left-[24px] top-[13px] flex items-center gap-[8px]">
+											<div className="pointer-events-none absolute left-[20.5px] top-[13px] flex items-center gap-[9px]">
 												<div className="h-[11px] w-[11px] rounded-full bg-[#FF5F57]" />
 												<div className="h-[11px] w-[11px] rounded-full bg-[#FFBD2E]" />
 												<div className="h-[11px] w-[11px] rounded-full bg-[#28C840]" />
@@ -1920,10 +3251,9 @@ export function ScreenshotPreview() {
 												/>
 											</div>
 											<div
-												className="pointer-events-none absolute right-0 w-[26%]"
+												className="pointer-events-none absolute inset-[1px]"
 												style={{
-													top: EXPORT_TOP_BAR_HEIGHT,
-													bottom: 0,
+													borderRadius: EXPORT_FRAME_RADIUS - 1,
 													background:
 														"linear-gradient(135deg, rgba(255,255,255,0), rgba(255,255,255,0.03) 55%, rgba(255,255,255,0.08))",
 												}}
@@ -1940,79 +3270,83 @@ export function ScreenshotPreview() {
 										<div
 											className="relative overflow-hidden"
 											style={{
+												width: stageImageWidth,
+												height: stageImageHeight,
 												borderRadius: previewIsBorderless ? 0 : EXPORT_IMAGE_RADIUS,
 												boxShadow: previewIsBorderless
 													? "none"
-													: "0 16px 28px rgba(0,0,0,0.28)",
-												border: previewIsBorderless
-													? "none"
-													: "1px solid rgba(255,255,255,0.12)",
+													: "0 10px 26px rgba(0,0,0,0.32)",
 											}}
 										>
 											<img
 												ref={imgRef}
-												src={screenshotSrc}
+												src={screenshotSrc || undefined}
 												style={{
 													display: "block",
 													width: stageImageWidth,
 													height: stageImageHeight,
 													borderRadius: previewIsBorderless ? 0 : EXPORT_IMAGE_RADIUS,
 													userSelect: "none",
-													imageRendering: "-webkit-optimize-contrast" as React.CSSProperties["imageRendering"],
+													imageRendering: "auto",
 												}}
 												draggable={false}
-												onLoad={() => {
-													const img = imgRef.current;
-													if (img) setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
-												}}
+												onLoad={() => void handleScreenshotImageLoad()}
+												onError={handleScreenshotImageError}
 											/>
+										{!previewIsBorderless && (
 											<div
 												className="pointer-events-none absolute inset-0"
 												style={{
-													background: previewIsBorderless
-														? "none"
-														: "linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.025) 22%, rgba(255,255,255,0) 50%, rgba(0,0,0,0.06))",
+													borderRadius: EXPORT_IMAGE_RADIUS,
+													boxShadow:
+														"inset 0 0 0 1px rgba(255,255,255,0.12), inset 0 0 0 2px rgba(255,255,255,0.05)",
 												}}
 											/>
-											<canvas
-												ref={canvasRef}
-												width={naturalSize.w || 800}
-												height={naturalSize.h || 600}
+										)}
+										<canvas
+											ref={canvasRef}
+												width={0}
+												height={0}
+											style={{
+												position: "absolute",
+												inset: 0,
+												width: "100%",
+													height: "100%",
+													borderRadius: previewIsBorderless ? 0 : EXPORT_IMAGE_RADIUS,
+													pointerEvents: "none",
+												}}
+											/>
+										<canvas
+											ref={activeCanvasRef}
+												width={0}
+												height={0}
 												style={{
-													position: "absolute",
-													inset: 0,
+												position: "absolute",
+												inset: 0,
+												zIndex: 6,
 													width: "100%",
 													height: "100%",
 													borderRadius: previewIsBorderless ? 0 : EXPORT_IMAGE_RADIUS,
 													cursor: tool === "text" ? "text" : "crosshair",
+													touchAction: "none",
 												}}
-												onMouseDown={handlePointerDown}
-												onMouseMove={handlePointerMove}
-												onMouseUp={handlePointerUp}
+												onPointerDown={handlePointerDown}
+												onPointerMove={handlePointerMove}
+												onPointerUp={handlePointerUp}
+												onPointerCancel={handlePointerCancel}
+												onLostPointerCapture={handlePointerCancel}
 											/>
 											{textInput && (
-												<input
-													autoFocus
-													value={textInput.value}
-													onChange={(e) => setTextInput({ ...textInput, value: e.target.value })}
-													onKeyDown={(e) => {
-														if (e.key === "Enter") commitText();
-														if (e.key === "Escape") setTextInput(null);
+											<AnnotationTextInput
+												style={{ ...getTextInputStyle(), zIndex: 7 }}
+													color={color}
+													onDraftChange={(value) => {
+														textInputDraftRef.current = value;
 													}}
-													onBlur={commitText}
-													style={{
-														position: "absolute",
-														...getTextInputStyle(),
-														background: "rgba(7,10,16,0.18)",
-														border: "none",
-														borderBottom: `2px solid ${color}`,
-														outline: "none",
-														color,
-														fontSize: 20,
-														fontWeight: "bold",
-														minWidth: 60,
-														fontFamily: "system-ui",
-														backdropFilter: "blur(8px)",
+													onCommit={commitText}
+													onCancel={() => {
+														textInputDraftRef.current = "";
+														setTextInput(null);
 													}}
 												/>
 											)}
@@ -2020,6 +3354,7 @@ export function ScreenshotPreview() {
 												<div
 													className="pointer-events-none absolute select-none overflow-hidden text-ellipsis whitespace-nowrap"
 													style={{
+														zIndex: 2,
 														right: watermarkMetrics.right,
 														bottom: watermarkMetrics.bottom,
 														maxWidth: watermarkMetrics.maxWidth,
@@ -2029,7 +3364,9 @@ export function ScreenshotPreview() {
 														),
 														fontSize: watermarkMetrics.fontSize,
 														fontWeight: 600,
+														lineHeight: 1,
 														letterSpacing: "0.01em",
+														textAlign: "right",
 														fontFamily:
 															'"SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif',
 														WebkitTextStroke: `0.72px ${withAlpha(
@@ -2044,31 +3381,72 @@ export function ScreenshotPreview() {
 											)}
 										</div>
 									</div>
+									{!previewIsBorderless && (
+										<div
+											className="pointer-events-none absolute inset-0"
+											style={{
+												boxSizing: "border-box",
+												borderRadius: EXPORT_FRAME_RADIUS,
+												border: `1.5px solid ${stageChromeTheme.exportFrameStroke}`,
+											}}
+										/>
+									)}
 								</div>
 							</div>
+								<canvas
+									ref={compositionCanvasRef}
+									data-quickshot-composition-canvas
+									className="pointer-events-none absolute left-0 top-0"
+									style={{
+										zIndex: 5,
+										width: previewComposition.width,
+										height: previewComposition.height,
+										imageRendering: "auto",
+										opacity: compositionPreviewReady ? 1 : 0,
+									}}
+								/>
+								</div>
 						</div>
 					)}
 				</div>
 			</div>
 
+				<TextExtractionPanel
+					open={textPanelOpen}
+					onClose={handleCloseTextPanel}
+					onExtract={handleExtractText}
+					onCopyText={handleCopyText}
+					surface={previewChromeTheme.surface}
+					group={previewChromeTheme.group}
+					primaryButton={previewChromeTheme.primaryButton}
+					accent={previewChromeTheme.exportAccent}
+				/>
+			</div>
+
 			{/* ── Background strip ──────────────────────────────────── */}
-			<div className="relative z-10 px-4 pb-4">
+			<div
+				data-quickshot-dock
+				className="relative z-10 px-2.5 pb-2.5"
+			>
 				<div
-					className="flex items-center gap-3 overflow-x-auto rounded-[24px] border border-white/10 px-4 py-3"
+					className="flex items-center gap-2 overflow-x-auto overscroll-x-contain scroll-smooth rounded-[18px] border border-white/10 px-2.5 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 					style={previewChromeTheme.surface}
 				>
-					<div className="flex items-center gap-2 flex-shrink-0">
-						<span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Styles</span>
-						<div className="flex gap-1.5">
+					<div className="flex flex-shrink-0 items-center gap-1.5">
+						<span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/52">Styles</span>
+						<div className="flex gap-1" role="radiogroup" aria-label="界面风格">
 							{(Object.entries(CHROME_THEMES) as [ChromeStyle, (typeof CHROME_THEMES)[ChromeStyle]][]).map(
 								([value, theme]) => (
 									<button
+										type="button"
 										key={value}
 										onClick={() => setChromeStyle(value)}
-										className={`rounded-2xl px-3 py-2 text-[11px] font-medium transition-all ${
+										role="radio"
+										aria-checked={chromeStyle === value}
+										className={`h-9 rounded-xl px-2.5 text-[11px] font-medium transition-[color,border-color,box-shadow,filter] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 motion-reduce:transition-none ${
 											chromeStyle === value
-												? "text-white scale-[1.03]"
-												: "text-white/65 hover:text-white"
+												? "text-white brightness-110"
+												: "text-white/68 hover:text-white hover:brightness-105"
 										}`}
 										style={{
 											background: theme.swatch,
@@ -2078,7 +3456,7 @@ export function ScreenshotPreview() {
 													: "1px solid rgba(255,255,255,0.12)",
 											boxShadow:
 												chromeStyle === value
-													? "0 12px 24px rgba(0,0,0,0.22)"
+													? "0 0 0 1px rgba(255,255,255,0.12)"
 													: "inset 0 1px 0 rgba(255,255,255,0.14)",
 										}}
 									>
@@ -2087,15 +3465,63 @@ export function ScreenshotPreview() {
 								),
 							)}
 						</div>
-					</div>
-					<div className="h-8 w-px shrink-0 bg-white/8" />
-					<div className="flex items-center gap-2 flex-shrink-0">
-						<span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Signature</span>
+						</div>
+						<div className="h-6 w-px shrink-0 bg-white/8" />
+						<div
+							data-quickshot-padding-control
+							className="flex flex-shrink-0 items-center gap-1.5"
+							title={`成品尺寸 ${previewComposition.width} × ${previewComposition.height}`}
+						>
+							<span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/52">
+								边距
+							</span>
+							<div
+								className="flex h-9 items-center gap-2 rounded-xl px-2.5"
+								style={previewChromeTheme.group}
+								onDoubleClick={() =>
+									setBackgroundPadding(DEFAULT_BACKGROUND_PADDING)
+								}
+							>
+								<input
+									type="range"
+									min={MIN_BACKGROUND_PADDING}
+									max={MAX_BACKGROUND_PADDING}
+									step={BACKGROUND_PADDING_STEP}
+									value={backgroundPadding}
+									onChange={(event) =>
+										setBackgroundPadding(
+											normalizeBackgroundPadding(Number(event.target.value)),
+										)
+									}
+									className="w-20 accent-white/80"
+									aria-label="截图外部背景边距"
+									aria-valuetext={`${backgroundPadding} 像素`}
+								/>
+								<span className="w-9 text-right text-[10px] tabular-nums text-white/62">
+									{backgroundPadding}px
+								</span>
+							</div>
+						</div>
+						<div className="h-6 w-px shrink-0 bg-white/8" />
+						<div className="flex flex-shrink-0 items-center gap-1.5">
+						<span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/52">Signature</span>
 						<button
-							onClick={() => setWatermarkEnabled((prev) => !prev)}
-							className={`rounded-2xl px-3 py-2 text-[11px] font-medium transition-all ${
+							type="button"
+							onClick={() => {
+								setWatermarkEnabled((prev) => {
+									const nextEnabled = !prev;
+									if (nextEnabled) {
+										setWatermarkOpacity((prevOpacity) =>
+											ensureWatermarkReadableOpacity(prevOpacity),
+										);
+									}
+									return nextEnabled;
+								});
+							}}
+							aria-pressed={watermarkEnabled}
+							className={`h-9 rounded-xl px-2.5 text-[11px] font-medium transition-[color,border-color,box-shadow] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 motion-reduce:transition-none ${
 								watermarkEnabled
-									? "text-white shadow-[0_10px_24px_rgba(0,0,0,0.2)]"
+									? "text-white shadow-[0_5px_14px_rgba(0,0,0,0.16)]"
 									: "text-white/62 hover:text-white"
 							}`}
 							style={{
@@ -2108,7 +3534,7 @@ export function ScreenshotPreview() {
 							{watermarkEnabled ? "已开启" : "已关闭"}
 						</button>
 						<div
-							className="flex items-center gap-3 rounded-2xl px-3 py-2"
+							className="flex h-9 items-center gap-2 rounded-xl px-2"
 							style={previewChromeTheme.group}
 						>
 							<input
@@ -2116,16 +3542,26 @@ export function ScreenshotPreview() {
 								value={watermarkText}
 								onChange={(e) => {
 									const nextValue = e.target.value;
+									const hasContent = nextValue.trim().length > 0;
 									setWatermarkText(nextValue);
-									setWatermarkEnabled(nextValue.trim().length > 0);
+									setWatermarkEnabled(hasContent);
+									if (hasContent) {
+										setWatermarkOpacity((prev) =>
+											ensureWatermarkReadableOpacity(prev),
+										);
+									}
 								}}
 								placeholder="输入右下角签名"
-								className="h-8 w-[180px] bg-transparent text-sm text-white outline-none placeholder:text-white/28"
+								aria-label="右下角签名文字"
+								className="h-7 w-[clamp(116px,15vw,180px)] bg-transparent text-xs text-white outline-none placeholder:text-white/32"
 							/>
 							<div className="flex items-center gap-1.5">
 								<button
+									type="button"
 									onClick={() => setWatermarkColor(AUTO_WATERMARK_COLOR)}
-									className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] transition-all ${
+									aria-label="签名颜色自动"
+									aria-pressed={watermarkColor === AUTO_WATERMARK_COLOR}
+									className={`h-7 rounded-lg px-2 text-[10px] font-semibold uppercase tracking-[0.12em] transition-[color,border-color,box-shadow] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 motion-reduce:transition-none ${
 										watermarkColor === AUTO_WATERMARK_COLOR
 											? "text-white"
 											: "text-white/56 hover:text-white"
@@ -2150,75 +3586,102 @@ export function ScreenshotPreview() {
 								</button>
 								{WATERMARK_PRESET_COLORS.map((presetColor) => (
 									<button
+										type="button"
 										key={presetColor}
 										onClick={() => setWatermarkColor(presetColor)}
-										className="h-6 w-6 rounded-full border transition-transform hover:scale-105"
-										style={{
-											background: presetColor,
-											borderColor:
-												watermarkColor === presetColor
-													? "rgba(255,255,255,0.92)"
-													: "rgba(255,255,255,0.22)",
-											boxShadow:
-												watermarkColor === presetColor
-													? "0 0 0 2px rgba(255,255,255,0.18)"
-													: "inset 0 1px 0 rgba(255,255,255,0.28)",
-										}}
+										className="flex h-8 w-8 items-center justify-center rounded-lg transition-[background-color] duration-150 ease-out hover:bg-white/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 max-[1100px]:hidden motion-reduce:transition-none"
 										title={presetColor}
-									/>
+										aria-label={`签名颜色 ${presetColor}`}
+										aria-pressed={watermarkColor === presetColor}
+									>
+										<span
+											className="h-3.5 w-3.5 rounded-full border"
+											style={{
+												background: presetColor,
+												borderColor:
+													watermarkColor === presetColor
+														? "rgba(255,255,255,0.92)"
+														: "rgba(255,255,255,0.22)",
+												boxShadow:
+													watermarkColor === presetColor
+														? "0 0 0 2px rgba(255,255,255,0.18)"
+														: "inset 0 1px 0 rgba(255,255,255,0.28)",
+											}}
+										/>
+									</button>
 								))}
-								<input
-									type="color"
-									value={
-										watermarkColor === AUTO_WATERMARK_COLOR
-											? "#FFFFFF"
-											: watermarkColor
-									}
-									onChange={(e) => setWatermarkColor(e.target.value)}
-									className="h-6 w-6 cursor-pointer rounded-full border border-white/18 bg-transparent"
+								<label
+									className="relative flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-white/58 transition-[background-color,color] duration-150 ease-out hover:bg-white/8 hover:text-white focus-within:ring-2 focus-within:ring-white/55 motion-reduce:transition-none"
 									title="自定义签名颜色"
-								/>
+								>
+									<Pipette size={13} strokeWidth={1.75} aria-hidden="true" />
+									<span
+										className="absolute bottom-1 h-1 w-3 rounded-full"
+										style={{
+											background:
+												watermarkColor === AUTO_WATERMARK_COLOR
+													? "#FFFFFF"
+													: watermarkColor,
+										}}
+									/>
+									<input
+										type="color"
+										value={
+											watermarkColor === AUTO_WATERMARK_COLOR
+												? "#FFFFFF"
+												: watermarkColor
+										}
+										onChange={(e) => setWatermarkColor(e.target.value)}
+										className="absolute inset-0 cursor-pointer opacity-0"
+										aria-label="自定义签名颜色"
+									/>
+								</label>
 							</div>
 							<div className="flex items-center gap-2">
-								<span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/38">
+								<span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/48 max-[1200px]:hidden">
 									Opacity
 								</span>
 								<input
 									type="range"
-									min={0}
-									max={80}
+									min={MIN_WATERMARK_OPACITY}
+									max={MAX_WATERMARK_OPACITY}
 									value={watermarkOpacity}
 									onChange={(e) =>
-										setWatermarkOpacity(clamp(Number(e.target.value), 0, 80))
+										setWatermarkOpacity(normalizeWatermarkOpacity(Number(e.target.value)))
 									}
-									className="w-24 accent-white/80"
+									className="w-20 accent-white/80"
+									aria-label="签名透明度"
 								/>
-								<span className="w-9 text-right text-[11px] text-white/62">
+								<span className="w-8 text-right text-[10px] text-white/62">
 									{watermarkOpacity}%
 								</span>
 							</div>
 						</div>
 					</div>
-					<div className="h-8 w-px shrink-0 bg-white/8" />
-					<div className="flex items-center gap-2 flex-shrink-0">
-						<span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Gradients</span>
-						<div className="flex gap-1.5">
+					<div className="h-6 w-px shrink-0 bg-white/8" />
+					<div className="flex flex-shrink-0 items-center gap-1.5">
+						<span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/52">Gradients</span>
+						<div className="flex gap-1" role="radiogroup" aria-label="渐变背景">
 					{GRADIENTS.map((g, i) => {
 						const isSelected =
 							bg.kind === "gradient" && (bg as { css: string }).css === (g as { css: string }).css;
 						return (
 							<button
+								type="button"
 								key={i}
 								onClick={() => setBg(g)}
-								className={`h-9 w-14 rounded-2xl border transition-all ${
+								role="radio"
+								aria-checked={isSelected}
+								aria-label={`渐变背景 ${i + 1}`}
+								className={`h-8 w-11 rounded-xl border transition-[border-color,box-shadow,filter] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 motion-reduce:transition-none ${
 									isSelected
-										? "border-white/60 scale-[1.04]"
-										: "border-white/10 hover:border-white/28"
+										? "border-white/65 brightness-110"
+										: "border-white/10 hover:border-white/32 hover:brightness-105"
 								}`}
 								style={{
 									background: (g as { css: string }).css,
 									boxShadow: isSelected
-										? "0 10px 24px rgba(0,0,0,0.24)"
+										? "0 0 0 1px rgba(255,255,255,0.12)"
 										: undefined,
 								}}
 							/>
@@ -2226,25 +3689,29 @@ export function ScreenshotPreview() {
 					})}
 						</div>
 					</div>
-					<div className="h-8 w-px shrink-0 bg-white/8" />
-					<div className="flex items-center gap-2 flex-shrink-0">
-						<span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Tones</span>
-						<div className="flex gap-1.5">
+					<div className="h-6 w-px shrink-0 bg-white/8" />
+					<div className="flex flex-shrink-0 items-center gap-1.5">
+						<span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/52">Tones</span>
+						<div className="flex gap-1" role="radiogroup" aria-label="纯色背景">
 					{["#1a1a2e", "#0d0d0d", "#f5f5f0", "#1e293b", "#312e81"].map((c) => {
 						const isSelected = bg.kind === "solid" && (bg as { value: string }).value === c;
 						return (
 							<button
+								type="button"
 								key={c}
 								onClick={() => setBg({ kind: "solid", value: c })}
-								className={`h-9 w-14 rounded-2xl border transition-all ${
+								role="radio"
+								aria-checked={isSelected}
+								aria-label={`纯色背景 ${c}`}
+								className={`h-8 w-11 rounded-xl border transition-[border-color,box-shadow,filter] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 motion-reduce:transition-none ${
 									isSelected
-										? "border-white/60 scale-[1.04]"
-										: "border-white/12 hover:border-white/28"
+										? "border-white/65 brightness-110"
+										: "border-white/12 hover:border-white/32 hover:brightness-105"
 								}`}
 								style={{
 									background: c,
 									boxShadow: isSelected
-										? "0 10px 24px rgba(0,0,0,0.24)"
+										? "0 0 0 1px rgba(255,255,255,0.12)"
 										: undefined,
 								}}
 							/>
@@ -2252,30 +3719,43 @@ export function ScreenshotPreview() {
 					})}
 						</div>
 					</div>
-					<div className="h-8 w-px shrink-0 bg-white/8" />
-					<div className="flex items-center gap-2 flex-shrink-0">
-						<span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/38">Wallpapers</span>
-						<div className="flex gap-1.5">
-					{WALLPAPERS.map((wp) => (
-						<button
-							key={wp}
-							onClick={() => setBg({ kind: "wallpaper", value: wp })}
-							className={`h-9 w-14 rounded-2xl overflow-hidden border transition-all ${
-								bg.kind === "wallpaper" && bg.value === wp
-									? "border-white/60 scale-[1.04]"
-									: "border-white/10 hover:border-white/28"
-							}`}
-							style={{
-								backgroundImage: `url(/${wp})`,
-								backgroundSize: "cover",
-								backgroundPosition: "center",
-								boxShadow:
-									bg.kind === "wallpaper" && bg.value === wp
-										? "0 10px 24px rgba(0,0,0,0.24)"
+					<div className="h-6 w-px shrink-0 bg-white/8" />
+					<div className="flex flex-shrink-0 items-center gap-1.5">
+						<span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/52">Wallpapers</span>
+						<div className="flex gap-1" role="radiogroup" aria-label="壁纸背景">
+					{WALLPAPERS.map((wallpaper) => {
+						const thumbnailSrc = wallpaperThumbnailSrcs[wallpaper.value];
+						const isSelected =
+							bg.kind === "wallpaper" && bg.value === wallpaper.value;
+						return (
+							<button
+								type="button"
+								key={wallpaper.value}
+								onClick={() =>
+									setBg({ kind: "wallpaper", value: wallpaper.value })
+								}
+								role="radio"
+								aria-checked={isSelected}
+								aria-label={`壁纸 ${wallpaper.value.match(/\d+/)?.[0] ?? ""}`}
+								className={`h-8 w-11 overflow-hidden rounded-xl border transition-[border-color,box-shadow,filter] duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/55 motion-reduce:transition-none ${
+									isSelected
+										? "border-white/65 brightness-110"
+										: "border-white/10 hover:border-white/32 hover:brightness-105"
+								}`}
+								style={{
+									backgroundColor: "rgba(255,255,255,0.06)",
+									backgroundImage: thumbnailSrc
+										? `url("${thumbnailSrc}")`
 										: undefined,
-							}}
-						/>
-					))}
+									backgroundSize: "cover",
+									backgroundPosition: "center",
+									boxShadow: isSelected
+										? "0 0 0 1px rgba(255,255,255,0.12)"
+										: undefined,
+								}}
+							/>
+						);
+					})}
 						</div>
 					</div>
 				</div>

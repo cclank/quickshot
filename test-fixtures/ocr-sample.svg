@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320">
+  <rect width="1200" height="320" fill="#ffffff"/>
+  <text x="64" y="130" font-family="Helvetica, Arial, sans-serif" font-size="72" font-weight="700" fill="#111111">QuickShot OCR 2026</text>
+  <text x="64" y="242" font-family="PingFang SC, Heiti SC, sans-serif" font-size="62" fill="#111111">本地文本提取测试</text>
+</svg>

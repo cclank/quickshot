@@ -1,0 +1,56 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run verify
+      - name: Package Linux x64 directory
+        run: npx electron-builder --linux --dir --x64 --config.directories.output="$RUNNER_TEMP/quickshot-package"
+      - name: Verify packaged application
+        run: node scripts/verify-package.mjs "$RUNNER_TEMP/quickshot-package/linux-unpacked"
+      - run: npm audit
+
+  ocr-macos:
+    runs-on: macos-14
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run verify
+      - run: npm run build:ocr-helper:universal
+      - name: Package macOS arm64 directory
+        run: npx electron-builder --mac --dir --arm64 --config.directories.output="$RUNNER_TEMP/quickshot-package"
+      - name: Verify packaged OCR
+        run: |
+          APP_PATH="$RUNNER_TEMP/quickshot-package/mac-arm64/QuickShot.app"
+          OCR_HELPER="$APP_PATH/Contents/Resources/ocr/quickshot-ocr"
+          node scripts/verify-package.mjs "$APP_PATH"
+          node scripts/smoke-ocr-helper.mjs "$OCR_HELPER"
+          lipo "$OCR_HELPER" -verify_arch x86_64 arm64
+          codesign --verify --strict --verbose=4 "$OCR_HELPER"
+          codesign --verify --deep --strict --verbose=4 "$APP_PATH"

@@ -1,39 +1,51 @@
 {
 	"name": "quickshot",
 	"private": true,
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"type": "module",
 	"description": "Lightweight screenshot tool with annotations and beautiful backgrounds",
+	"author": "QuickShot Contributors",
 	"scripts": {
-		"dev": "vite",
+		"build:ocr-helper": "node scripts/build-ocr-helper.mjs",
+		"build:ocr-helper:universal": "node scripts/build-ocr-helper.mjs --universal",
+		"test:ocr-helper": "npm run build:ocr-helper && node scripts/smoke-ocr-helper.mjs",
+		"dev": "npm run build:ocr-helper && vite",
+		"typecheck": "tsc --noEmit --incremental false",
+		"test": "vitest run --exclude \"release/**\"",
 		"build": "tsc && vite build",
-		"build:mac": "tsc && vite build && electron-builder --mac",
-		"build:win": "tsc && vite build && electron-builder --win",
-		"build:linux": "tsc && vite build && electron-builder --linux"
-	},
-	"dependencies": {
-		"class-variance-authority": "^0.7.1",
-		"clsx": "^2.1.1",
-		"lucide-react": "^0.545.0",
-		"react": "^18.2.0",
-		"react-dom": "^18.2.0",
-		"tailwind-merge": "^3.3.1",
-		"tailwindcss-animate": "^1.0.7"
+		"check:build": "node scripts/verify-build.mjs",
+		"verify": "npm run test && npm run build && npm run check:build",
+		"pack:mac:dir": "npm run build:ocr-helper:universal && tsc && vite build && electron-builder --mac --dir --arm64",
+		"install:mac:local": "npm run pack:mac:dir && node scripts/install-electron-mac.mjs",
+		"build:mac": "npm run build:ocr-helper:universal && tsc && vite build && electron-builder --mac --arm64 --x64",
+		"build:mac:arm64": "npm run build:ocr-helper:universal && tsc && vite build && electron-builder --mac --arm64",
+		"build:mac:x64": "npm run build:ocr-helper:universal && tsc && vite build && electron-builder --mac --x64",
+		"build:win": "tsc && vite build && electron-builder --win --x64",
+		"build:linux": "tsc && vite build && electron-builder --linux --x64"
 	},
 	"devDependencies": {
-		"@types/node": "^25.0.3",
+		"@electron/asar": "^3.4.1",
+		"@types/node": "^22.20.0",
 		"@types/react": "^18.2.64",
 		"@types/react-dom": "^18.2.21",
-		"@vitejs/plugin-react": "^4.2.1",
+		"@vitejs/plugin-react": "^6.0.1",
 		"autoprefixer": "^10.4.21",
 		"electron": "^39.2.7",
 		"electron-builder": "^26.7.0",
+		"esbuild": "^0.28.1",
+		"lucide-react": "^0.545.0",
 		"postcss": "^8.5.6",
+		"react": "^18.2.0",
+		"react-dom": "^18.2.0",
 		"tailwindcss": "^3.4.18",
+		"tailwindcss-animate": "^1.0.7",
 		"typescript": "^5.2.2",
-		"vite": "^5.1.6",
-		"vite-plugin-electron": "^0.28.6",
-		"vite-plugin-electron-renderer": "^0.14.5"
+		"vite": "^8.0.16",
+		"vite-plugin-electron": "^1.1.0",
+		"vitest": "^4.1.10"
+	},
+	"engines": {
+		"node": "^20.19.0 || >=22.12.0"
 	},
 	"main": "dist-electron/main.js"
 }

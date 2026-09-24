@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1.0"
+		/>
+		<title>QuickShot Pinned Screenshot Fixture</title>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script>
+			let screenshotBytesPromise;
+			let restoredCallback = null;
+
+			async function getScreenshotBytes() {
+				if (!screenshotBytesPromise) {
+					screenshotBytesPromise = (async () => {
+						const response = await fetch("/wallpapers/wallpaper3.jpg");
+						const source = await createImageBitmap(await response.blob());
+						const canvas = document.createElement("canvas");
+						canvas.width = source.width;
+						canvas.height = source.height;
+						const context = canvas.getContext("2d");
+						context.drawImage(source, 0, 0);
+						source.close();
+						const png = await new Promise((resolve, reject) => {
+							canvas.toBlob(
+								(blob) =>
+									blob
+										? resolve(blob)
+										: reject(new Error("Fixture PNG encoding failed")),
+								"image/png",
+							);
+						});
+						return new Uint8Array(await png.arrayBuffer());
+					})();
+				}
+				return screenshotBytesPromise;
+			}
+
+			window.__quickshotPinnedFixture = {
+				readyCalls: 0,
+				clickThroughCalls: [],
+				resizeCalls: [],
+				closeCalls: 0,
+				restoreInteraction() {
+					restoredCallback?.();
+				},
+			};
+			document.documentElement.dataset.pinnedFixtureReady = "true";
+			document.documentElement.dataset.readyCalls = "0";
+			document.documentElement.dataset.clickThroughCalls = "";
+			document.documentElement.dataset.resizeCalls = "";
+			document.documentElement.dataset.closeCalls = "0";
+
+			window.electronAPI = {
+				getPinnedScreenshot: async () => ({
+					success: true,
+					imageBytes: await getScreenshotBytes(),
+				}),
+				pinnedScreenshotReady: async () => {
+					window.__quickshotPinnedFixture.readyCalls += 1;
+					document.documentElement.dataset.readyCalls = String(
+						window.__quickshotPinnedFixture.readyCalls,
+					);
+					return { success: true };
+				},
+				setPinnedScreenshotClickThrough: async (enabled) => {
+					window.__quickshotPinnedFixture.clickThroughCalls.push(enabled);
+					document.documentElement.dataset.clickThroughCalls =
+						window.__quickshotPinnedFixture.clickThroughCalls.join(",");
+					return {
+						success: true,
+						recoveryShortcutRegistered: true,
+					};
+				},
+				resizePinnedScreenshot: async (requestedWidth) => {
+					window.__quickshotPinnedFixture.resizeCalls.push(requestedWidth);
+					document.documentElement.dataset.resizeCalls =
+						window.__quickshotPinnedFixture.resizeCalls.join(",");
+					return {
+						success: true,
+						width: requestedWidth,
+						height: Math.round((requestedWidth * 9) / 16),
+					};
+				},
+				closePinnedScreenshot: async () => {
+					window.__quickshotPinnedFixture.closeCalls += 1;
+					document.documentElement.dataset.closeCalls = String(
+						window.__quickshotPinnedFixture.closeCalls,
+					);
+					return { success: true };
+				},
+				onPinnedInteractionRestored: (callback) => {
+					restoredCallback = callback;
+					return () => {
+						if (restoredCallback === callback) restoredCallback = null;
+					};
+				},
+			};
+		</script>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

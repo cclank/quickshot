@@ -5,25 +5,37 @@
 	"directories": {
 		"output": "release/${version}"
 	},
+	"asar": true,
+	"npmRebuild": false,
+	"electronLanguages": ["en", "zh_CN", "zh_TW"],
 	"files": [
 		"dist",
-		"dist-electron",
-		"public"
+		"dist-electron"
 	],
 	"mac": {
 		"target": ["dmg"],
 		"icon": "icons/icon.icns",
+		"category": "public.app-category.utilities",
+		"hardenedRuntime": true,
 		"artifactName": "${productName}-Mac-${arch}-${version}.${ext}",
+		"extraResources": [
+			{
+				"from": "build/ocr/quickshot-ocr",
+				"to": "ocr/quickshot-ocr"
+			}
+		],
 		"extendInfo": {
 			"LSUIElement": true
 		}
 	},
 	"win": {
 		"target": ["nsis"],
-		"artifactName": "${productName}-Win-${version}-Setup.${ext}"
+		"electronLanguages": ["en-US", "zh-CN", "zh-TW"],
+		"artifactName": "${productName}-Win-${arch}-${version}-Setup.${ext}"
 	},
 	"linux": {
 		"target": ["AppImage"],
-		"artifactName": "${productName}-Linux-${version}.${ext}"
+		"electronLanguages": ["en-US", "zh-CN", "zh-TW"],
+		"artifactName": "${productName}-Linux-${arch}-${version}.${ext}"
 	}
 }

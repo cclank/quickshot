@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1.0"
+		/>
+		<title>QuickShot Preview Fixture</title>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script>
+			let screenshotBytesPromise;
+			function getPngDimensions(bytes) {
+				const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+				if (
+					bytes.byteLength < 24 ||
+					signature.some((value, index) => bytes[index] !== value)
+				) {
+					return null;
+				}
+
+				const view = new DataView(
+					bytes.buffer,
+					bytes.byteOffset,
+					bytes.byteLength,
+				);
+				return {
+					width: view.getUint32(16, false),
+					height: view.getUint32(20, false),
+				};
+			}
+
+			function retainQuickSavePng(pngData) {
+				const source =
+					pngData instanceof Uint8Array
+						? pngData
+						: new Uint8Array(pngData);
+				const bytes = source.slice();
+				const dimensions = getPngDimensions(bytes);
+				const fixture = window.__quickshotPreviewFixture;
+
+				fixture.quickSaveCallCount += 1;
+				fixture.lastQuickSaveBytes = bytes;
+				fixture.lastQuickSaveByteLength = bytes.byteLength;
+				fixture.lastQuickSaveWidth = dimensions?.width || 0;
+				fixture.lastQuickSaveHeight = dimensions?.height || 0;
+				document.documentElement.dataset.quickSaveCallCount = String(
+					fixture.quickSaveCallCount,
+				);
+				document.documentElement.dataset.quickSaveByteLength = String(
+					fixture.lastQuickSaveByteLength,
+				);
+				document.documentElement.dataset.quickSaveWidth = String(
+					fixture.lastQuickSaveWidth,
+				);
+				document.documentElement.dataset.quickSaveHeight = String(
+					fixture.lastQuickSaveHeight,
+				);
+			}
+
+			const fixtureParameters = new URLSearchParams(window.location.search);
+			const fixtureSource =
+				fixtureParameters.get("fixtureSource") ||
+				"/wallpapers/thumbnails/wallpaper3.jpg";
+			const fixtureChromeStyle = fixtureParameters.get("chromeStyle");
+			const fixtureWatermarkText = fixtureParameters.get("watermarkText");
+			const fixtureBackgroundPadding = Number(
+				fixtureParameters.get("backgroundPadding"),
+			);
+			if (
+				fixtureChromeStyle &&
+				["glass", "graphite", "aurora", "ember", "borderless"].includes(
+					fixtureChromeStyle,
+				)
+			) {
+				window.localStorage.setItem(
+					"quickshot.chrome-style",
+					fixtureChromeStyle,
+				);
+			}
+			if (fixtureWatermarkText !== null) {
+				window.localStorage.setItem(
+					"quickshot.watermark-text",
+					fixtureWatermarkText,
+				);
+				window.localStorage.setItem(
+					"quickshot.watermark-enabled",
+					fixtureWatermarkText.trim() ? "1" : "0",
+				);
+			}
+			if (
+				fixtureParameters.has("backgroundPadding") &&
+				Number.isFinite(fixtureBackgroundPadding)
+			) {
+				window.localStorage.setItem(
+					"quickshot.background-padding",
+					String(fixtureBackgroundPadding),
+				);
+			}
+			window.__quickshotPreviewFixture = {
+				pinCallCount: 0,
+				lastPinSignature: [],
+				quickSaveCallCount: 0,
+				lastQuickSaveBytes: null,
+				lastQuickSaveByteLength: 0,
+				lastQuickSaveWidth: 0,
+				lastQuickSaveHeight: 0,
+			};
+			document.documentElement.dataset.previewFixtureReady = "true";
+			document.documentElement.dataset.pinCallCount = "0";
+			document.documentElement.dataset.pinSignature = "";
+			document.documentElement.dataset.quickSaveCallCount = "0";
+			document.documentElement.dataset.quickSaveByteLength = "0";
+			document.documentElement.dataset.quickSaveWidth = "0";
+			document.documentElement.dataset.quickSaveHeight = "0";
+
+			async function getScreenshotBytes() {
+				if (!screenshotBytesPromise) {
+					screenshotBytesPromise = (async () => {
+						const response = await fetch(fixtureSource);
+						const source = await createImageBitmap(await response.blob());
+						const canvas = document.createElement("canvas");
+						canvas.width = source.width;
+						canvas.height = source.height;
+						const context = canvas.getContext("2d");
+						context.drawImage(source, 0, 0);
+						source.close();
+						const png = await new Promise((resolve, reject) => {
+							canvas.toBlob(
+								(blob) =>
+									blob
+										? resolve(blob)
+										: reject(new Error("Fixture PNG encoding failed")),
+								"image/png",
+							);
+						});
+						return new Uint8Array(await png.arrayBuffer());
+					})();
+				}
+				return screenshotBytesPromise;
+			}
+
+			window.electronAPI = {
+				getPreviewSession: async () => ({
+					success: true,
+					imageBytes: await getScreenshotBytes(),
+				}),
+				previewSessionReady: async () => ({ success: true }),
+				extractText: async () => ({
+					success: true,
+					text: "QuickShot 本地文本提取\nPreview fixture",
+					lineCount: 2,
+				}),
+				copyTextToClipboard: async () => ({ success: true }),
+				copyToClipboard: async () => ({ success: true }),
+				pinScreenshot: async (pngData) => {
+					const bytes = new Uint8Array(pngData);
+					window.__quickshotPreviewFixture.pinCallCount += 1;
+					window.__quickshotPreviewFixture.lastPinSignature =
+						Array.from(bytes.slice(0, 8));
+					document.documentElement.dataset.pinCallCount = String(
+						window.__quickshotPreviewFixture.pinCallCount,
+					);
+					document.documentElement.dataset.pinSignature =
+						window.__quickshotPreviewFixture.lastPinSignature.join(",");
+					return { success: true };
+				},
+				saveScreenshotFinal: async () => ({
+					success: true,
+					path: "/tmp/quickshot-preview.png",
+				}),
+				quickSaveScreenshotFinal: async (pngData) => {
+					retainQuickSavePng(pngData);
+					return {
+						success: true,
+						path: "/tmp/quickshot-preview.png",
+					};
+				},
+				readAssetDataUrl: async () => null,
+				getAssetBasePath: async () => null,
+			};
+		</script>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

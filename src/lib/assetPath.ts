@@ -13,9 +13,13 @@ function ensureTrailingSlash(value: string): string {
 
 const assetPathCache = new Map<string, Promise<string>>();
 
-export async function getAssetPath(relativePath: string): Promise<string> {
+export async function getAssetPath(
+	relativePath: string,
+	options: { cache?: boolean } = {},
+): Promise<string> {
 	const encodedRelativePath = encodeRelativeAssetPath(relativePath);
-	const cachedPath = assetPathCache.get(relativePath);
+	const shouldCache = options.cache !== false;
+	const cachedPath = shouldCache ? assetPathCache.get(relativePath) : undefined;
 	if (cachedPath) {
 		return cachedPath;
 	}
@@ -59,7 +63,9 @@ export async function getAssetPath(relativePath: string): Promise<string> {
 		return `/${encodedRelativePath}`;
 	})();
 
-	assetPathCache.set(relativePath, pathPromise);
+	if (shouldCache) {
+		assetPathCache.set(relativePath, pathPromise);
+	}
 	return pathPromise;
 }
 

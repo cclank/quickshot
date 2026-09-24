@@ -11,7 +11,7 @@
 <p align="center">
   <img alt="Electron" src="https://img.shields.io/badge/Electron-39-47848F?style=for-the-badge&logo=electron&logoColor=white" />
   <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=0B1020" />
-  <img alt="Vite" src="https://img.shields.io/badge/Vite-5-646CFF?style=for-the-badge&logo=vite&logoColor=white" />
+  <img alt="Vite" src="https://img.shields.io/badge/Vite-8-646CFF?style=for-the-badge&logo=vite&logoColor=white" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white" />
   <img alt="Tailwind CSS" src="https://img.shields.io/badge/Tailwind_CSS-3-38BDF8?style=for-the-badge&logo=tailwindcss&logoColor=white" />
 </p>
@@ -29,6 +29,14 @@ QuickShot is a tray-based screenshot app focused on the workflow after capture. 
 
 The app is built as a local desktop tool. Screenshots are processed inside the app process and there is no remote upload path in the current codebase.
 
+## Maintained App and Branch
+
+The maintained implementation is the Electron app on `main`, with its UI in `src/` and desktop integration in `electron/`. `native/quickshot-ocr/` is the local OCR helper used by Electron. The separate Swift/AppKit experiment has been archived outside the maintained source tree.
+
+The local installed app is `~/Applications/QuickShot.app`. Packages under `release/` are build outputs or backups, not the everyday launch location. Source updates are not automatically installed: replacement must pass the signing-identity checks in the [local release procedure](docs/local-macos-release.md).
+
+See [source ownership and recovery notes](docs/source-of-truth.md) for the distinction between the installed app and the retained source updates.
+
 ## Features
 
 | Area | Capability |
@@ -38,6 +46,8 @@ The app is built as a local desktop tool. Screenshots are processed inside the a
 | Styling | Wallpaper backgrounds, gradients, solid colors, multiple chrome styles |
 | Signature | Optional bottom-right watermark with opacity and color controls |
 | Export | Copy to clipboard, quick save to Downloads, save as PNG |
+| Text | Local macOS OCR, editable extracted text, copy text from the preview sidebar |
+| Reference | Pin a screenshot above other windows |
 | Desktop | macOS accessory app, tray menu, packaged DMG output |
 | Safety | Context isolation, disabled Node integration, allowlisted IPC bridge |
 
@@ -50,7 +60,7 @@ npm install
 npm run dev
 ```
 
-Use the tray icon or press:
+In development, use the tray icon; the global capture shortcut is disabled by default. In the installed app, use the tray icon or press:
 
 ```text
 Cmd + Shift + X
@@ -73,13 +83,13 @@ npm run build:mac
 The packaged app is written to:
 
 ```text
-release/1.0.0/
+release/<package-version>/
 ```
 
 Expected DMG name on Apple Silicon:
 
 ```text
-QuickShot-Mac-arm64-1.0.0.dmg
+QuickShot-Mac-arm64-<package-version>.dmg
 ```
 
 ## macOS Permissions
@@ -116,6 +126,10 @@ quickshot/
 |   `-- wallpapers/
 |-- icons/
 |   `-- icon.icns
+|-- native/quickshot-ocr/   Local Vision OCR helper used by Electron
+|-- scripts/               Verification, packaging, and guarded installation
+|-- test-fixtures/
+|-- docs/
 |-- electron-builder.json5
 |-- vite.config.ts
 `-- package.json
@@ -127,6 +141,9 @@ quickshot/
 | --- | --- |
 | `npm run dev` | Start the Vite and Electron development environment |
 | `npm run build` | Type-check and build renderer, main process, and preload script |
+| `npm run verify` | Run unit tests, build, and verify build outputs |
+| `npm run test:ocr-helper` | Build and smoke-test local macOS OCR |
+| `npm run install:mac:local` | Build and install only if the existing signing identity is compatible |
 | `npm run build:mac` | Build the app and package a macOS DMG |
 | `npm run build:win` | Build a Windows installer |
 | `npm run build:linux` | Build a Linux AppImage |
