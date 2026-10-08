@@ -439,7 +439,7 @@ function scenes(lang) {
 				const field = await editorPoint(page, `demo.editorRect('input[type=text][aria-label="${L("签名", "Signature")}"]')`);
 				await d.click(field.x, field.y, 600);
 				await sleep(250);
-				await d.type(L("@北风设计 Studio", "@Northwind Studio"), 95);
+				await d.type(L("@岚叔设计 Studio", "@Northwind Studio"), 95);
 				await sleep(700);
 				for (const font of L(["衬线", "几何", "等宽", "手写"], ["Serif", "Geometric", "Mono", "Script"])) {
 					const p = await button(page, font, inGroup(L("字体", "Font")));
@@ -486,7 +486,7 @@ function scenes(lang) {
 				await sleep(400);
 				const field = await editorPoint(page, `demo.editorRect('input[type=text][aria-label="${L("签名", "Signature")}"]')`);
 				await d.click(field.x, field.y, 550);
-				await d.type(L("@北风设计", "@northwind"), 90);
+				await d.type(L("@岚叔设计", "@northwind"), 90);
 				await sleep(500);
 				await page.evaluate("demo.blurEditor()");
 				const save = await editorPoint(page, "demo.editorRect('[data-quickshot-action=save-default]')");

@@ -5,3 +5,4 @@ dist-electron
 release
 .build
 *.tsbuildinfo
+promo/out/

@@ -14,7 +14,7 @@ We aim to acknowledge reports within a few days and will keep you updated until 
 
 ## Design principles
 
-- Captures are processed locally and never uploaded. The app contains no network code.
+- Captures, and any text in them, are processed locally and never uploaded. The only network request is one anonymous usage report per launch (a random installation ID, the app version, the OS name and version, and the CPU architecture), which can be turned off from the tray menu and is never sent by development builds.
 - Renderer windows run with context isolation, without Node.js integration, and only reach the main process through the allow-listed bridge in `electron/preload.ts`.
 - The main process validates the sender window and the payload of every IPC request, including PNG structure and size limits.
 - Navigation and new windows are blocked outside the bundled renderer.

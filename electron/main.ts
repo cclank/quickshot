@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,6 +25,7 @@ import { getMainLanguage, mt, setMainLanguage } from "./i18n";
 import { type AgentResponse, CaptureAgent } from "./captureAgent";
 import { type BundleStamp, bundleFromExecutable, shouldHandOver } from "./handOver";
 import { findOpaqueBounds, getWindowCaptureArguments } from "./windowCapture";
+import { buildUsageHeartbeat, isInstallationId, sendUsageHeartbeat, USAGE_STATS_ENDPOINT } from "./usageStats";
 import {
 	PREVIEW_MIN_WIDTH,
 	PREVIEW_MIN_WIDTH_WINDOWS,
@@ -70,6 +72,7 @@ import {
 	ipcMain,
 	nativeImage,
 	nativeTheme,
+	net,
 	powerMonitor,
 	screen,
 	session,
@@ -152,6 +155,13 @@ const DEV_CAPTURE_FILE = app.isPackaged
 const DEV_SETTINGS_BUNDLE = app.isPackaged
 	? undefined
 	: process.env["QUICKSHOT_DEV_SETTINGS_BUNDLE"];
+/**
+ * Development only: send anonymous usage statistics from a dev build (they are
+ * off there by default), optionally to another endpoint such as a local
+ * `wrangler dev`.
+ */
+const DEV_USAGE_STATS = !app.isPackaged && process.env["QUICKSHOT_DEV_USAGE_STATS"] === "1";
+const USAGE_ENDPOINT = (!app.isPackaged && process.env["QUICKSHOT_DEV_USAGE_STATS_ENDPOINT"]) || USAGE_STATS_ENDPOINT;
 if (!app.isPackaged && process.env["QUICKSHOT_USER_DATA_DIR"]) {
 	app.setPath("userData", path.resolve(process.env["QUICKSHOT_USER_DATA_DIR"]));
 }
@@ -2145,6 +2155,12 @@ function refreshTrayMenu() {
 			},
 		});
 	}
+	template.push({
+		label: mt("tray.usageStats"),
+		type: "checkbox",
+		checked: appSettings.usageStats,
+		click: (item) => void setUsageStats(item.checked),
+	});
 
 	if (pinnedCount > 0) {
 		template.push(
@@ -2231,6 +2247,42 @@ async function setLanguagePreference(language: LanguagePreference) {
 		staleSelector.destroy();
 		if (usesOverlaySelection()) void ensureRegionSelector();
 	}
+}
+
+async function setUsageStats(enabled: boolean) {
+	if (appSettings.usageStats === enabled) return;
+	appSettings = { ...appSettings, usageStats: enabled };
+	refreshTrayMenu();
+	writeDiagnostic("usage-stats-changed", { enabled });
+	await persistAppSettings();
+}
+
+/**
+ * One anonymous report per launch, a little after startup so it never competes
+ * with the first capture. Failures are dropped: no retries, no queue.
+ */
+async function reportLaunchUsage() {
+	if (!appSettings.usageStats || (!app.isPackaged && !DEV_USAGE_STATS)) return;
+	let installationId = appSettings.installationId;
+	if (!isInstallationId(installationId)) {
+		installationId = randomUUID();
+		appSettings = { ...appSettings, installationId };
+		await persistAppSettings();
+	}
+	const payload = buildUsageHeartbeat({
+		installationId,
+		appVersion: app.getVersion(),
+		platform: process.platform,
+		systemVersion: process.getSystemVersion(),
+		arch: process.arch,
+	});
+	if (!payload) {
+		writeDiagnostic("usage-stats-skipped");
+		return;
+	}
+	const status = await sendUsageHeartbeat(payload, net.fetch, USAGE_ENDPOINT);
+	// The installation ID stays out of the diagnostics log.
+	writeDiagnostic("usage-stats-sent", { status });
 }
 
 async function setMacCaptureMode(mode: MacCaptureMode) {
@@ -3742,6 +3794,7 @@ app.whenReady().then(async () => {
 	}
 	scheduleSparePreviewWindow(2_500);
 	warmCaptureAgent("app-ready");
+	setTimeout(() => void reportLaunchUsage(), 15_000);
 
 	if (ENABLE_CAPTURE_SHORTCUT) {
 		registerCaptureShortcut(false, "app-ready");

@@ -55,7 +55,7 @@
 | **Presentation-ready in one click** | Gradients, window frames, rounded corners, soft shadows, aspect ratios and your own signature. Set a style as the default and every new capture starts that way. |
 | **Stitch several captures** | Add another capture with `Mod+Shift+A`, or paste and drop images, then lay them out vertically, horizontally or in a grid. |
 | **Pin and read** | Float a capture above everything, or pull out its text with on-device OCR. |
-| **Private by design** | No network code, no account, no telemetry. Screenshots never leave your computer. |
+| **Private by design** | Screenshots never leave your computer. No account, no cloud, just an anonymous launch count you can switch off. |
 
 ## Download
 
@@ -116,7 +116,7 @@ Ten tools, each on a single key: **select, rectangle, ellipse, arrow, line, pen,
 
 ### Private by design
 
-Screenshots never leave your computer. There is no network code, no account and no telemetry. The renderer runs with context isolation, no Node.js access and an allow-listed IPC bridge.
+Screenshots, and any text in them, never leave your computer. There is no account and no cloud. From 1.2.0, QuickShot sends one anonymous report per launch so we can tell how many people use it: a random installation ID, the app version, the OS and its version, and the CPU type. Nothing about what you capture is included. Turn it off with **Share Anonymous Usage Stats** in the menu bar; development builds never send it. The renderer runs with context isolation, no Node.js access and an allow-listed IPC bridge.
 
 ## Keyboard shortcuts
 
@@ -180,6 +180,7 @@ Development-only environment variables (ignored by packaged builds):
 | `QUICKSHOT_DEV_CAPTURE_FILE` | Use this PNG instead of the screen, so the whole capture flow runs without Screen Recording permission |
 | `QUICKSHOT_ENABLE_DEV_SHORTCUT=0` | Do not register the global capture shortcut |
 | `QUICKSHOT_DEV_REMOTE_DEBUGGING_PORT` | Expose the Chrome DevTools Protocol for automated checks |
+| `QUICKSHOT_DEV_USAGE_STATS=1` | Send the anonymous usage report from a dev build (off by default); `QUICKSHOT_DEV_USAGE_STATS_ENDPOINT` points it elsewhere, such as a local test server |
 | `QUICKSHOT_DEV_SETTINGS_BUNDLE` | Test the Screen Recording helper against another app's window (e.g. `com.apple.finder`) instead of opening System Settings |
 
 ### Scripts

@@ -1,5 +1,6 @@
 import { readFile, writeFile, rename } from "node:fs/promises";
 import path from "node:path";
+import { isInstallationId } from "./usageStats";
 
 export type MacCaptureMode = "system" | "overlay";
 export type LanguagePreference = "auto" | "zh" | "en";
@@ -11,6 +12,10 @@ export type AppSettings = {
 	language: LanguagePreference;
 	/** The welcome guide version last shown; 0 before the first launch. */
 	onboardingVersion: number;
+	/** Anonymous launch statistics (see usageStats.ts); on unless turned off. */
+	usageStats: boolean;
+	/** Random UUID v4 created on the first report; identifies an installation, not a person. */
+	installationId: string | null;
 };
 
 /** Raise to show the welcome guide again after a release that changes it. */
@@ -22,6 +27,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 	macCaptureMode: "overlay",
 	language: "auto",
 	onboardingVersion: 0,
+	usageStats: true,
+	installationId: null,
 };
 
 /**
@@ -56,6 +63,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
 			input.onboardingVersion >= 0
 				? input.onboardingVersion
 				: DEFAULT_APP_SETTINGS.onboardingVersion,
+		usageStats: typeof input.usageStats === "boolean" ? input.usageStats : DEFAULT_APP_SETTINGS.usageStats,
+		installationId: isInstallationId(input.installationId)
+			? input.installationId.toLowerCase()
+			: DEFAULT_APP_SETTINGS.installationId,
 	};
 }
 

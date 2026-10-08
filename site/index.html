@@ -709,7 +709,7 @@ footer { padding: 56px 0 calc(48px + env(safe-area-inset-bottom)); border-top: 1
 	<div class="wrap">
 		<a class="pill reveal" href="#download">
 			<span class="tag"><span class="zh">免费</span><span class="en">Free</span></span>
-			<span class="zh">macOS 与 Windows · 完全本地运行<span class="pill-extra"> · 源代码公开</span></span><span class="en">macOS &amp; Windows · Runs offline<span class="pill-extra"> · Source on GitHub</span></span>
+			<span class="zh">macOS 与 Windows · 完全本地运行<span class="pill-extra"> · 源代码公开</span></span><span class="en">macOS &amp; Windows · Runs locally<span class="pill-extra"> · Source on GitHub</span></span>
 		</a>
 		<h1 class="reveal d1">
 			<span class="zh"><span class="phrase">截图，</span><span class="phrase">本该<span class="grad">如此优雅</span>。</span></span>
@@ -1126,8 +1126,8 @@ footer { padding: 56px 0 calc(48px + env(safe-area-inset-bottom)); border-top: 1
 		</div>
 		<div class="pgrid">
 			<div class="pcard reveal"><svg viewBox="0 0 24 24" fill="none" stroke="#38d9a9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><h3><span class="zh">本机处理</span><span class="en">On device</span></h3><p><span class="zh">截图、标注、美化和文字提取都在你的电脑上完成。</span><span class="en">Capture, annotation, styling and OCR all run locally.</span></p></div>
-			<div class="pcard reveal d1"><svg viewBox="0 0 24 24" fill="none" stroke="#4dabf7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 2l20 20M8.5 16.4A5 5 0 0 1 12 15c1.4 0 2.6.5 3.5 1.4M5 12.9a10 10 0 0 1 4.2-2.4M19 12.9a10 10 0 0 0-2.3-1.6M2 8.8a15 15 0 0 1 4.2-2.7M22 8.8A15 15 0 0 0 10.7 5M12 20h.01"/></svg><h3><span class="zh">没有联网代码</span><span class="en">No network code</span></h3><p><span class="zh">应用里没有上传、同步或检查更新的请求。</span><span class="en">Nothing uploads, syncs or phones home.</span></p></div>
-			<div class="pcard reveal d2"><svg viewBox="0 0 24 24" fill="none" stroke="#9775fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 13-6.2M16 19l5-5M21 19l-5-5"/></svg><h3><span class="zh">无账号、无统计</span><span class="en">No account, no analytics</span></h3><p><span class="zh">下载即用，不收集任何使用数据。</span><span class="en">Download and go. No usage data is collected.</span></p></div>
+			<div class="pcard reveal d1"><svg viewBox="0 0 24 24" fill="none" stroke="#4dabf7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 2l20 20M8.5 16.4A5 5 0 0 1 12 15c1.4 0 2.6.5 3.5 1.4M5 12.9a10 10 0 0 1 4.2-2.4M19 12.9a10 10 0 0 0-2.3-1.6M2 8.8a15 15 0 0 1 4.2-2.7M22 8.8A15 15 0 0 0 10.7 5M12 20h.01"/></svg><h3><span class="zh">只有匿名计数</span><span class="en">Only an anonymous count</span></h3><p><span class="zh">每次启动只发送一次匿名统计（随机 ID、版本、系统），不含任何截图内容，可在菜单栏关闭。</span><span class="en">One anonymous ping per launch (a random ID, version and OS), never your content. Switch it off in the menu bar.</span></p></div>
+			<div class="pcard reveal d2"><svg viewBox="0 0 24 24" fill="none" stroke="#9775fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 13-6.2M16 19l5-5M21 19l-5-5"/></svg><h3><span class="zh">无账号、无云端</span><span class="en">No account, no cloud</span></h3><p><span class="zh">下载即用，截图、文字和文件名从不离开你的电脑。</span><span class="en">Download and go. Screenshots, text and file names never leave your computer.</span></p></div>
 			<div class="pcard reveal d3"><svg viewBox="0 0 24 24" fill="none" stroke="#ff9f43" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></svg><h3><span class="zh">源代码公开</span><span class="en">Open source</span></h3><p><span class="zh">每一行代码都可以在 GitHub 上查看和验证。</span><span class="en">Every line can be read and checked on GitHub.</span></p></div>
 		</div>
 		<p class="fine center reveal" style="text-align:center"><span class="zh">渲染进程开启上下文隔离并禁用 Node.js，只通过白名单 IPC 与主进程通信。这个页面同样没有统计代码和第三方字体。</span><span class="en">Renderers run with context isolation and Node.js disabled, talking to the main process only through an allow-listed IPC. This page has no analytics or third-party fonts either.</span></p>
@@ -1186,20 +1186,20 @@ footer { padding: 56px 0 calc(48px + env(safe-area-inset-bottom)); border-top: 1
 			<h2><span class="zh">现在就开始<br>优雅地截图。</span><span class="en">Start capturing<br>beautifully.</span></h2>
 			<p class="lead" style="margin:0 auto"><span class="zh">免费下载，源代码公开。一个快捷键，从此告别凌乱的截图。</span><span class="en">Free to download, open to read. One shortcut, and messy screenshots are behind you.</span></p>
 			<div class="dl-buttons">
-				<a class="btn" href="https://github.com/cclank/quickshot/releases/download/v1.1.0/QuickShot-Mac-arm64-1.1.0.dmg">
+				<a class="btn" href="https://github.com/cclank/quickshot/releases/download/v1.2.0/QuickShot-Mac-arm64-1.2.0.dmg">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg>
 					<span class="txt"><span class="zh">macOS · Apple 芯片</span><span class="en">macOS · Apple silicon</span><small>.dmg</small></span>
 				</a>
-				<a class="btn btn-ghost" href="https://github.com/cclank/quickshot/releases/download/v1.1.0/QuickShot-Mac-x64-1.1.0.dmg">
+				<a class="btn btn-ghost" href="https://github.com/cclank/quickshot/releases/download/v1.2.0/QuickShot-Mac-x64-1.2.0.dmg">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg>
 					<span class="txt"><span class="zh">macOS · Intel</span><span class="en">macOS · Intel</span><small>.dmg</small></span>
 				</a>
-				<a class="btn btn-ghost" href="https://github.com/cclank/quickshot/releases/download/v1.1.0/QuickShot-Win-x64-1.1.0-Setup.exe">
+				<a class="btn btn-ghost" href="https://github.com/cclank/quickshot/releases/download/v1.2.0/QuickShot-Win-x64-1.2.0-Setup.exe">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></svg>
 					<span class="txt">Windows<small>Setup.exe</small></span>
 				</a>
 			</div>
-			<p class="dl-meta"><span class="zh">版本 1.1.0 · macOS 12 及以上 · Windows 10 / 11（64 位）· <a href="https://github.com/cclank/quickshot/releases">全部版本</a></span><span class="en">Version 1.1.0 · macOS 12 or later · Windows 10 / 11 (64-bit) · <a href="https://github.com/cclank/quickshot/releases">All releases</a></span></p>
+			<p class="dl-meta"><span class="zh">版本 1.2.0 · macOS 12 及以上 · Windows 10 / 11（64 位）· <a href="https://github.com/cclank/quickshot/releases">全部版本</a></span><span class="en">Version 1.2.0 · macOS 12 or later · Windows 10 / 11 (64-bit) · <a href="https://github.com/cclank/quickshot/releases">All releases</a></span></p>
 		</div>
 
 		<div class="sec-head center reveal" style="margin-top:clamp(72px,10vw,120px)">
@@ -1257,7 +1257,7 @@ footer { padding: 56px 0 calc(48px + env(safe-area-inset-bottom)); border-top: 1
 			</details>
 			<details>
 				<summary><span class="zh">截图会上传到云端吗？</span><span class="en">Are my screenshots uploaded anywhere?</span></summary>
-				<div class="a"><span class="zh">不会。QuickShot 没有联网代码、账号或统计，截图、标注、美化和文字提取都在本机完成。</span><span class="en">No. QuickShot has no network code, accounts or analytics. Capturing, annotating, styling and text extraction all happen on your computer.</span></div>
+				<div class="a"><span class="zh">不会。截图、标注、美化和文字提取都在本机完成，也没有账号。QuickShot 只在每次启动时发送一次匿名统计（随机安装 ID、版本、系统和架构），用来了解有多少人在使用，可在菜单栏取消勾选“发送匿名使用统计”关闭。</span><span class="en">No. Capturing, annotating, styling and text extraction all happen on your computer, and there is no account. QuickShot only sends one anonymous report per launch (a random installation ID, version, OS and CPU type) to count how many people use it; turn it off with Share Anonymous Usage Stats in the menu bar.</span></div>
 			</details>
 			<details>
 				<summary><span class="zh">为什么提示“无法验证开发者”？</span><span class="en">Why does macOS say it cannot verify the developer?</span></summary>
@@ -1309,7 +1309,7 @@ footer { padding: 56px 0 calc(48px + env(safe-area-inset-bottom)); border-top: 1
 	/* Language */
 	var TITLES = {
 		zh: "QuickShot · 优雅的本地截图与标注工具",
-		en: "QuickShot · Beautiful screenshots, entirely offline",
+		en: "QuickShot · Beautiful screenshots, kept on your computer",
 	};
 	var altImages = Array.prototype.slice.call(document.querySelectorAll("img[data-alt-en]"));
 	altImages.forEach(function (img) { img.setAttribute("data-alt-zh", img.alt); });

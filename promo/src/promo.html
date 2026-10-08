@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>QuickShot promo</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1920px; height: 1080px; overflow: hidden; background: #050507; }
+body { font-family: "SF Pro Display", "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif; color: #f5f5f7; -webkit-font-smoothing: antialiased; }
+#stage { position: absolute; inset: 0; overflow: hidden; background: #050507; }
+.layer { position: absolute; inset: 0; will-change: transform, opacity; }
+.orb { position: absolute; border-radius: 50%; filter: blur(110px); will-change: transform, opacity; }
+#grain { position: absolute; inset: -64px; opacity: .085; mix-blend-mode: overlay; pointer-events: none; }
+#vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(120% 95% at 50% 45%, transparent 55%, rgba(0,0,0,.55) 100%); }
+#flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; mix-blend-mode: soft-light; }
+#fade { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; }
+
+.scene { position: absolute; inset: 0; opacity: 0; }
+.abs { position: absolute; }
+.center { left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.word { display: inline-block; will-change: transform, opacity, filter; }
+.grad { background: linear-gradient(92deg, #ff6b8a 0%, #ffa25a 20%, #ffd43b 38%, #38d9a9 56%, #5cb5ff 74%, #a68bff 92%, #ff6b8a 110%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; }
+.eyebrow { font-size: 26px; font-weight: 650; letter-spacing: .14em; text-transform: uppercase; }
+.h1 { font-size: 118px; font-weight: 750; letter-spacing: -.01em; line-height: 1.12; white-space: nowrap; }
+.h2 { font-size: 76px; font-weight: 720; letter-spacing: -.005em; line-height: 1.16; }
+.h3 { font-size: 52px; font-weight: 700; line-height: 1.2; }
+.sub { font-size: 30px; font-weight: 500; color: #a7a7b0; letter-spacing: .01em; }
+.en { font-family: "SF Pro Display", -apple-system, sans-serif; }
+
+.frame { position: absolute; border-radius: 18px; overflow: hidden; background: #111; box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 50px 120px -30px rgba(0,0,0,.9), 0 20px 50px -20px rgba(0,0,0,.7); will-change: transform, opacity; }
+.frame img { position: absolute; display: block; }
+.glow { position: absolute; border-radius: 40px; filter: blur(70px); background: conic-gradient(from 180deg, #ff5a7a, #ff9f43, #ffd43b, #38d9a9, #4dabf7, #9775fa, #ff5a7a); will-change: transform, opacity; }
+
+.key { position: absolute; width: 168px; height: 168px; border-radius: 34px; display: grid; place-items: center; font-size: 78px; font-weight: 600; color: #f5f5f7;
+	background: linear-gradient(180deg, #2b2b31, #1c1c21); box-shadow: inset 0 1px 0 rgba(255,255,255,.12), inset 0 -6px 0 rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.08), 0 30px 60px -20px rgba(0,0,0,.9); }
+.chip { position: absolute; display: flex; align-items: center; gap: 14px; height: 64px; padding: 0 22px 0 12px; border-radius: 18px; background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 1px rgba(255,255,255,.09); font-size: 26px; font-weight: 600; white-space: nowrap; }
+.chip kbd { width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center; font: 650 22px "SF Pro Display", sans-serif; background: linear-gradient(180deg, #3a3a42, #2a2a30); box-shadow: inset 0 -3px 0 rgba(0,0,0,.4), inset 0 0 0 1px rgba(255,255,255,.1); }
+.pill { position: absolute; display: inline-flex; align-items: center; gap: 14px; height: 76px; padding: 0 32px; border-radius: 999px; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); font-size: 30px; font-weight: 600; white-space: nowrap; }
+.pill i { width: 14px; height: 14px; border-radius: 50%; background: conic-gradient(#ff5a7a, #ff9f43, #ffd43b, #38d9a9, #4dabf7, #9775fa, #ff5a7a); }
+
+/* Beautify canvas */
+.canvas { position: absolute; overflow: hidden; border-radius: 22px; box-shadow: 0 60px 140px -40px rgba(0,0,0,.9); }
+.canvas .bgA, .canvas .bgB { position: absolute; inset: 0; }
+.win { position: absolute; overflow: hidden; background: #fff; }
+.win .tb { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 9px; padding-left: 16px; }
+.win .tb i { width: 13px; height: 13px; border-radius: 50%; background: #ff5f57; display: block; }
+.win .tb i:nth-child(2) { background: #febc2e; } .win .tb i:nth-child(3) { background: #28c840; }
+.win img { position: absolute; left: 0; display: block; }
+.sig { position: absolute; white-space: nowrap; }
+
+.piece { position: absolute; will-change: transform; filter: drop-shadow(0 24px 40px rgba(0,0,0,.35)); }
+.piece img { display: block; width: 100%; height: 100%; }
+
+.label { position: absolute; display: inline-flex; gap: 10px; align-items: baseline; padding: 9px 16px; border-radius: 12px; background: rgba(20,20,26,.82); font-size: 24px; font-weight: 650; box-shadow: 0 10px 30px -10px rgba(0,0,0,.6); }
+.label small { font-size: 20px; font-weight: 500; opacity: .6; }
+</style>
+</head>
+<body>
+<div id="stage">
+	<div class="layer" id="bg">
+		<div class="orb" id="orb1" style="width:1100px;height:900px;background:#7c3aed"></div>
+		<div class="orb" id="orb2" style="width:1000px;height:820px;background:#ec4899"></div>
+		<div class="orb" id="orb3" style="width:1000px;height:820px;background:#0ea5e9"></div>
+		<div class="orb" id="orb4" style="width:900px;height:760px;background:#f59e0b"></div>
+	</div>
+	<div class="layer" id="scenes"></div>
+	<div id="grain"></div>
+	<div id="vignette"></div>
+	<div id="flash"></div>
+	<div id="fade"></div>
+</div>
+<script>
+// ── Clock (from the soundtrack: 97 BPM, 4 bars per block) ─────────────────
+const BEAT = 0.6185572916666666, BAR = BEAT * 4, BLOCK = BAR * 4, DURATION = 85.36;
+const at = (bar, beat = 0) => (bar * 4 + beat) * BEAT;
+const BEATS_ON = [[1, 6], [7, 8]]; // blocks with drums: [from, to)
+
+// ── Math ──────────────────────────────────────────────────────────────────
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const prog = (t, start, dur) => clamp((t - start) / dur);
+const easeOutCubic = (k) => 1 - (1 - k) ** 3;
+const easeInOutCubic = (k) => (k < 0.5 ? 4 * k ** 3 : 1 - (-2 * k + 2) ** 3 / 2);
+const easeOutExpo = (k) => (k >= 1 ? 1 : 1 - 2 ** (-10 * k));
+const easeInCubic = (k) => k ** 3;
+const easeOutBack = (k, s = 1.5) => 1 + (s + 1) * (k - 1) ** 3 + s * (k - 1) ** 2;
+const spring = (k) => (k >= 1 ? 1 : 1 - Math.exp(-6.5 * k) * Math.cos(9 * k));
+/** Opacity of something visible between a and b, fading in and out. */
+const life = (t, a, b, fin = 0.35, fout = 0.35) => Math.min(easeOutCubic(prog(t, a, fin)), 1 - easeInCubic(prog(t, b - fout, fout)));
+/** Decaying pulse after each beat while the drums play. */
+function beatPulse(t, decay = 7) {
+	const block = Math.floor(t / BLOCK);
+	if (!BEATS_ON.some(([a, b]) => block >= a && block < b)) return 0;
+	const since = t - Math.floor(t / BEAT) * BEAT;
+	const strong = Math.floor(t / BEAT) % 2 === 0 ? 1 : 0.6;
+	return Math.exp(-since * decay) * strong;
+}
+
+// ── DOM helpers ───────────────────────────────────────────────────────────
+const scenes = document.getElementById("scenes");
+function el(html, parent = scenes) {
+	const box = document.createElement("div");
+	box.innerHTML = html.trim();
+	const node = box.firstElementChild;
+	parent.appendChild(node);
+	return node;
+}
+function style(node, s) {
+	for (const k in s) node.style[k] = s[k];
+}
+function scene(id) {
+	return el(`<div class="scene" id="${id}"></div>`);
+}
+const pending = [];
+const frameCache = new Map();
+function setImage(img, src) {
+	if (img.getAttribute("src") === src) return;
+	img.setAttribute("src", src);
+	pending.push(img.decode().catch(() => {}));
+}
+const pad = (n) => String(n).padStart(5, "0");
+const CLIP_FRAMES = { "capture-window": 392, annotate: 631, signature: 757, personalize: 811, "pin-ocr": 456, stitch: 587, beautify: 643, overview: 568, "capture-area": 334 };
+function clipSrc(name, seconds) {
+	const index = clamp(Math.round(seconds * 30) + 1, 1, CLIP_FRAMES[name]);
+	return `clips/${name}/${pad(index)}.jpg`;
+}
+/** Words revealed from below with a soft blur, each on its own time. */
+function words(parent, list, cls = "") {
+	return list.map(([text, extra = ""]) => el(`<span class="word ${cls} ${extra}">${text}</span>`, parent));
+}
+function reveal(node, t, start, dur = 0.55, dist = 46) {
+	const k = easeOutExpo(prog(t, start, dur));
+	node.style.opacity = k;
+	node.style.transform = `translateY(${(1 - k) * dist}px)`;
+	node.style.filter = `blur(${(1 - k) * 12}px)`;
+}
+
+// ── Spectrum ring (SVG) ───────────────────────────────────────────────────
+function ringSvg(id, w, h, r, stroke) {
+	const len = 2 * (w + h - 4 * r) + 2 * Math.PI * r;
+	return {
+		len,
+		html: `<svg class="abs" width="${w + 80}" height="${h + 80}" viewBox="-40 -40 ${w + 80} ${h + 80}" style="overflow:visible">
+			<defs><linearGradient id="g${id}" x1="0" y1="0" x2="${w}" y2="${h}" gradientUnits="userSpaceOnUse">
+				<stop offset="0" stop-color="#ff5a7a"/><stop offset=".2" stop-color="#ff9f43"/><stop offset=".38" stop-color="#ffd43b"/>
+				<stop offset=".56" stop-color="#38d9a9"/><stop offset=".76" stop-color="#4dabf7"/><stop offset="1" stop-color="#9775fa"/></linearGradient>
+				<filter id="b${id}" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="14"/></filter></defs>
+			<rect class="rglow" x="0" y="0" width="${w}" height="${h}" rx="${r}" fill="none" stroke="url(#g${id})" stroke-width="${stroke * 2.2}" filter="url(#b${id})" stroke-dasharray="${len}" stroke-dashoffset="${len}" opacity=".85"/>
+			<rect class="rline" x="0" y="0" width="${w}" height="${h}" rx="${r}" fill="none" stroke="url(#g${id})" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${len}" stroke-dashoffset="${len}"/>
+		</svg>`,
+	};
+}
+function drawRing(svg, len, k) {
+	for (const r of svg.querySelectorAll("rect")) r.setAttribute("stroke-dashoffset", String(len * (1 - k)));
+}
+
+// ══ Scene 0: intro ════════════════════════════════════════════════════════
+const s0 = scene("s0");
+const ring0 = ringSvg("0", 1240, 420, 34, 5);
+const ring0El = el(ring0.html, s0);
+style(ring0El, { left: `${(1920 - 1240) / 2 - 40}px`, top: `${(1080 - 420) / 2 - 40 - 30}px` });
+const label0 = el(`<div class="label en" style="left:${(1920 - 1240) / 2}px;top:${(1080 - 420) / 2 - 30 - 64}px">QuickShot <small>2880 × 1800</small></div>`, s0);
+const head0 = el(`<div class="abs h1" style="left:0;right:0;top:${1080 / 2 - 30 - 92}px;text-align:center"></div>`, s0);
+const w0 = words(head0, [["截图，"], ["本该"], ["如此优雅。", "grad"]]);
+const en0 = el(`<div class="abs sub en" style="left:0;right:0;top:${1080 / 2 - 30 + 70}px;text-align:center;font-size:34px;letter-spacing:.04em">Screenshots, beautifully simple.</div>`, s0);
+const icon0 = el(`<img class="abs" src="assets/icon.svg" style="width:132px;height:132px;left:${960 - 66}px;top:${1080 / 2 + 250}px;border-radius:30px">`, s0);
+const mark0 = el(`<div class="abs en" style="left:0;right:0;top:${1080 / 2 + 400}px;text-align:center;font-size:40px;font-weight:700;letter-spacing:.02em">QuickShot</div>`, s0);
+function renderS0(t) {
+	const end = BLOCK;
+	s0.style.opacity = life(t, 0, end + 0.05, 0.6, 0.45);
+	drawRing(ring0El, ring0.len, easeInOutCubic(prog(t, 0.15, BAR * 0.95)));
+	reveal(label0, t, at(1) - 0.25, 0.5, 14);
+	reveal(w0[0], t, at(1, 0));
+	reveal(w0[1], t, at(1, 2));
+	reveal(w0[2], t, at(2, 0), 0.7);
+	w0[2].style.backgroundPosition = `${-((t * 18) % 200)}% 0`;
+	reveal(en0, t, at(2, 2), 0.8, 20);
+	// Bar 4: the lockup rises in under the headline.
+	const up = easeInOutCubic(prog(t, at(3, 0), BAR * 0.6));
+	const lift = -130 * up;
+	for (const n of [ring0El, label0, head0, en0]) n.style.translate = `0 ${lift}px`;
+	const pop = prog(t, at(3, 1), 0.7);
+	icon0.style.opacity = easeOutCubic(pop);
+	icon0.style.transform = `translateY(${lift * 0.6}px) scale(${0.6 + 0.4 * spring(pop)})`;
+	reveal(mark0, t, at(3, 1.6), 0.6, 20);
+	mark0.style.translate = `0 ${lift * 0.6}px`;
+	// Exit: a gentle push toward the camera on the last beat.
+	const exit = easeInCubic(prog(t, at(3, 3.2), BEAT * 0.8));
+	s0.style.transform = `scale(${1 + exit * 0.12})`;
+	s0.style.filter = `blur(${exit * 14}px)`;
+}
+
+// ══ Scene 1: capture ══════════════════════════════════════════════════════
+const B1 = 4; // first bar of block 1
+const s1 = scene("s1");
+const keys1 = ["⌘", "⇧", "X"].map((k, i) => el(`<div class="key en" style="left:${960 - 84 + (i - 1) * 200}px;top:${400}px">${k}</div>`, s1));
+const keyCap1 = el(`<div class="abs h3" style="left:0;right:0;top:640px;text-align:center">一个快捷键，随处开始</div>`, s1);
+const keySub1 = el(`<div class="abs sub en" style="left:0;right:0;top:722px;text-align:center">⌘ ⇧ X on macOS · Ctrl Shift X on Windows</div>`, s1);
+const glow1 = el(`<div class="glow" style="left:280px;top:250px;width:1360px;height:820px"></div>`, s1);
+const frame1 = el(`<div class="frame" style="left:${960 - 700}px;top:180px;width:1400px;height:875px"><img style="width:1400px;height:875px;left:0;top:0"></div>`, s1);
+const img1 = frame1.querySelector("img");
+const eyebrow1 = el(`<div class="abs eyebrow grad" style="left:260px;top:62px">截图 · Capture</div>`, s1);
+const caps1 = ["悬停，识别窗口", "屏幕不变暗，也不变色", "单击即截，直接进入编辑器"].map((text) => el(`<div class="abs h3" style="left:260px;top:98px">${text}</div>`, s1));
+function renderS1(t) {
+	const a = at(B1), b = a + BLOCK;
+	s1.style.opacity = life(t, a - 0.02, b + 0.05, 0.08, 0.4);
+	if (t < a - 0.1 || t > b + 0.2) return;
+	// Bar 5: the shortcut, one key per beat.
+	const keysOut = easeInCubic(prog(t, at(B1, 3.55), BEAT * 0.45));
+	keys1.forEach((key, i) => {
+		const hit = at(B1, i);
+		const k = prog(t, hit, 0.42);
+		const press = Math.exp(-Math.max(0, t - hit) * 9);
+		key.style.opacity = easeOutCubic(prog(t, hit - 0.02, 0.12)) * (1 - keysOut);
+		key.style.transform = `translateY(${(1 - easeOutExpo(k)) * -90 + press * 10 - keysOut * 40}px) scale(${lerp(1.25, 1, easeOutBack(k))})`;
+		key.style.boxShadow = `inset 0 1px 0 rgba(255,255,255,.12), inset 0 -${6 - press * 4}px 0 rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,${0.08 + press * 0.3}), 0 30px 60px -20px rgba(0,0,0,.9), 0 0 ${press * 70}px ${press * 6}px rgba(151,117,250,${press * 0.55})`;
+	});
+	reveal(keyCap1, t, at(B1, 3) - 0.05, 0.4, 24);
+	reveal(keySub1, t, at(B1, 3.3), 0.4, 16);
+	keyCap1.style.opacity *= 1 - keysOut; keySub1.style.opacity *= 1 - keysOut;
+	// Bars 6–8: the real overlay, at real speed.
+	const fa = at(B1 + 1);
+	const enter = easeOutExpo(prog(t, fa - 0.05, 0.9));
+	frame1.style.opacity = clamp(enter * 1.4);
+	frame1.style.transform = `perspective(2200px) translateY(${(1 - enter) * 120}px) rotateX(${(1 - enter) * 14}deg) scale(${lerp(0.94, 1, enter) * (1 + 0.035 * prog(t, fa, BAR * 3))})`;
+	glow1.style.opacity = enter * (0.32 + beatPulse(t) * 0.22);
+	if (t >= fa - 0.1) setImage(img1, clipSrc("capture-window", 1.4 + Math.max(0, t - fa)));
+	reveal(eyebrow1, t, fa + 0.1, 0.5, 16);
+	caps1.forEach((cap, i) => {
+		const s = at(B1 + 1 + i);
+		reveal(cap, t, s + 0.05, 0.5, 26);
+		if (i < 2) cap.style.opacity *= 1 - easeInCubic(prog(t, at(B1 + 2 + i) - 0.22, 0.22));
+	});
+}
+
+// ══ Scene 2: annotate ═════════════════════════════════════════════════════
+const B2 = 8;
+const s2 = scene("s2");
+const eyebrow2 = el(`<div class="abs eyebrow grad" style="left:110px;top:170px">标注 · Annotate</div>`, s2);
+const title2 = el(`<div class="abs h2" style="left:110px;top:214px">十种工具，<br>一键一种。</div>`, s2);
+const TOOLS = [["V", "选择"], ["R", "矩形"], ["O", "椭圆"], ["A", "箭头"], ["L", "直线"], ["P", "画笔"], ["H", "荧光笔"], ["T", "文字"], ["N", "序号"], ["M", "打码"]];
+const chips2 = TOOLS.map(([k, n], i) => el(`<div class="chip" style="left:${110 + (i % 2) * 250}px;top:${460 + Math.floor(i / 2) * 82}px"><kbd>${k}</kbd>${n}</div>`, s2));
+const note2 = el(`<div class="abs sub" style="left:110px;top:892px;width:520px">画完依然可以再次选中、移动、改色</div>`, s2);
+const glow2 = el(`<div class="glow" style="left:700px;top:240px;width:1150px;height:680px"></div>`, s2);
+const frame2 = el(`<div class="frame" style="left:640px;top:180px;width:1230px;height:683px"><img></div>`, s2);
+const img2 = frame2.querySelector("img");
+// Show the editor window only: x 96–1824, y 88–1048 of the 1920 × 1200 recording.
+style(img2, { width: `${1920 * (1230 / 1728)}px`, height: `${1200 * (1230 / 1728)}px`, left: `${-96 * (1230 / 1728)}px`, top: `${-88 * (1230 / 1728)}px` });
+function renderS2(t) {
+	const a = at(B2), b = a + BLOCK;
+	s2.style.opacity = life(t, a - 0.02, b + 0.05, 0.12, 0.4);
+	if (t < a - 0.1 || t > b + 0.2) return;
+	const enter = easeOutExpo(prog(t, a, 1.0));
+	frame2.style.transform = `perspective(2400px) translateX(${(1 - enter) * 160}px) rotateY(${lerp(-24, -7, enter) + 3 * prog(t, a, BLOCK)}deg) scale(${lerp(0.9, 1, enter)})`;
+	frame2.style.opacity = clamp(enter * 1.5);
+	glow2.style.opacity = enter * (0.28 + beatPulse(t) * 0.2);
+	setImage(img2, clipSrc("annotate", 1.0 + Math.max(0, t - a) * 1.58));
+	reveal(eyebrow2, t, a + 0.02, 0.5, 16);
+	reveal(title2, t, a + 0.08, 0.6, 30);
+	chips2.forEach((chip, i) => {
+		const s = at(B2, 2 + i);
+		const k = prog(t, s, 0.5);
+		chip.style.opacity = easeOutCubic(k);
+		chip.style.transform = `translateY(${(1 - easeOutExpo(k)) * 30}px) scale(${lerp(0.8, 1, easeOutBack(k))})`;
+		const hot = Math.exp(-Math.max(0, t - s) * 3.5) * (t >= s ? 1 : 0);
+		chip.style.background = `rgba(255,255,255,${0.06 + hot * 0.12})`;
+	});
+	reveal(note2, t, at(B2 + 3), 0.6, 18);
+}
+
+// ══ Scene 3: beautify (live composition) ═════════════════════════════════
+const B3 = 12;
+const s3 = scene("s3");
+const eyebrow3 = el(`<div class="abs eyebrow grad" style="left:0;right:0;top:70px;text-align:center">美化 · Beautify</div>`, s3);
+const title3 = el(`<div class="abs h2" style="left:0;right:0;top:110px;text-align:center">一键变成可以发布的成品图</div>`, s3);
+const GRADS = [
+	"linear-gradient(135deg,#ff8fb1 0%,#ffa97a 50%,#ffd36e 100%)",
+	"linear-gradient(135deg,#5ee7df 0%,#4f8cff 100%)",
+	"radial-gradient(70% 90% at 15% 15%,#b892ff 0%,transparent 60%),radial-gradient(70% 90% at 90% 20%,#6be4d4 0%,transparent 55%),radial-gradient(80% 80% at 60% 100%,#ff9ac1 0%,transparent 60%),#8f9cf9",
+	"linear-gradient(135deg,#667eea 0%,#764ba2 100%)",
+	"linear-gradient(135deg,#f6d365 0%,#fda085 100%)",
+	"linear-gradient(135deg,#0f2027 0%,#203a43 50%,#2c5364 100%)",
+	"linear-gradient(135deg,#84fab0 0%,#8fd3f4 100%)",
+	"linear-gradient(135deg,#ff9a9e 0%,#fecfef 100%)",
+];
+const canvas3 = el(`<div class="canvas" style="left:${960 - 600}px;top:230px;width:1200px;height:690px"><div class="bgA"></div><div class="bgB"></div></div>`, s3);
+const bgA3 = canvas3.querySelector(".bgA"), bgB3 = canvas3.querySelector(".bgB");
+const win3 = el(`<div class="win"><div class="tb"><i></i><i></i><i></i></div><img src="assets/raw.webp"></div>`, canvas3);
+const tb3 = win3.querySelector(".tb"), wimg3 = win3.querySelector("img");
+const sig3 = el(`<div class="sig" style="font-family:'Snell Roundhand','Apple Chancery',cursive;font-style:italic;font-size:40px;color:rgba(255,255,255,.85)">QuickShot</div>`, canvas3);
+const tags3 = ["渐变", "壁纸", "窗口", "圆角", "阴影", "比例"].map((text, i) => el(`<div class="pill" style="left:${960 - 3 * 158 + i * 158 - 66}px;top:968px;height:60px;padding:0 24px;font-size:24px">${text}</div>`, s3));
+const FRAMES3 = ["none", "light", "dark", "glass"];
+function layoutWindow(win, tb, img, { x, y, w, frame, radius, shadow }) {
+	const imgAspect = 1800 / 1125;
+	const bar = frame === "light" || frame === "dark" ? 40 : 0;
+	const inset = frame === "glass" ? 16 : 0;
+	const h = (w - inset * 2) / imgAspect + bar + inset * 2;
+	style(win, { left: `${x - w / 2}px`, top: `${y - h / 2}px`, width: `${w}px`, height: `${h}px`, borderRadius: `${radius}px`, padding: `${inset}px`,
+		background: frame === "dark" ? "#232327" : frame === "light" ? "#f2f2f4" : frame === "glass" ? "rgba(255,255,255,.28)" : "#fff",
+		boxShadow: `0 ${shadow * 0.5}px ${shadow * 1.4}px rgba(0,0,0,${0.18 + shadow / 260}), 0 ${shadow * 0.12}px ${shadow * 0.3}px rgba(0,0,0,.12)${frame === "glass" ? ", inset 0 0 0 1.5px rgba(255,255,255,.55)" : ""}`,
+		backdropFilter: frame === "glass" ? "blur(18px) saturate(1.4)" : "none" });
+	style(tb, { height: `${bar}px`, display: bar ? "flex" : "none" });
+	style(img, { width: `${w - inset * 2}px`, top: `${bar + inset}px`, left: `${inset}px`, borderRadius: frame === "glass" ? `${Math.max(0, radius - 8)}px` : bar ? "0" : `${radius}px` });
+	return h;
+}
+function renderS3(t) {
+	const a = at(B3), b = a + BLOCK;
+	s3.style.opacity = life(t, a - 0.02, b + 0.05, 0.12, 0.4);
+	if (t < a - 0.1 || t > b + 0.2) return;
+	const enter = easeOutExpo(prog(t, a, 0.9));
+	canvas3.style.opacity = enter;
+	reveal(eyebrow3, t, a, 0.5, 16);
+	reveal(title3, t, a + 0.05, 0.6, 26);
+	// Bars 13–14: a new background on every beat.
+	const n = clamp(Math.floor((t - a) / BEAT), 0, 7);
+	const since = t - (a + n * BEAT);
+	bgA3.style.background = GRADS[Math.max(0, n - 1)];
+	bgB3.style.background = GRADS[n];
+	bgB3.style.opacity = n === 0 ? 1 : easeOutCubic(prog(since, 0, 0.16));
+	const hit = t < at(B3 + 2) ? Math.exp(-since * 8) : 0;
+	// Bar 15: frame styles on the beat; bar 16: padding, corners, signature.
+	const f = t < at(B3 + 2) ? "dark" : FRAMES3[clamp(Math.floor((t - at(B3 + 2)) / BEAT), 0, 3)];
+	const fHit = t >= at(B3 + 2) && t < at(B3 + 3) ? Math.exp(-(t - (at(B3 + 2) + Math.floor((t - at(B3 + 2)) / BEAT) * BEAT)) * 8) : 0;
+	const grow = easeInOutCubic(prog(t, at(B3 + 3), BAR * 0.7));
+	const w = lerp(900, 800, grow);
+	layoutWindow(win3, tb3, wimg3, { x: 600, y: 345, w, frame: f === "glass" && grow > 0 ? "glass" : f, radius: lerp(12, 24, grow), shadow: lerp(50, 80, grow) });
+	canvas3.style.transform = `translateY(${(1 - enter) * 60}px) scale(${(1 + hit * 0.012 + fHit * 0.01) * lerp(0.94, 1, enter)})`;
+	const sk = prog(t, at(B3 + 3, 1.5), 0.6);
+	style(sig3, { right: "44px", bottom: "26px", opacity: easeOutCubic(sk), transform: `translateY(${(1 - easeOutExpo(sk)) * 16}px)` });
+	tags3.forEach((tag, i) => reveal(tag, t, at(B3 + 3, i * 0.5), 0.45, 18));
+}
+
+// ══ Scene 4: signature, then default style ════════════════════════════════
+const B4 = 16;
+const s4 = scene("s4");
+const eyebrow4 = el(`<div class="abs eyebrow grad" style="left:120px;top:150px">署名 · Signature</div>`, s4);
+const title4 = el(`<div class="abs h2" style="left:120px;top:194px">署上<br>你的名字</div>`, s4);
+const fontName4 = el(`<div class="abs sub" style="left:120px;top:420px;font-size:28px"></div>`, s4);
+const canvas4 = el(`<div class="canvas" style="left:660px;top:150px;width:1160px;height:780px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%)"></div>`, s4);
+const win4 = el(`<div class="win"><div class="tb"><i></i><i></i><i></i></div><img src="assets/raw.webp"></div>`, canvas4);
+const sig4 = el(`<div class="sig" style="right:52px;bottom:30px;color:rgba(255,255,255,.92)"></div>`, canvas4);
+const FONTS4 = [
+	["手写", "'Snell Roundhand','Apple Chancery',cursive", 400, "italic", 54],
+	["衬线", "'Songti SC','Times New Roman',serif", 600, "normal", 44],
+	["几何", "'Avenir Next','PingFang SC',sans-serif", 700, "normal", 44],
+	["等宽", "'SF Mono',Menlo,'PingFang SC',monospace", 500, "normal", 40],
+	["手写 · 粗", "'Snell Roundhand','Apple Chancery',cursive", 700, "italic", 60],
+];
+const SIG_TEXT = "@岚叔设计 Studio";
+const eyebrow4b = el(`<div class="abs eyebrow grad" style="left:120px;top:150px">默认样式 · Default style</div>`, s4);
+const title4b = el(`<div class="abs h2" style="left:120px;top:194px">设为默认，<br>下次照用</div>`, s4);
+const btn4 = el(`<div class="pill" style="left:120px;top:440px;background:#f5f5f7;color:#111;box-shadow:none">设为默认</div>`, s4);
+const toast4 = el(`<div class="pill" style="left:120px;top:540px;font-size:26px;height:64px"><i></i>之后的截图都会用这套样式</div>`, s4);
+const frame4 = el(`<div class="frame" style="left:640px;top:170px;width:1200px;height:750px"><img style="width:1200px;height:750px;left:0;top:0"></div>`, s4);
+const img4 = frame4.querySelector("img");
+const glow4 = el(`<div class="glow" style="left:700px;top:240px;width:1100px;height:640px;z-index:-1"></div>`, s4);
+s4.insertBefore(glow4, s4.firstChild);
+function renderS4(t) {
+	const a = at(B4), b = a + BLOCK;
+	s4.style.opacity = life(t, a - 0.02, b + 0.05, 0.12, 0.4);
+	if (t < a - 0.1 || t > b + 0.2) return;
+	// Bars 17–18: typing, then a new face on every beat.
+	const partA = 1 - easeInCubic(prog(t, at(B4 + 2) - 0.3, 0.3));
+	const enter = easeOutExpo(prog(t, a, 0.9));
+	canvas4.style.opacity = enter * partA;
+	canvas4.style.transform = `translateX(${(1 - enter) * 120}px) scale(${lerp(0.94, 1, enter)})`;
+	layoutWindow(win4, win4.querySelector(".tb"), win4.querySelector("img"), { x: 580, y: 380, w: 900, frame: "dark", radius: 18, shadow: 70 });
+	reveal(eyebrow4, t, a, 0.5, 16); eyebrow4.style.opacity *= partA;
+	reveal(title4, t, a + 0.05, 0.6, 26); title4.style.opacity *= partA;
+	const typed = Math.floor(clamp((t - a - 0.15) / (BEAT * 2.4)) * SIG_TEXT.length);
+	const fi = clamp(Math.floor((t - at(B4, 3)) / BEAT) + 1, 0, FONTS4.length - 1);
+	const [fname, family, weight, italic, size] = FONTS4[fi];
+	style(sig4, { fontFamily: family, fontWeight: weight, fontStyle: italic, fontSize: `${size}px` });
+	sig4.textContent = SIG_TEXT.slice(0, Math.max(0, typed)) + (typed < SIG_TEXT.length && t > a + 0.1 ? "|" : "");
+	const fHit = t >= at(B4, 3) ? Math.exp(-(t - (at(B4, 3) + Math.floor((t - at(B4, 3)) / BEAT) * BEAT)) * 7) : 0;
+	sig4.style.transform = `scale(${1 + fHit * 0.08})`;
+	sig4.style.transformOrigin = "100% 100%";
+	fontName4.textContent = t >= at(B4, 3) ? `字体：${fname}` : "";
+	fontName4.style.opacity = partA * (t >= at(B4, 3) ? 1 : 0);
+	// Bars 19–20: set as default, then the next capture opens in that style.
+	const pb = at(B4 + 2);
+	const show = easeOutCubic(prog(t, pb, 0.4));
+	reveal(eyebrow4b, t, pb, 0.5, 16);
+	reveal(title4b, t, pb + 0.05, 0.6, 26);
+	const press = prog(t, at(B4 + 2, 1), 0.3);
+	btn4.style.opacity = show;
+	btn4.style.transform = `scale(${1 - Math.sin(Math.PI * press) * 0.08})`;
+	btn4.innerHTML = t >= at(B4 + 2, 1.15) ? "✓ 已设为默认" : "设为默认";
+	reveal(toast4, t, at(B4 + 2, 1.5), 0.5, 16);
+	const fe = easeOutExpo(prog(t, at(B4 + 2, 2), 0.9));
+	frame4.style.opacity = clamp(fe * 1.4);
+	frame4.style.transform = `perspective(2400px) translateX(${(1 - fe) * 140}px) rotateY(${lerp(-20, -5, fe)}deg) scale(${lerp(0.92, 1, fe)})`;
+	glow4.style.opacity = fe * (0.28 + beatPulse(t) * 0.2);
+	if (t >= at(B4 + 2, 2) - 0.1) setImage(img4, clipSrc("personalize", 18.9 + Math.max(0, t - at(B4 + 2, 2)) * 1.05));
+}
+
+// ══ Scene 5: stitch (live layout) ═════════════════════════════════════════
+const B5 = 20;
+const s5 = scene("s5");
+const eyebrow5 = el(`<div class="abs eyebrow grad" style="left:120px;top:150px">拼接 · Stitch</div>`, s5);
+const title5 = el(`<div class="abs h2" style="left:120px;top:194px">多张截图，<br>拼成一张。</div>`, s5);
+const keys5 = ["⌘", "⇧", "A"].map((k, i) => el(`<div class="key en" style="left:${120 + i * 104}px;top:430px;width:88px;height:88px;border-radius:20px;font-size:40px">${k}</div>`, s5));
+const modes5 = ["纵向", "横向", "网格"].map((m, i) => el(`<div class="pill" style="left:120px;top:${580 + i * 92}px;height:70px;font-size:28px"><i></i>${m}</div>`, s5));
+const canvas5 = el(`<div class="canvas" style="left:640px;top:120px;width:1200px;height:860px;background:radial-gradient(70% 90% at 15% 15%,#b892ff 0%,transparent 60%),radial-gradient(70% 90% at 90% 20%,#6be4d4 0%,transparent 55%),radial-gradient(80% 80% at 60% 100%,#ff9ac1 0%,transparent 60%),#8f9cf9"></div>`, s5);
+const PIECES = [["dash", 1560, 1036], ["memo", 1000, 760], ["music", 704, 392]];
+const pieces5 = PIECES.map(([name]) => el(`<div class="piece"><img src="assets/${name}.png"></div>`, canvas5));
+function stitchLayout(mode, gap, W, H, margin) {
+	const sizes = PIECES.map(([, w, h]) => [w / 2, h / 2]);
+	let boxes = [];
+	if (mode === "vertical") {
+		let y = 0; const maxW = Math.max(...sizes.map((s) => s[0]));
+		boxes = sizes.map(([w, h]) => { const b = { x: (maxW - w) / 2, y, w, h }; y += h + gap; return b; });
+	} else if (mode === "horizontal") {
+		let x = 0; const maxH = Math.max(...sizes.map((s) => s[1]));
+		boxes = sizes.map(([w, h]) => { const b = { x, y: (maxH - h) / 2, w, h }; x += w + gap; return b; });
+	} else {
+		const [a, b2, c] = sizes;
+		const colW = Math.max(a[0], c[0]);
+		boxes = [{ x: (colW - a[0]) / 2, y: 0, w: a[0], h: a[1] }, { x: colW + gap, y: (a[1] - b2[1]) / 2, w: b2[0], h: b2[1] }, { x: (colW - c[0]) / 2, y: a[1] + gap, w: c[0], h: c[1] }];
+	}
+	const bw = Math.max(...boxes.map((b) => b.x + b.w)), bh = Math.max(...boxes.map((b) => b.y + b.h));
+	const s = Math.min((W - margin * 2) / bw, (H - margin * 2) / bh);
+	const ox = (W - bw * s) / 2, oy = (H - bh * s) / 2;
+	return boxes.map((b) => ({ x: ox + b.x * s, y: oy + b.y * s, w: b.w * s, h: b.h * s }));
+}
+function mixBoxes(A, B, k) {
+	return A.map((a, i) => ({ x: lerp(a.x, B[i].x, k), y: lerp(a.y, B[i].y, k), w: lerp(a.w, B[i].w, k), h: lerp(a.h, B[i].h, k) }));
+}
+function renderS5(t) {
+	const a = at(B5), b = a + BLOCK;
+	s5.style.opacity = life(t, a - 0.02, b + 0.05, 0.12, 0.4);
+	if (t < a - 0.1 || t > b + 0.2) return;
+	const enter = easeOutExpo(prog(t, a, 0.8));
+	canvas5.style.opacity = enter;
+	canvas5.style.transform = `translateY(${(1 - enter) * 50}px) scale(${lerp(0.95, 1, enter)})`;
+	reveal(eyebrow5, t, a, 0.5, 16);
+	reveal(title5, t, a + 0.05, 0.6, 26);
+	keys5.forEach((k, i) => {
+		const hit = at(B5, 3) + i * 0.12;
+		const kk = prog(t, hit, 0.35);
+		k.style.opacity = easeOutCubic(kk);
+		k.style.transform = `translateY(${(1 - easeOutExpo(kk)) * -40}px) scale(${lerp(1.2, 1, easeOutBack(kk))})`;
+	});
+	const gap = 22 + 26 * easeInOutCubic(prog(t, at(B5 + 3), BAR * 0.8));
+	const V = stitchLayout("vertical", gap, 1200, 860, 80), Hz = stitchLayout("horizontal", gap, 1200, 860, 60), G = stitchLayout("grid", gap, 1200, 860, 70);
+	const kH = spring(prog(t, at(B5 + 1), 0.9)), kG = spring(prog(t, at(B5 + 2), 0.9));
+	let boxes = mixBoxes(mixBoxes(V, Hz, kH), G, kG);
+	modes5.forEach((m, i) => {
+		const on = i === 0 ? t < at(B5 + 1) : i === 1 ? t >= at(B5 + 1) && t < at(B5 + 2) : t >= at(B5 + 2);
+		reveal(m, t, at(B5 + i) + (i === 0 ? 0.25 : 0), 0.45, 14);
+		m.style.background = on ? "rgba(255,255,255,.18)" : "rgba(255,255,255,.05)";
+		m.style.color = on ? "#fff" : "rgba(255,255,255,.55)";
+	});
+	pieces5.forEach((p, i) => {
+		const k = easeOutExpo(prog(t, a + i * BEAT, 0.7));
+		const bx = boxes[i];
+		style(p, { left: `${bx.x}px`, top: `${bx.y}px`, width: `${bx.w}px`, height: `${bx.h}px`, opacity: k,
+			transform: `translate(${(1 - k) * (i - 1) * 160}px, ${(1 - k) * 220}px) scale(${lerp(0.8, 1, k)})` });
+	});
+}
+
+// ══ Scene 6: pin + OCR, then privacy ══════════════════════════════════════
+const B6 = 24;
+const s6 = scene("s6");
+const eyebrow6 = el(`<div class="abs eyebrow grad" style="left:260px;top:62px">贴图与文字识别 · Pin & OCR</div>`, s6);
+const title6 = el(`<div class="abs h3" style="left:260px;top:98px">贴到桌面，随手提取文字</div>`, s6);
+const glow6 = el(`<div class="glow" style="left:300px;top:260px;width:1320px;height:780px"></div>`, s6);
+const frame6 = el(`<div class="frame" style="left:${960 - 700}px;top:180px;width:1400px;height:875px"><img style="width:1400px;height:875px;left:0;top:0"></div>`, s6);
+const img6 = frame6.querySelector("img");
+const priv6 = el(`<div class="abs" style="left:0;right:0;top:330px;text-align:center"></div>`, s6);
+const pw6 = words(priv6, [["你的截图，"], ["只属于你。", "grad"]], "h1");
+const pills6 = ["本机处理", "没有联网代码", "无账号 · 无统计", "GPL-3.0 开源"].map((text, i) => el(`<div class="pill" style="top:620px"><i></i>${text}</div>`, s6));
+function renderS6(t) {
+	const a = at(B6), b = a + BLOCK;
+	s6.style.opacity = life(t, a - 0.02, b + 0.05, 0.25, 0.4);
+	if (t < a - 0.1 || t > b + 0.2) return;
+	const mid = at(B6 + 2);
+	const outA = easeInCubic(prog(t, mid - 0.45, 0.45));
+	const enter = easeOutExpo(prog(t, a, 1.1));
+	frame6.style.opacity = clamp(enter * 1.4) * (1 - outA);
+	frame6.style.transform = `perspective(2200px) translateY(${(1 - enter) * 90}px) scale(${lerp(0.95, 1, enter) * (1 + 0.03 * prog(t, a, BAR * 2))}) translateY(${outA * -30}px)`;
+	glow6.style.opacity = enter * 0.3 * (1 - outA);
+	if (t < mid) setImage(img6, clipSrc("pin-ocr", 2.3 + Math.max(0, t - a) * 1.41));
+	reveal(eyebrow6, t, a + 0.1, 0.5, 16); eyebrow6.style.opacity *= 1 - outA;
+	reveal(title6, t, a + 0.15, 0.6, 22); title6.style.opacity *= 1 - outA;
+	reveal(pw6[0], t, mid + 0.05, 0.7);
+	reveal(pw6[1], t, at(B6 + 2, 2), 0.8);
+	pw6[1].style.backgroundPosition = `${-((t * 18) % 200)}% 0`;
+	const widths = [250, 320, 330, 300];
+	const total = widths.reduce((s, w) => s + w, 0) + 3 * 24;
+	let x = 960 - total / 2;
+	pills6.forEach((p, i) => {
+		p.style.left = `${x}px`;
+		x += widths[i] + 24;
+		reveal(p, t, at(B6 + 3, i), 0.6, 22);
+	});
+}
+
+// ══ Scene 7: montage, then the end card ═══════════════════════════════════
+const B7 = 28;
+const s7 = scene("s7");
+const MONTAGE = [
+	["capture-window", 6.6, "full", "悬停识别窗口"],
+	["annotate", 16.6, "editor", "十种标注工具"],
+	["beautify", 20.5, "editor", "一键美化"],
+	["signature", 22.5, "editor", "署名水印"],
+	["personalize", 11.5, "editor", "设为默认样式"],
+	["stitch", 19.0, "editor", "多图拼接"],
+	["pin-ocr", 4.6, "editor", "本机文字识别"],
+	["pin-ocr", 13.0, "full", "贴到桌面"],
+];
+const mframe7 = el(`<div class="frame" style="left:${960 - 760}px;top:${540 - 440}px;width:1520px;height:880px"><img></div>`, s7);
+const mimg7 = mframe7.querySelector("img");
+const mlabel7 = el(`<div class="pill" style="left:${960 - 760 + 36}px;top:${540 + 440 - 110}px;background:rgba(15,15,20,.78)"><i></i><span></span></div>`, s7);
+const endGlow7 = el(`<div class="glow" style="left:${960 - 380}px;top:120px;width:760px;height:560px"></div>`, s7);
+const ring7 = ringSvg("7", 236, 236, 58, 5);
+const ring7El = el(ring7.html, s7);
+style(ring7El, { left: `${960 - 118 - 40}px`, top: `${208 - 40}px` });
+const icon7 = el(`<img class="abs" src="assets/icon.svg" style="width:200px;height:200px;left:${960 - 100}px;top:226px;border-radius:46px">`, s7);
+const mark7 = el(`<div class="abs en" style="left:0;right:0;top:480px;text-align:center;font-size:96px;font-weight:750;letter-spacing:-.01em">QuickShot</div>`, s7);
+const tag7 = el(`<div class="abs h3" style="left:0;right:0;top:612px;text-align:center;font-size:46px"><span>截图，本该</span><span class="grad">如此优雅。</span></div>`, s7);
+const url7 = el(`<div class="pill en" style="left:${960 - 260}px;top:720px;width:520px;justify-content:center;font-size:32px">quickshot.lanshuagent.com</div>`, s7);
+const plat7 = el(`<div class="abs sub" style="left:0;right:0;top:830px;text-align:center">macOS · Windows · 免费开源 GPL-3.0</div>`, s7);
+const author7 = el(`<div class="abs sub" style="left:0;right:0;top:884px;text-align:center;font-size:28px;color:#8e8e96">作者 岚叔 · X @LufzzLiz</div>`, s7);
+function placeClip(img, frameW, frameH, mode) {
+	if (mode === "editor") {
+		const s = frameW / 1728;
+		style(img, { width: `${1920 * s}px`, height: `${1200 * s}px`, left: `${-96 * s}px`, top: `${-88 * s - ((960 * s - frameH) / 2)}px` });
+	} else {
+		const s = Math.max(frameW / 1920, frameH / 1200);
+		style(img, { width: `${1920 * s}px`, height: `${1200 * s}px`, left: `${(frameW - 1920 * s) / 2}px`, top: `${(frameH - 1200 * s) / 2}px` });
+	}
+}
+function renderS7(t) {
+	const a = at(B7);
+	s7.style.opacity = easeOutCubic(prog(t, a - 0.02, 0.1));
+	if (t < a - 0.1) return;
+	// Bars 29–30: one feature per beat.
+	const endA = at(B7 + 2);
+	const i = clamp(Math.floor((t - a) / BEAT), 0, MONTAGE.length - 1);
+	const since = t - (a + i * BEAT);
+	const [name, sec, mode, label] = MONTAGE[i];
+	const mOut = easeInCubic(prog(t, endA - 0.3, 0.3));
+	mframe7.style.opacity = t < endA ? 1 - mOut : 0;
+	mlabel7.style.opacity = t < endA ? (1 - mOut) * easeOutCubic(prog(since, 0.03, 0.15)) : 0;
+	if (t < endA) {
+		placeClip(mimg7, 1520, 880, mode);
+		setImage(mimg7, clipSrc(name, sec));
+		const zoom = 1 + 0.05 * easeOutCubic(prog(since, 0, BEAT));
+		const kick = Math.exp(-since * 10);
+		mframe7.style.transform = `scale(${zoom * (1 + kick * 0.02)})`;
+		mlabel7.querySelector("span").textContent = label;
+	}
+	// Bars 31–32 and the tail: the end card.
+	const e = endA;
+	const ip = prog(t, e, 0.9);
+	icon7.style.opacity = easeOutCubic(ip);
+	icon7.style.transform = `scale(${0.5 + 0.5 * spring(ip)})`;
+	drawRing(ring7El, ring7.len, easeInOutCubic(prog(t, e + 0.1, BAR * 0.8)));
+	ring7El.style.opacity = t >= e ? 1 : 0;
+	endGlow7.style.opacity = (t >= e ? 0.22 + 0.06 * Math.sin(t * 2) : 0) + beatPulse(t) * 0.12 * (t >= e ? 1 : 0);
+	reveal(mark7, t, at(B7 + 2, 0.5), 0.7, 26);
+	reveal(tag7, t, at(B7 + 2, 2), 0.7, 22);
+	reveal(url7, t, at(B7 + 3, 0), 0.6, 18);
+	reveal(plat7, t, at(B7 + 3, 1), 0.6, 14);
+	reveal(author7, t, at(B7 + 3, 2), 0.6, 14);
+	tag7.querySelector(".grad").style.backgroundPosition = `${-((t * 18) % 200)}% 0`;
+}
+
+// ── Background, grain, flashes ────────────────────────────────────────────
+const orbs = [1, 2, 3, 4].map((i) => document.getElementById(`orb${i}`));
+const grain = document.getElementById("grain");
+const grainTiles = [];
+for (let n = 0; n < 6; n++) {
+	const c = document.createElement("canvas");
+	c.width = c.height = 256;
+	const g = c.getContext("2d");
+	const d = g.createImageData(256, 256);
+	let seed = 1234 + n * 977;
+	for (let p = 0; p < d.data.length; p += 4) {
+		seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+		const v = seed & 255;
+		d.data[p] = d.data[p + 1] = d.data[p + 2] = v;
+		d.data[p + 3] = 255;
+	}
+	g.putImageData(d, 0, 0);
+	grainTiles.push(c.toDataURL());
+}
+const flash = document.getElementById("flash"), fade = document.getElementById("fade");
+function renderBackground(t) {
+	const block = Math.floor(t / BLOCK);
+	const energy = [0.35, 0.75, 0.8, 0.85, 0.8, 0.9, 0.45, 1][clamp(block, 0, 7)] ?? 0.6;
+	const swell = t < BLOCK ? 0.25 + 0.75 * easeInOutCubic(prog(t, 0, BLOCK)) : 1;
+	const pulse = beatPulse(t);
+	const base = (0.13 + 0.12 * energy) * swell + pulse * 0.07;
+	const paths = [[0.18, 0.2, 0.11], [0.82, 0.25, 0.09], [0.7, 0.85, 0.07], [0.15, 0.85, 0.12]];
+	orbs.forEach((o, i) => {
+		const [cx, cy, sp] = paths[i];
+		const x = 1920 * cx + Math.sin(t * sp + i * 1.7) * 220 - o.offsetWidth / 2;
+		const y = 1080 * cy + Math.cos(t * sp * 1.3 + i) * 140 - o.offsetHeight / 2;
+		o.style.transform = `translate(${x}px, ${y}px) scale(${1 + pulse * 0.04})`;
+		o.style.opacity = base * [1, 0.9, 0.85, 0.6][i];
+	});
+	const f = Math.floor(t * 30);
+	grain.style.backgroundImage = `url(${grainTiles[f % grainTiles.length]})`;
+	grain.style.backgroundPosition = `${(f * 97) % 256}px ${(f * 61) % 256}px`;
+	// A soft light hit on the downbeats where a new section lands.
+	let fl = 0;
+	for (const blk of [1, 2, 3, 4, 5, 7]) fl = Math.max(fl, Math.exp(-Math.max(0, t - blk * BLOCK) * 7) * (t >= blk * BLOCK ? 0.32 : 0));
+	flash.style.opacity = fl;
+	fade.style.opacity = Math.max(1 - easeOutCubic(prog(t, 0, 0.8)), easeInOutCubic(prog(t, DURATION - 2.6, 2.4)));
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────
+window.render = async (t) => {
+	pending.length = 0;
+	renderBackground(t);
+	renderS0(t); renderS1(t); renderS2(t); renderS3(t); renderS4(t); renderS5(t); renderS6(t); renderS7(t);
+	await Promise.all(pending);
+	await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+	return true;
+};
+window.ready = Promise.all([...document.images].map((i) => i.decode().catch(() => {})))
+	.then(() => document.fonts.ready)
+	.then(() => window.render(0));
+</script>
+</body>
+</html>
