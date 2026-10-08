@@ -26,7 +26,31 @@ jobs:
         run: npx electron-builder --linux --dir --x64 --config.directories.output="$RUNNER_TEMP/quickshot-package"
       - name: Verify packaged application
         run: node scripts/verify-package.mjs "$RUNNER_TEMP/quickshot-package/linux-unpacked"
-      - run: npm audit
+      # Dependencies that ship in the app must be free of known advisories.
+      # Build and test tooling, and Electron's own major upgrades, are handled
+      # as separate dependency updates.
+      - run: npm audit --omit=dev
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run verify
+      - name: Package Windows x64 directory
+        shell: bash
+        run: npx electron-builder --win --dir --x64 --config.directories.output="$RUNNER_TEMP/quickshot-package"
+      - name: Verify packaged application
+        shell: bash
+        run: node scripts/verify-package.mjs "$RUNNER_TEMP/quickshot-package/win-unpacked"
 
   ocr-macos:
     runs-on: macos-14

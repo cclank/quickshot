@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1440, initial-scale=1" />
+<title>QuickShot demo desktop</title>
+<!--
+	A clean, made-up macOS desktop for the site's demo recordings
+	(scripts/record-site-demos.mjs). Every window carries data-window-id,
+	data-app and data-title so the recorder can capture it on its own and
+	hand the overlay a matching window list. ?lang=zh|en
+-->
+<style>
+	* { box-sizing: border-box; }
+	html, body { margin: 0; width: 1440px; height: 900px; overflow: hidden; }
+	body {
+		position: relative;
+		font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+		color: #1d1d1f;
+		-webkit-font-smoothing: antialiased;
+		background:
+			radial-gradient(48% 62% at 14% 18%, #9cc9ff 0%, rgba(156, 201, 255, 0) 70%),
+			radial-gradient(42% 58% at 86% 14%, #d3b6ff 0%, rgba(211, 182, 255, 0) 70%),
+			radial-gradient(52% 62% at 78% 92%, #ffb2c6 0%, rgba(255, 178, 198, 0) 70%),
+			radial-gradient(46% 56% at 10% 96%, #ffd9a6 0%, rgba(255, 217, 166, 0) 70%),
+			linear-gradient(140deg, #a7b6ff 0%, #c6a8f5 52%, #f3b4cf 100%);
+	}
+	body::after {
+		content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+		background: radial-gradient(120% 80% at 50% 120%, rgba(255, 255, 255, .45), transparent 60%);
+	}
+	.zh, .en { display: none; }
+	html[lang="zh-CN"] .zh, html[lang="en"] .en { display: initial; }
+
+	/* Menu bar */
+	.menubar {
+		position: absolute; inset: 0 0 auto; height: 26px; z-index: 50;
+		display: flex; align-items: center; gap: 18px; padding: 0 14px 0 16px;
+		background: rgba(255, 255, 255, .38); backdrop-filter: blur(30px) saturate(1.6);
+		font-size: 13px; color: rgba(0, 0, 0, .86);
+	}
+	.menubar b { font-weight: 700; }
+	.menubar .right { margin-left: auto; display: flex; align-items: center; gap: 16px; font-variant-numeric: tabular-nums; }
+	.menubar .tray { width: 18px; height: 18px; display: block; }
+	.menubar svg { display: block; }
+
+	/* Windows */
+	.win {
+		position: absolute; overflow: hidden; border-radius: 12px; background: #fff;
+		box-shadow: 0 0 0 .5px rgba(0, 0, 0, .22), 0 26px 60px -12px rgba(36, 22, 80, .42), 0 8px 20px -8px rgba(36, 22, 80, .25);
+	}
+	.tb { position: relative; height: 30px; display: flex; align-items: center; padding: 0 12px; gap: 8px; background: #f3f3f5; border-bottom: .5px solid rgba(0,0,0,.1); }
+	.tb i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.12); }
+	.tb i:nth-child(2) { background: #febc2e; } .tb i:nth-child(3) { background: #28c840; }
+	.tb span { position: absolute; left: 0; right: 0; text-align: center; font-weight: 600; font-size: 13px; color: rgba(0,0,0,.72); pointer-events: none; }
+	/* Window captures: just the window, no shadow, transparent corners */
+	body.solo { background: transparent; }
+	body.solo::after, body.solo .menubar, body.solo .dock, body.solo .win:not(.target) { display: none; }
+	body.solo .win.target { box-shadow: none; }
+
+	/* Northwind dashboard */
+	#w-dash { left: 92px; top: 92px; width: 780px; height: 518px; }
+	#w-dash img { display: block; width: 780px; height: 487.5px; }
+	.url { position: absolute; left: 50%; transform: translateX(-50%); width: 300px; height: 20px; border-radius: 6px; background: #fff; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.12); display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 11.5px; color: #6e6e73; }
+	.url::before { content: ""; width: 8px; height: 9px; border-radius: 2px; background: #a1a1a6; }
+
+	/* Memo */
+	#w-memo { left: 812px; top: 336px; width: 500px; height: 380px; }
+	#w-memo .body { display: grid; grid-template-columns: 168px 1fr; height: calc(100% - 30px); }
+	#w-memo aside { background: #f8f6ee; border-right: .5px solid rgba(0,0,0,.08); padding: 12px 10px; display: grid; gap: 6px; align-content: start; }
+	#w-memo aside div { border-radius: 8px; padding: 8px 10px; }
+	#w-memo aside div.on { background: #f5d76e; }
+	#w-memo aside b { display: block; font-size: 12.5px; }
+	#w-memo aside small { display: block; font-size: 11px; color: rgba(0,0,0,.5); margin-top: 2px; }
+	#w-memo main { padding: 18px 22px; }
+	#w-memo h3 { margin: 0 0 4px; font-size: 20px; letter-spacing: -.02em; }
+	#w-memo .date { font-size: 11px; color: #8e8e93; margin-bottom: 12px; }
+	#w-memo ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; font-size: 13px; }
+	#w-memo li { display: flex; gap: 9px; align-items: center; }
+	#w-memo li::before { content: ""; width: 15px; height: 15px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px #c7c7cc; flex: none; }
+	#w-memo li.done { color: #8e8e93; text-decoration: line-through; }
+	#w-memo li.done::before { background: #f5b800 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 8.2l2.3 2.3 4.7-5' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/100%; box-shadow: none; }
+	#w-memo .note { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #fff8dc; font-size: 12px; color: #6b5b20; }
+
+	/* Music */
+	#w-music { left: 960px; top: 96px; width: 352px; height: 196px; background: #1c1c21; color: #f5f5f7; }
+	#w-music .tb { background: #26262c; border-color: rgba(255,255,255,.06); }
+	#w-music .tb span { color: rgba(255,255,255,.7); }
+	#w-music .body { display: flex; gap: 16px; padding: 16px; }
+	#w-music .art { width: 118px; height: 118px; border-radius: 10px; flex: none; background: conic-gradient(from 210deg at 40% 60%, #ff5a7a, #9775fa, #4dabf7, #38d9a9, #ffd43b, #ff9f43, #ff5a7a); box-shadow: 0 10px 24px -10px rgba(151,117,250,.8); }
+	#w-music .meta { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; }
+	#w-music .meta b { font-size: 15px; }
+	#w-music .meta span { font-size: 12px; color: rgba(255,255,255,.55); }
+	#w-music .bar { margin-top: 12px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.14); }
+	#w-music .bar::before { content: ""; display: block; height: 100%; width: 42%; border-radius: inherit; background: #fff; }
+	#w-music .times { display: flex; justify-content: space-between; font-size: 10px; color: rgba(255,255,255,.45); margin-top: 4px; font-variant-numeric: tabular-nums; }
+	#w-music .ctrl { display: flex; gap: 22px; align-items: center; margin-top: 8px; }
+	#w-music .ctrl svg { display: block; fill: #fff; }
+
+	/* Dock */
+	.dock {
+		position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 40;
+		display: flex; gap: 10px; padding: 8px 10px; border-radius: 22px;
+		background: rgba(255, 255, 255, .32); backdrop-filter: blur(30px) saturate(1.5);
+		box-shadow: inset 0 0 0 .5px rgba(255,255,255,.6), 0 10px 30px -12px rgba(0,0,0,.25);
+	}
+	.dock i { width: 50px; height: 50px; border-radius: 12px; display: grid; place-items: center; box-shadow: 0 2px 6px rgba(0,0,0,.15); }
+	.dock i svg { width: 26px; height: 26px; }
+	.dock img { width: 50px; height: 50px; border-radius: 12px; display: block; box-shadow: 0 2px 6px rgba(0,0,0,.15); }
+	.dock .sep { width: 1px; background: rgba(0,0,0,.14); margin: 4px 2px; }
+</style>
+</head>
+<body>
+	<div class="menubar">
+		<b>Northwind</b>
+		<span class="zh">文件</span><span class="en">File</span>
+		<span class="zh">编辑</span><span class="en">Edit</span>
+		<span class="zh">显示</span><span class="en">View</span>
+		<span class="zh">窗口</span><span class="en">Window</span>
+		<span class="zh">帮助</span><span class="en">Help</span>
+		<div class="right">
+			<img class="tray" src="/trayTemplate@2x.png" alt="" />
+			<svg width="17" height="13" viewBox="0 0 17 13" aria-hidden="true"><path d="M8.5 12.2 6 9.6a3.6 3.6 0 0 1 5 0zM3.6 7.2a7 7 0 0 1 9.8 0l-1.2 1.2a5.3 5.3 0 0 0-7.4 0zM1.2 4.8a10.4 10.4 0 0 1 14.6 0L14.6 6A8.7 8.7 0 0 0 2.4 6z" fill="currentColor"/></svg>
+			<svg width="26" height="12" viewBox="0 0 26 12" aria-hidden="true"><rect x=".5" y=".5" width="22" height="11" rx="3" fill="none" stroke="currentColor" opacity=".5"/><rect x="2" y="2" width="16" height="8" rx="1.6" fill="currentColor"/><path d="M24 4v4c.8-.3 1.3-1 1.3-2s-.5-1.7-1.3-2z" fill="currentColor" opacity=".5"/></svg>
+			<span class="zh">10月8日 周三 09:41</span><span class="en">Wed Oct 8  9:41 AM</span>
+		</div>
+	</div>
+
+	<div class="win" id="w-dash" data-window-id="101" data-app="Northwind" data-title="Overview">
+		<div class="tb"><i></i><i></i><i></i><div class="url">northwind.app</div></div>
+		<img src="/test-fixtures/sample-ui.svg" alt="" />
+	</div>
+
+	<div class="win" id="w-music" data-window-id="103" data-app-zh="音乐" data-app-en="Music" data-title="">
+		<div class="tb"><i></i><i></i><i></i><span class="zh">正在播放</span><span class="en">Now Playing</span></div>
+		<div class="body">
+			<div class="art"></div>
+			<div class="meta">
+				<b>Spectrum</b>
+				<span>Prism Drive · Light Years</span>
+				<div class="bar"></div>
+				<div class="times"><span>1:24</span><span>-2:03</span></div>
+				<div class="ctrl">
+					<svg width="20" height="14" viewBox="0 0 20 14"><path d="M10 0v14L2 7zm8 0v14l-8-7z"/></svg>
+					<svg width="16" height="18" viewBox="0 0 16 18"><rect x="1" y="0" width="5" height="18" rx="1.5"/><rect x="10" y="0" width="5" height="18" rx="1.5"/></svg>
+					<svg width="20" height="14" viewBox="0 0 20 14"><path d="M10 0v14l8-7zM2 0v14l8-7z"/></svg>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="win" id="w-memo" data-window-id="102" data-app-zh="便笺" data-app-en="Memo" data-title="">
+		<div class="tb"><i></i><i></i><i></i><span class="zh">便笺</span><span class="en">Memo</span></div>
+		<div class="body">
+			<aside>
+				<div class="on"><b><span class="zh">发布清单</span><span class="en">Launch checklist</span></b><small><span class="zh">今天 09:12</span><span class="en">Today 9:12</span></small></div>
+				<div><b><span class="zh">周会纪要</span><span class="en">Weekly sync</span></b><small><span class="zh">昨天</span><span class="en">Yesterday</span></small></div>
+				<div><b><span class="zh">设计灵感</span><span class="en">Design ideas</span></b><small><span class="zh">周一</span><span class="en">Monday</span></small></div>
+				<div><b><span class="zh">读书笔记</span><span class="en">Reading notes</span></b><small>9/28</small></div>
+			</aside>
+			<main>
+				<h3><span class="zh">发布清单</span><span class="en">Launch checklist</span></h3>
+				<div class="date"><span class="zh">2026 年 10 月 8 日 09:12</span><span class="en">October 8, 2026 at 9:12 AM</span></div>
+				<ul>
+					<li class="done"><span class="zh">整理第三季度数据</span><span class="en">Pull the Q3 numbers</span></li>
+					<li><span class="zh">截取新版仪表盘</span><span class="en">Capture the new dashboard</span></li>
+					<li><span class="zh">标出转化率的变化</span><span class="en">Call out the conversion jump</span></li>
+					<li><span class="zh">给客户名称打码</span><span class="en">Blur customer names</span></li>
+					<li><span class="zh">拼成一张发给团队</span><span class="en">Stitch and send to the team</span></li>
+				</ul>
+				<div class="note"><span class="zh">周五下午三点前发出 ✦</span><span class="en">Send before Friday 3 PM ✦</span></div>
+			</main>
+		</div>
+	</div>
+
+	<div class="dock">
+		<i style="background:linear-gradient(160deg,#6ec6ff,#2f7dff)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 4v16M4 12h16"/></svg></i>
+		<i style="background:linear-gradient(160deg,#ffe27a,#ffb200)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M6 6h12M6 11h12M6 16h8"/></svg></i>
+		<i style="background:linear-gradient(160deg,#ff7a9a,#ff3b5c)"><svg viewBox="0 0 24 24" fill="#fff"><path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></i>
+		<i style="background:linear-gradient(160deg,#5ee0b1,#13a77a)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M4 18l5-6 4 3 7-9"/></svg></i>
+		<i style="background:linear-gradient(160deg,#b9a2ff,#7d5cf0)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg></i>
+		<span class="sep"></span>
+		<img src="/icon.svg" alt="" />
+		<i style="background:linear-gradient(160deg,#e9e9ee,#c8c8d0)"><svg viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="2"><path d="M5 8h14l-1 12H6zM9 8V5h6v3"/></svg></i>
+	</div>
+
+<script>
+	const lang = new URLSearchParams(location.search).get("lang") === "en" ? "en" : "zh";
+	document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+	for (const win of document.querySelectorAll("[data-app-zh]")) win.dataset.app = win.dataset[lang === "zh" ? "appZh" : "appEn"];
+	/** Front-to-back list of windows in CSS pixels, as the overlay expects. */
+	window.describeWindows = () =>
+		[...document.querySelectorAll(".win")]
+			.map((win) => {
+				const r = win.getBoundingClientRect();
+				return { id: Number(win.dataset.windowId), app: win.dataset.app, title: win.dataset.title || "", x: r.x, y: r.y, width: r.width, height: r.height, z: [...win.parentNode.children].indexOf(win) };
+			})
+			.sort((a, b) => b.z - a.z)
+			.map(({ z, ...rest }) => rest);
+	/** Shows one window alone, without its shadow, for a single-window capture. */
+	window.soloWindow = (id) => {
+		document.body.classList.toggle("solo", id != null);
+		for (const win of document.querySelectorAll(".win")) win.classList.toggle("target", Number(win.dataset.windowId) === id);
+	};
+	window.desktopReady = Promise.all([...document.images].map((img) => img.decode().catch(() => {}))).then(() => document.fonts.ready);
+</script>
+</body>
+</html>

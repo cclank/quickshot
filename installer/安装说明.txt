@@ -1,0 +1,44 @@
+QuickShot 安装说明
+==================
+
+1. 把 QuickShot 拖进“应用程序”（Applications）文件夹。
+
+2. 打开 QuickShot。首次打开如果提示“无法验证开发者”或“已损坏”，
+   在“终端”里运行下面这行（会要求输入开机密码），然后重新打开 QuickShot：
+
+   sudo xattr -rd com.apple.quarantine /Applications/QuickShot.app
+
+   也可以打开“系统设置 → 隐私与安全性”，在页面底部点“仍要打开”。
+
+3. 第一次打开时会出现使用指南，按提示允许“屏幕录制”，
+   系统提示时选择“退出并重新打开”。
+
+4. 之后随时按 ⌘⇧X 截图。菜单栏里的取景框图标可以切换选区方式、
+   语言和登录时启动，也能再次打开使用指南。
+
+QuickShot 是开源软件，截图只保存在你的电脑上，不会上传。
+项目主页：https://github.com/cclank/quickshot
+
+
+QuickShot — Installing
+======================
+
+1. Drag QuickShot into the Applications folder.
+
+2. Open QuickShot. If macOS says it can't verify the developer or that the
+   app is damaged, run this in Terminal (it asks for your login password),
+   then open QuickShot again:
+
+   sudo xattr -rd com.apple.quarantine /Applications/QuickShot.app
+
+   Or open System Settings → Privacy & Security and click "Open Anyway"
+   near the bottom of the page.
+
+3. On first launch a welcome guide walks you through allowing Screen
+   Recording. When macOS asks, choose Quit & Reopen.
+
+4. Press ⌘⇧X to capture any time. The viewfinder icon in the menu bar has
+   the selection style, language, launch at login and the guide.
+
+QuickShot is open source. Your captures stay on your computer.
+Project page: https://github.com/cclank/quickshot

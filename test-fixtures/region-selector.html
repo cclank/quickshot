@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>QuickShot Region Selector Fixture</title>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script>
+			// Renders the capture overlay against a fixed image instead of the screen.
+			const parameters = new URLSearchParams(window.location.search);
+			const source = parameters.get("fixtureSource") || "/test-fixtures/sample-ui.svg";
+			window.__quickshotRegionFixture = { actions: [] };
+
+			async function screenBytes() {
+				const image = new Image();
+				image.src = source;
+				await image.decode();
+				const canvas = document.createElement("canvas");
+				canvas.width = Math.round(window.innerWidth * (window.devicePixelRatio || 1));
+				canvas.height = Math.round(window.innerHeight * (window.devicePixelRatio || 1));
+				canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+				const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+				return new Uint8Array(await blob.arrayBuffer());
+			}
+
+			window.electronAPI = {
+				platform: parameters.get("platform") || undefined,
+				language: parameters.get("lang") || undefined,
+				getRegionCaptureSession: async () => ({
+					success: true,
+					session: { sessionId: 1, imageBytes: await screenBytes() },
+				}),
+				onCaptureSession: () => () => {},
+				regionSelectorReady: async () => ({ success: true }),
+				// Front-to-back mock windows laid over the sample screen.
+				getCaptureWindows: async () => ({
+					success: true,
+					windows: [
+						{ id: 102, x: Math.round(innerWidth * 0.73), y: Math.round(innerHeight * 0.38), width: Math.round(innerWidth * 0.25), height: Math.round(innerHeight * 0.45), app: "Calendar", title: "" },
+						{ id: 101, x: Math.round(innerWidth * 0.2), y: Math.round(innerHeight * 0.14), width: Math.round(innerWidth * 0.78), height: Math.round(innerHeight * 0.84), app: "Northwind", title: "Overview" },
+					],
+				}),
+				cancelCaptureSession: async () => {
+					window.__quickshotRegionFixture.actions.push("cancel");
+					document.documentElement.dataset.lastAction = "cancel";
+					return { success: true };
+				},
+				screenshotRegionSelected: async (payload) => {
+					window.__quickshotRegionFixture.actions.push(payload.action);
+					document.documentElement.dataset.lastAction = payload.action;
+					document.documentElement.dataset.lastRect = JSON.stringify(payload.rect ?? null);
+					document.documentElement.dataset.lastWindowId = String(payload.windowId ?? "");
+					return { success: true };
+				},
+			};
+		</script>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

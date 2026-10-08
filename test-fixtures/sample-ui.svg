@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1500" viewBox="0 0 1200 750" font-family="-apple-system, 'SF Pro Text', 'PingFang SC', 'Segoe UI', sans-serif">
+  <rect width="1200" height="750" fill="#F7F8FA"/>
+  <rect width="232" height="750" fill="#FFFFFF"/>
+  <rect x="231" width="1" height="750" fill="#E6E8EC"/>
+  <rect x="24" y="26" width="28" height="28" rx="8" fill="#34B27B"/>
+  <text x="64" y="46" font-size="16" font-weight="700" fill="#111827">Northwind</text>
+  <g font-size="13.5" fill="#4B5563">
+    <rect x="16" y="86" width="200" height="36" rx="9" fill="#EEF7F2"/>
+    <text x="48" y="109" fill="#1F7A52" font-weight="600">概览 Overview</text>
+    <text x="48" y="149">订单 Orders</text>
+    <text x="48" y="189">客户 Customers</text>
+    <text x="48" y="229">报表 Reports</text>
+    <text x="48" y="269">设置 Settings</text>
+  </g>
+  <g fill="#9CA3AF">
+    <circle cx="30" cy="105" r="5" fill="#34B27B"/>
+    <circle cx="30" cy="145" r="5"/>
+    <circle cx="30" cy="185" r="5"/>
+    <circle cx="30" cy="225" r="5"/>
+    <circle cx="30" cy="265" r="5"/>
+  </g>
+  <text x="264" y="62" font-size="24" font-weight="700" fill="#111827">季度概览</text>
+  <text x="264" y="86" font-size="13.5" fill="#6B7280">Revenue and order health for Q3, updated 5 minutes ago</text>
+  <rect x="1000" y="40" width="168" height="38" rx="10" fill="#111827"/>
+  <text x="1084" y="64" text-anchor="middle" font-size="13.5" font-weight="600" fill="#FFFFFF">导出报表 Export</text>
+  <g>
+    <rect x="264" y="112" width="284" height="124" rx="14" fill="#FFFFFF" stroke="#E6E8EC"/>
+    <text x="288" y="146" font-size="13" fill="#6B7280">总收入 Revenue</text>
+    <text x="288" y="186" font-size="30" font-weight="700" fill="#111827">¥ 1,284,920</text>
+    <text x="288" y="214" font-size="12.5" fill="#16A34A">▲ 12.4% vs last quarter</text>
+    <rect x="574" y="112" width="284" height="124" rx="14" fill="#FFFFFF" stroke="#E6E8EC"/>
+    <text x="598" y="146" font-size="13" fill="#6B7280">订单数 Orders</text>
+    <text x="598" y="186" font-size="30" font-weight="700" fill="#111827">8,419</text>
+    <text x="598" y="214" font-size="12.5" fill="#DC2626">▼ 3.1% vs last quarter</text>
+    <rect x="884" y="112" width="284" height="124" rx="14" fill="#FFFFFF" stroke="#E6E8EC"/>
+    <text x="908" y="146" font-size="13" fill="#6B7280">转化率 Conversion</text>
+    <text x="908" y="186" font-size="30" font-weight="700" fill="#111827">4.82%</text>
+    <text x="908" y="214" font-size="12.5" fill="#16A34A">▲ 0.6 pt</text>
+  </g>
+  <rect x="264" y="260" width="594" height="330" rx="14" fill="#FFFFFF" stroke="#E6E8EC"/>
+  <text x="288" y="294" font-size="15" font-weight="600" fill="#111827">每周收入 Weekly revenue</text>
+  <g stroke="#EEF0F3">
+    <line x1="288" y1="340" x2="834" y2="340"/>
+    <line x1="288" y1="400" x2="834" y2="400"/>
+    <line x1="288" y1="460" x2="834" y2="460"/>
+    <line x1="288" y1="520" x2="834" y2="520"/>
+  </g>
+  <path d="M288 500 C340 470 370 480 410 440 S480 400 520 420 S600 360 650 380 S730 330 780 350 S820 320 834 316 L834 560 L288 560 Z" fill="#34B27B" fill-opacity="0.12"/>
+  <path d="M288 500 C340 470 370 480 410 440 S480 400 520 420 S600 360 650 380 S730 330 780 350 S820 320 834 316" fill="none" stroke="#34B27B" stroke-width="3"/>
+  <g font-size="11.5" fill="#9CA3AF">
+    <text x="288" y="578">Jul 1</text>
+    <text x="470" y="578">Aug 1</text>
+    <text x="652" y="578">Sep 1</text>
+    <text x="800" y="578">Sep 30</text>
+  </g>
+  <rect x="884" y="260" width="284" height="330" rx="14" fill="#FFFFFF" stroke="#E6E8EC"/>
+  <text x="908" y="294" font-size="15" font-weight="600" fill="#111827">待处理 Pending</text>
+  <g font-size="13" fill="#374151">
+    <circle cx="916" cy="330" r="4" fill="#F59E0B"/><text x="930" y="334">退款审核 · 12 条</text>
+    <circle cx="916" cy="370" r="4" fill="#EF4444"/><text x="930" y="374">支付失败 · 3 笔</text>
+    <circle cx="916" cy="410" r="4" fill="#3B82F6"/><text x="930" y="414">新客户审批 · 7 位</text>
+    <circle cx="916" cy="450" r="4" fill="#10B981"/><text x="930" y="454">发货完成 · 214 单</text>
+  </g>
+  <rect x="908" y="520" width="236" height="40" rx="10" fill="#F3F4F6"/>
+  <text x="1026" y="545" text-anchor="middle" font-size="13" font-weight="600" fill="#111827">查看全部 View all</text>
+  <rect x="264" y="614" width="904" height="112" rx="14" fill="#FFFFFF" stroke="#E6E8EC"/>
+  <g font-size="13" fill="#374151">
+    <text x="288" y="648" font-weight="600" fill="#6B7280">订单号</text>
+    <text x="480" y="648" font-weight="600" fill="#6B7280">客户</text>
+    <text x="700" y="648" font-weight="600" fill="#6B7280">金额</text>
+    <text x="880" y="648" font-weight="600" fill="#6B7280">状态</text>
+    <text x="288" y="684">#NW-20931</text><text x="480" y="684">上海晨星科技</text><text x="700" y="684">¥ 12,800</text>
+    <rect x="880" y="668" width="64" height="24" rx="12" fill="#DCFCE7"/><text x="912" y="685" text-anchor="middle" fill="#15803D" font-size="12">已完成</text>
+    <text x="288" y="714">#NW-20930</text><text x="480" y="714">Acme Studio</text><text x="700" y="714">¥ 4,260</text>
+    <rect x="880" y="698" width="64" height="24" rx="12" fill="#FEF3C7"/><text x="912" y="715" text-anchor="middle" fill="#B45309" font-size="12">处理中</text>
+  </g>
+</svg>

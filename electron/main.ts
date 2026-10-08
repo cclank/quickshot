@@ -1,14 +1,52 @@
-import { execFile, type ChildProcess } from "node:child_process";
-import { rmSync } from "node:fs";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { rmSync, statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
 	createScreenshotPathGenerator,
 	writePngWithoutOverwrite,
 } from "./screenshotFiles";
 import { shouldRegisterCaptureShortcut } from "./captureShortcutPolicy";
 import { parseOcrHelperOutput } from "./ocrResult";
+import {
+	type AppSettings,
+	DEFAULT_APP_SETTINGS,
+	type LanguagePreference,
+	type MacCaptureMode,
+	ONBOARDING_VERSION,
+	readAppSettings,
+	resolveLanguage,
+	writeAppSettings,
+} from "./appSettings";
+import { getMainLanguage, mt, setMainLanguage } from "./i18n";
+import { type AgentResponse, CaptureAgent } from "./captureAgent";
+import { type BundleStamp, bundleFromExecutable, shouldHandOver } from "./handOver";
+import { findOpaqueBounds, getWindowCaptureArguments } from "./windowCapture";
+import {
+	PREVIEW_MIN_WIDTH,
+	PREVIEW_MIN_WIDTH_WINDOWS,
+	computePreviewBounds,
+	readPngDimensions,
+} from "./previewWindowLayout";
+import {
+	type ScreenWindow,
+	WINDOWS_WINDOW_LIST_SCRIPT,
+	getWindowsWindowListArguments,
+	normalizeWindowList,
+	parseWindowList,
+	toDisplayLocalWindows,
+} from "./windowList";
+import {
+	WINDOWS_OCR_NO_LANGUAGE_EXIT_CODE,
+	WINDOWS_OCR_SCRIPT,
+	WINDOWS_OCR_TOO_LARGE_EXIT_CODE,
+	getWindowsOcrArguments,
+	getWindowsPowerShellPath,
+	normalizeCjkSpacing,
+	stripByteOrderMark,
+} from "./windowsOcr";
 import {
 	MAX_CAPTURE_PNG_BYTES,
 	MAX_EXPORT_PNG_BYTES,
@@ -31,6 +69,7 @@ import {
 	globalShortcut,
 	ipcMain,
 	nativeImage,
+	nativeTheme,
 	powerMonitor,
 	screen,
 	session,
@@ -78,6 +117,13 @@ const LEGACY_DIAGNOSTIC_LOG_CLEANUP_MARKER =
 	".legacy-diagnostic-logs-cleaned-v1";
 const LEGACY_DIAGNOSTIC_LOG_CLEANUP_BATCH_SIZE = 32;
 const SHORTCUT_RETRY_DELAYS_MS = [250, 1_500, 5_000, 30_000];
+const SPARE_PREVIEW_DELAY_MS = 1_200;
+/** Matches the editor's --qs-bg token so windows never flash the wrong colour. */
+function getPreviewChromeColors() {
+	return nativeTheme.shouldUseDarkColors
+		? { background: "#202022", symbol: "#D9DADF" }
+		: { background: "#F5F5F7", symbol: "#3A3A3C" };
+}
 const INPUT_SOURCE_DISTRIBUTED_NOTIFICATION =
 	"com.apple.Carbon.TISNotifySelectedKeyboardInputSourceChanged";
 
@@ -96,6 +142,25 @@ function getValidatedDevServerUrl(rawUrl: string | undefined): string | undefine
 const VITE_DEV_SERVER_URL = getValidatedDevServerUrl(
 	process.env["VITE_DEV_SERVER_URL"],
 );
+// Development-only overrides: an isolated profile so a dev build never shares
+// state or the single-instance lock with an installed copy, and a fixture image
+// that stands in for the screen so the capture flow runs without permissions.
+const DEV_CAPTURE_FILE = app.isPackaged
+	? undefined
+	: process.env["QUICKSHOT_DEV_CAPTURE_FILE"];
+/** Development only: stand in another app for System Settings when testing the permission helper. */
+const DEV_SETTINGS_BUNDLE = app.isPackaged
+	? undefined
+	: process.env["QUICKSHOT_DEV_SETTINGS_BUNDLE"];
+if (!app.isPackaged && process.env["QUICKSHOT_USER_DATA_DIR"]) {
+	app.setPath("userData", path.resolve(process.env["QUICKSHOT_USER_DATA_DIR"]));
+}
+if (!app.isPackaged && process.env["QUICKSHOT_DEV_REMOTE_DEBUGGING_PORT"]) {
+	app.commandLine.appendSwitch(
+		"remote-debugging-port",
+		process.env["QUICKSHOT_DEV_REMOTE_DEBUGGING_PORT"],
+	);
+}
 const HAS_SINGLE_INSTANCE_LOCK = app.requestSingleInstanceLock();
 if (!HAS_SINGLE_INSTANCE_LOCK) app.quit();
 
@@ -123,6 +188,21 @@ type CaptureProcessState = {
 type RegionCaptureSession = {
 	sessionId: number;
 	imageBuffer: Buffer;
+	mimeType: FrameMimeType;
+};
+
+type FrameMimeType = "image/png" | "image/jpeg";
+
+/**
+ * A frozen display. With the agent, `imageBuffer` is a full-quality JPEG
+ * preview and the lossless frame stays in the agent for cropping.
+ */
+type CapturedFrame = {
+	buffer: Buffer;
+	mimeType: FrameMimeType;
+	width: number;
+	height: number;
+	heldByAgent: boolean;
 };
 
 type OcrErrorCode =
@@ -158,7 +238,19 @@ let regionSelectorLoadPromise: Promise<void> | null = null;
 let screenshotPreviewWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let screenshotCroppedBuffer: Buffer | null = null;
+let screenshotCroppedScaleFactor = 1;
+let sparePreviewWindow: BrowserWindow | null = null;
+let sparePreviewTimer: NodeJS.Timeout | null = null;
+let appSettings: AppSettings = { ...DEFAULT_APP_SETTINGS };
 let pendingRegionCaptureSession: RegionCaptureSession | null = null;
+/** The frozen screen of the current overlay session, for cropping in the main process. */
+let regionFrozenFrame: { sessionId: number; frame: CapturedFrame } | null = null;
+/** The overlay stays up until the editor is on screen, so nothing flashes between them. */
+let overlayAwaitingEditor = false;
+/** An editor waiting, hidden, for one more capture to stitch onto its own. */
+let stitchTarget: BrowserWindow | null = null;
+let captureWindows: { sessionId: number; windows: ScreenWindow[] } | null = null;
+let windowListScriptPath: Promise<string> | null = null;
 let capturePhase: CapturePhase = "idle";
 let nextCaptureSessionId = 0;
 let activeCaptureSessionId: number | null = null;
@@ -168,6 +260,14 @@ let activeCaptureProcess: CaptureProcessState | null = null;
 let activeOcrTask: ActiveOcrTask | null = null;
 let activeCaptureAttempt = 0;
 let captureRestartTimer: NodeJS.Timeout | null = null;
+let captureStartedAt = 0;
+/** The step an overlay capture is on, logged if it stalls. */
+let overlayCaptureStep = "idle";
+let overlayCaptureWatchdog: NodeJS.Timeout | null = null;
+const OVERLAY_CAPTURE_TIMEOUT_MS = 6_000;
+/** Recovers when the overlay never reports ready, so the next press works. */
+let regionReadyWatchdog: NodeJS.Timeout | null = null;
+const REGION_READY_TIMEOUT_MS = 3_000;
 let previewReadyTimer: NodeJS.Timeout | null = null;
 let shortcutRecoveryTimer: NodeJS.Timeout | null = null;
 let shortcutHealthTimer: NodeJS.Timeout | null = null;
@@ -621,6 +721,175 @@ function validateCapturePngPayload(pngData: unknown): Buffer {
 	return buffer;
 }
 
+/**
+ * For PNGs QuickShot just captured itself: checks the signature and header
+ * without decoding the whole image, which the overlay does anyway.
+ */
+function acceptCapturedPng(pngData: unknown): Buffer {
+	const buffer = normalizePngPayload(pngData, MAX_CAPTURE_PNG_BYTES);
+	if (!readPngDimensions(buffer)) throw new Error("PNG header is invalid");
+	return buffer;
+}
+
+/** For the agent's JPEG previews: checks the signature and size only. */
+function acceptCapturedJpeg(bytes: Buffer): Buffer {
+	if (bytes.length < 4 || bytes.length > MAX_CAPTURE_PNG_BYTES || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+		throw new Error("JPEG preview is invalid");
+	}
+	return bytes;
+}
+
+function getCaptureAgentPath(): string {
+	return app.isPackaged
+		? path.join(process.resourcesPath, "capture-agent", "quickshot-capture-agent")
+		: path.join(APP_ROOT, "build", "capture-agent", "quickshot-capture-agent");
+}
+
+/**
+ * The resident ScreenCaptureKit helper on macOS. Captures and window lists go
+ * through it first and fall back to one-off processes when it is unavailable.
+ */
+const captureAgent =
+	process.platform === "darwin" && !DEV_CAPTURE_FILE
+		? new CaptureAgent(getCaptureAgentPath(), (event, details) => writeDiagnostic(event, details))
+		: null;
+
+function temporaryCapturePath(prefix: string, extension: "png" | "jpg" = "png") {
+	return path.join(
+		app.getPath("temp"),
+		`${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`,
+	);
+}
+
+/** Asks the agent to write a capture to a temporary PNG and reads it back. */
+async function captureWithAgent(
+	command: Record<string, unknown>,
+	timeoutMs: number,
+	format: "png" | "jpg" = "png",
+): Promise<{ buffer: Buffer; ms: number; response: AgentResponse } | null> {
+	if (!captureAgent) return null;
+	const filePath = temporaryCapturePath("quickshot-agent", format);
+	const startedAt = Date.now();
+	try {
+		const response = await captureAgent.request({ ...command, path: filePath }, timeoutMs);
+		if (!response?.ok) {
+			if (response) writeDiagnostic("capture-agent-failed", { cmd: command.cmd, error: response.error });
+			return null;
+		}
+		const fs = await import("node:fs/promises");
+		const bytes = await fs.readFile(filePath);
+		return {
+			buffer: format === "jpg" ? acceptCapturedJpeg(bytes) : acceptCapturedPng(bytes),
+			ms: Date.now() - startedAt,
+			response,
+		};
+	} catch (error) {
+		writeDiagnostic("capture-agent-failed", { cmd: command.cmd, error: serializeError(error) });
+		return null;
+	} finally {
+		try {
+			const fs = await import("node:fs/promises");
+			await fs.unlink(filePath);
+		} catch {}
+	}
+}
+
+/**
+ * Starts the agent and, when Screen Recording is already allowed, lets it
+ * prepare ScreenCaptureKit so the first capture is as quick as later ones.
+ */
+function warmCaptureAgent(reason: string) {
+	if (!captureAgent) return;
+	void captureAgent.request({ cmd: "warm" }, 5_000).then((response) => {
+		writeDiagnostic("capture-agent-warm", {
+			reason,
+			ok: response?.ok ?? false,
+			ms: response?.ms,
+			error: response?.error,
+		});
+	});
+}
+
+function getWindowListHelperPath(): string {
+	return app.isPackaged
+		? path.join(process.resourcesPath, "window-list", "quickshot-window-list")
+		: path.join(APP_ROOT, "build", "window-list", "quickshot-window-list");
+}
+
+function ensureWindowListScript(): Promise<string> {
+	windowListScriptPath ??= (async () => {
+		const fs = await import("node:fs/promises");
+		const directory = path.join(app.getPath("userData"), "helpers");
+		await fs.mkdir(directory, { recursive: true });
+		const scriptPath = path.join(directory, "window-list-v1.ps1");
+		await fs.writeFile(scriptPath, WINDOWS_WINDOW_LIST_SCRIPT, { mode: 0o600 });
+		return scriptPath;
+	})().catch((error) => {
+		windowListScriptPath = null;
+		throw error;
+	});
+	return windowListScriptPath;
+}
+
+/**
+ * Lists the windows visible on `display`, front to back, in the overlay's
+ * coordinate space. Failures only disable window snapping.
+ */
+async function listScreenWindows(display: Display): Promise<ScreenWindow[]> {
+	const startedAt = Date.now();
+	try {
+		if (process.platform === "darwin") {
+			const response = await captureAgent?.request({ cmd: "windows", exclude: process.pid }, 800);
+			let listed: ScreenWindow[];
+			if (response?.ok) {
+				listed = normalizeWindowList(response.windows);
+			} else {
+				const { stdout } = await execFileAsync(
+					getWindowListHelperPath(),
+					[String(process.pid)],
+					{ encoding: "utf8", timeout: 1_500, maxBuffer: 1024 * 1024 },
+				);
+				listed = parseWindowList(stdout);
+			}
+			const windows = toDisplayLocalWindows(listed, display.bounds);
+			writeDiagnostic("window-list", {
+				count: windows.length,
+				ms: Date.now() - startedAt,
+				via: response?.ok ? "agent" : "helper",
+			});
+			return windows;
+		}
+		if (process.platform === "win32") {
+			const scriptPath = await ensureWindowListScript();
+			const { stdout } = await execFileAsync(
+				getWindowsPowerShellPath(),
+				getWindowsWindowListArguments(
+					scriptPath,
+					process.pid,
+					path.join(path.dirname(scriptPath), "window-list-v1.dll"),
+				),
+				{ encoding: "utf8", timeout: 6_000, maxBuffer: 1024 * 1024, windowsHide: true },
+			);
+			// The helper reports physical pixels; the overlay works in DIPs.
+			const windows = parseWindowList(stdout).map((window) => {
+				const dip = screen.screenToDipRect(null, {
+					x: window.x,
+					y: window.y,
+					width: window.width,
+					height: window.height,
+				});
+				return { ...window, ...dip };
+			});
+			const local = toDisplayLocalWindows(windows, display.bounds);
+			writeDiagnostic("window-list", { count: local.length, ms: Date.now() - startedAt });
+			return local;
+		}
+	} catch (error) {
+		writeDiagnostic("window-list-failed", { error: serializeError(error) });
+	}
+	return [];
+}
+
 function getOcrHelperPath(): string {
 	return app.isPackaged
 		? path.join(process.resourcesPath, "ocr", "quickshot-ocr")
@@ -634,17 +903,25 @@ function ocrFailure(code: OcrErrorCode, error: string) {
 function executeOcrHelper(
 	task: ActiveOcrTask,
 	imagePath: string,
+	windowsScriptPath: string | null,
 ): Promise<string> {
 	if (task.abortController.signal.aborted) {
 		return Promise.reject(new Error("OCR task was cancelled"));
 	}
 
+	const command = windowsScriptPath
+		? {
+				file: getWindowsPowerShellPath(),
+				args: getWindowsOcrArguments(windowsScriptPath, imagePath),
+			}
+		: { file: getOcrHelperPath(), args: [imagePath] };
+
 	return new Promise((resolve, reject) => {
 		let child: ChildProcess;
 		try {
 			child = execFile(
-				getOcrHelperPath(),
-				[imagePath],
+				command.file,
+				command.args,
 				{
 					encoding: "utf8",
 					maxBuffer: MAX_OCR_PROCESS_OUTPUT_BYTES,
@@ -674,15 +951,16 @@ function executeOcrHelper(
 	});
 }
 
+function isOcrSupported() {
+	return process.platform === "darwin" || process.platform === "win32";
+}
+
 async function extractTextFromPng(pngBuffer: Buffer) {
-	if (process.platform !== "darwin") {
-		return ocrFailure(
-			"unsupported-platform",
-			"文本提取目前仅支持 macOS",
-		);
+	if (!isOcrSupported()) {
+		return ocrFailure("unsupported-platform", mt("ocr.unsupported"));
 	}
 	if (activeOcrTask) {
-		return ocrFailure("busy", "正在提取文字，请稍候");
+		return ocrFailure("busy", mt("ocr.busy"));
 	}
 
 	const task: ActiveOcrTask = {
@@ -705,28 +983,52 @@ async function extractTextFromPng(pngBuffer: Buffer) {
 			path.join(app.getPath("temp"), OCR_TEMP_DIRECTORY_PREFIX),
 		);
 		task.temporaryDirectory = temporaryDirectory;
-		const imagePath = path.join(temporaryDirectory, "capture.png");
+		let imagePath = path.join(temporaryDirectory, "capture.png");
 		await fs.writeFile(imagePath, pngBuffer, { flag: "wx", mode: 0o600 });
+		let windowsScriptPath: string | null = null;
+		if (process.platform === "win32") {
+			// WinRT's StorageFile rejects 8.3 short paths, which TEMP can contain.
+			imagePath = await fs.realpath(imagePath);
+			windowsScriptPath = path.join(path.dirname(imagePath), "ocr.ps1");
+			await fs.writeFile(windowsScriptPath, WINDOWS_OCR_SCRIPT, {
+				flag: "wx",
+				mode: 0o600,
+			});
+		}
 
-		const stdout = await executeOcrHelper(task, imagePath);
-		const result = parseOcrHelperOutput(stdout, MAX_OCR_TEXT_BYTES);
+		const stdout = await executeOcrHelper(task, imagePath, windowsScriptPath);
+		const result = parseOcrHelperOutput(
+			stripByteOrderMark(stdout.trim()),
+			MAX_OCR_TEXT_BYTES,
+		);
 		return {
 			success: true as const,
-			text: result.text,
+			text:
+				process.platform === "win32"
+					? normalizeCjkSpacing(result.text)
+					: result.text,
 			lineCount: result.lineCount,
 		};
 	} catch (error) {
 		let code: OcrErrorCode = "recognition-failed";
-		let message = "没有成功提取文字，请重试";
-		const errorCode = (error as NodeJS.ErrnoException)?.code;
+		let message = mt("ocr.failed");
+		const errorCode = (error as NodeJS.ErrnoException)?.code as
+			| string
+			| number
+			| undefined;
 		if (task.terminationReason === OCR_TIMEOUT_REASON) {
 			code = "timeout";
-			message = "文字提取超时，请缩小截图范围后重试";
+			message = mt("ocr.timeout");
 		} else if (task.abortController.signal.aborted) {
-			return ocrFailure("recognition-failed", "文字提取已取消");
+			return ocrFailure("recognition-failed", mt("ocr.cancelled"));
 		} else if (errorCode === "ENOENT" || errorCode === "EACCES") {
 			code = "helper-unavailable";
-			message = "文本提取组件不可用，请重新安装 QuickShot";
+			message = mt("ocr.helperMissing");
+		} else if (errorCode === WINDOWS_OCR_NO_LANGUAGE_EXIT_CODE) {
+			code = "helper-unavailable";
+			message = mt("ocr.noLanguage");
+		} else if (errorCode === WINDOWS_OCR_TOO_LARGE_EXIT_CODE) {
+			message = mt("ocr.tooLarge");
 		}
 		writeDiagnostic("ocr-failed", { code });
 		return ocrFailure(code, message);
@@ -769,6 +1071,7 @@ function toIpcRegionCaptureSession(sessionData: RegionCaptureSession) {
 	return {
 		sessionId: sessionData.sessionId,
 		imageBytes: toIpcPngBytes(sessionData.imageBuffer),
+		mimeType: sessionData.mimeType,
 	};
 }
 
@@ -1038,6 +1341,7 @@ function createPinnedScreenshotWindow(
 			webSecurity: true,
 			allowRunningInsecureContent: false,
 			webviewTag: false,
+			additionalArguments: [`--quickshot-lang=${getMainLanguage()}`],
 		},
 	});
 	installWindowGuards(pinWindow);
@@ -1132,8 +1436,16 @@ async function ensureRegionSelector() {
 		height: bounds.height,
 		frame: false,
 		transparent: true,
+		backgroundColor: "#00000000",
 		alwaysOnTop: true,
 		resizable: false,
+		movable: false,
+		minimizable: false,
+		maximizable: false,
+		fullscreenable: false,
+		// Cover the macOS menu bar and keep square corners over the frozen frame.
+		enableLargerThanScreen: true,
+		roundedCorners: false,
 		skipTaskbar: true,
 		focusable: true,
 		hasShadow: false,
@@ -1145,13 +1457,20 @@ async function ensureRegionSelector() {
 			webSecurity: true,
 			allowRunningInsecureContent: false,
 			webviewTag: false,
+			// The overlay prepares each capture while hidden. Throttled, a hidden
+			// window stops producing frames and the image decode never finishes.
+			backgroundThrottling: false,
+			additionalArguments: [`--quickshot-lang=${getMainLanguage()}`],
 		},
 	});
 	const selectorWindow = regionSelectorWindow;
 
 	installWindowGuards(selectorWindow);
 	selectorWindow.setAlwaysOnTop(true, "screen-saver");
-	selectorWindow.setVisibleOnAllWorkspaces(true);
+	selectorWindow.setVisibleOnAllWorkspaces(true, {
+		visibleOnFullScreen: true,
+		skipTransformProcessType: true,
+	});
 	loadWindow(selectorWindow, "screenshot-region");
 
 	regionSelectorReady = false;
@@ -1208,21 +1527,52 @@ async function ensureRegionSelector() {
 	await regionSelectorLoadPromise;
 }
 
+function getPlatformTitleBarOptions(): Electron.BrowserWindowConstructorOptions {
+	switch (process.platform) {
+		case "darwin":
+			return {
+				titleBarStyle: "hiddenInset",
+				trafficLightPosition: { x: 18, y: 18 },
+			};
+		case "win32":
+			// Native caption buttons drawn over the editor's own toolbar.
+			return {
+				titleBarStyle: "hidden",
+				titleBarOverlay: {
+					color: getPreviewChromeColors().background,
+					symbolColor: getPreviewChromeColors().symbol,
+					height: 52,
+				},
+			};
+		default:
+			return { frame: false };
+	}
+}
+
+function getPreferredPreviewMinWidth() {
+	return process.platform === "win32" ? PREVIEW_MIN_WIDTH_WINDOWS : PREVIEW_MIN_WIDTH;
+}
+
+function getPreviewMinimumSize(workArea: Electron.Rectangle) {
+	// Windows reserves room in the toolbar for the native caption buttons.
+	const width = process.platform === "win32" ? 960 : 880;
+	return {
+		width: Math.min(width, workArea.width),
+		height: Math.min(560, workArea.height),
+	};
+}
+
 function createPreviewWindow(display: Display | null): BrowserWindow {
-	const isMac = process.platform === "darwin";
 	const { workArea } = display ?? screen.getPrimaryDisplay();
-	const W = 960,
-		H = 720;
+	const bounds = computePreviewBounds(workArea, 0, 0, 1, getPreferredPreviewMinWidth());
+	const minimum = getPreviewMinimumSize(workArea);
 	const win = new BrowserWindow({
-		width: W,
-		height: H,
-		minWidth: 640,
-		minHeight: 480,
-		x: Math.round(workArea.x + (workArea.width - W) / 2),
-		y: Math.round(workArea.y + (workArea.height - H) / 2),
-		frame: isMac,
-		titleBarStyle: isMac ? "hiddenInset" : "default",
+		...bounds,
+		minWidth: minimum.width,
+		minHeight: minimum.height,
+		...getPlatformTitleBarOptions(),
 		title: "QuickShot",
+		backgroundColor: getPreviewChromeColors().background,
 		resizable: true,
 		show: false,
 		webPreferences: {
@@ -1232,10 +1582,24 @@ function createPreviewWindow(display: Display | null): BrowserWindow {
 			webSecurity: true,
 			allowRunningInsecureContent: false,
 			webviewTag: false,
+			// The warm spare lives hidden; keep it responsive when it is adopted.
+			backgroundThrottling: false,
+			additionalArguments: [`--quickshot-lang=${getMainLanguage()}`],
 		},
 	});
 	installWindowGuards(win);
 	return win;
+}
+
+function syncPreviewChromeWithTheme() {
+	const colors = getPreviewChromeColors();
+	for (const win of [screenshotPreviewWindow, sparePreviewWindow]) {
+		if (!win || win.isDestroyed()) continue;
+		win.setBackgroundColor(colors.background);
+		if (process.platform === "win32") {
+			win.setTitleBarOverlay({ color: colors.background, symbolColor: colors.symbol });
+		}
+	}
 }
 
 function presentPreviewWindow(win: BrowserWindow) {
@@ -1270,17 +1634,13 @@ async function captureDisplayWithScreencapture(
 	);
 
 	try {
-		await execFileAsync("/usr/sbin/screencapture", [
-			"-x",
-			"-t",
-			"png",
-			"-R",
-			getDisplayCaptureBounds(display),
-			filePath,
-		]);
+		await execFileAsync(
+			"/usr/sbin/screencapture",
+			["-x", "-t", "png", "-R", getDisplayCaptureBounds(display), filePath],
+			{ timeout: 4_000 },
+		);
 		const fs = await import("node:fs/promises");
-		const buffer = await fs.readFile(filePath);
-		return validateCapturePngPayload(buffer);
+		return acceptCapturedPng(await fs.readFile(filePath));
 	} catch (error) {
 		writeDiagnostic("display-capture-failed", {
 			error: serializeError(error),
@@ -1294,9 +1654,63 @@ async function captureDisplayWithScreencapture(
 	}
 }
 
+/**
+ * Captures one window by its CGWindowID: the window's own pixels even where
+ * other windows (or the overlay) cover it, with transparent rounded corners
+ * and no shadow, trimmed to its visible bounds.
+ */
+async function captureMacWindowImage(windowId: number): Promise<Buffer | null> {
+	const filePath = temporaryCapturePath("quickshot-window");
+	const startedAt = Date.now();
+	try {
+		const agentCapture = await captureWithAgent({ cmd: "window", window: windowId }, 2_000);
+		if (agentCapture) {
+			// The agent has already trimmed the transparent frame.
+			writeDiagnostic("window-capture", { via: "agent", ms: Date.now() - startedAt });
+			return agentCapture.buffer;
+		}
+		await execFileAsync("/usr/sbin/screencapture", getWindowCaptureArguments(windowId, filePath), {
+			timeout: 5000,
+		});
+		const fs = await import("node:fs/promises");
+		const buffer = validateCapturePngPayload(await fs.readFile(filePath));
+		const image = nativeImage.createFromBuffer(buffer);
+		const size = image.getSize();
+		const bounds = findOpaqueBounds(image.toBitmap(), size.width, size.height);
+		if (!bounds) throw new Error("window image is empty");
+		const trimmed =
+			bounds.width === size.width && bounds.height === size.height
+				? buffer
+				: image.crop(bounds).toPNG();
+		writeDiagnostic("window-capture", {
+			via: "screencapture",
+			ms: Date.now() - startedAt,
+			width: bounds.width,
+			height: bounds.height,
+			trimmed: trimmed !== buffer,
+		});
+		return trimmed;
+	} catch (error) {
+		// Windows that closed when the overlay took focus (menu bar popovers,
+		// for example) fall back to the frozen frame.
+		writeDiagnostic("window-capture-failed", { error: serializeError(error) });
+		return null;
+	} finally {
+		try {
+			const fs = await import("node:fs/promises");
+			await fs.unlink(filePath);
+		} catch {}
+	}
+}
+
+/** Set when the last system selection ended in an error rather than Esc. */
+let interactiveCaptureErrored = false;
+
 async function captureInteractiveSelectionWithScreencapture(
 	captureAttempt: number,
 ): Promise<Buffer | null> {
+	interactiveCaptureErrored = false;
+	if (DEV_CAPTURE_FILE) return readDevCaptureFixture();
 	const filePath = path.join(
 		app.getPath("temp"),
 		`quickshot-selection-${Date.now()}-${Math.random().toString(36).slice(2)}.png`,
@@ -1322,7 +1736,7 @@ async function captureInteractiveSelectionWithScreencapture(
 		await new Promise<void>((resolve, reject) => {
 			const child = execFile(
 				"/usr/sbin/screencapture",
-				["-i", "-s", "-x", "-t", "png", filePath],
+				["-i", "-o", "-x", "-t", "png", filePath],
 				{
 					signal: abortController.signal,
 					killSignal: "SIGTERM",
@@ -1388,6 +1802,10 @@ async function captureInteractiveSelectionWithScreencapture(
 		return validateCapturePngPayload(buffer);
 	} catch (error) {
 		if (!abortController.signal.aborted) {
+			// Esc leaves no file behind; a non-zero exit means screencapture
+			// itself failed, usually because Screen Recording is not allowed.
+			interactiveCaptureErrored =
+				error instanceof Error && error.message.startsWith("Screenshot process exited");
 			writeDiagnostic("interactive-capture-failed", {
 				error: serializeError(error),
 			});
@@ -1432,15 +1850,70 @@ async function captureDisplayWithDesktopCapturer(
 	);
 }
 
-async function captureDisplayImage(display: Display): Promise<Buffer | null> {
+async function readDevCaptureFixture(): Promise<Buffer | null> {
+	if (!DEV_CAPTURE_FILE) return null;
+	const fs = await import("node:fs/promises");
+	return validateCapturePngPayload(await fs.readFile(DEV_CAPTURE_FILE));
+}
+
+const SCREEN_RECORDING_SETTINGS_URL =
+	"x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+const PERMISSION_PROMPT_INTERVAL_MS = 15_000;
+let lastPermissionPromptAt = 0;
+
+/**
+ * A capture that fails silently looks like a broken shortcut. When macOS has
+ * not granted Screen Recording, say so and offer to open the right pane.
+ */
+function explainMissingScreenRecordingPermission() {
+	if (process.platform !== "darwin" || DEV_CAPTURE_FILE) return;
+	const status = systemPreferences.getMediaAccessStatus("screen");
+	writeDiagnostic("screen-recording-status", { status });
+	if (status === "granted") return;
+	const now = Date.now();
+	if (now - lastPermissionPromptAt < PERMISSION_PROMPT_INTERVAL_MS) return;
+	lastPermissionPromptAt = now;
+	openOnboarding("permission", "capture-without-permission");
+}
+
+function pngFrame(buffer: Buffer | null): CapturedFrame | null {
+	const size = buffer ? readPngDimensions(buffer) : null;
+	return buffer && size ? { buffer, mimeType: "image/png", ...size, heldByAgent: false } : null;
+}
+
+async function captureDisplayImage(display: Display): Promise<CapturedFrame | null> {
+	if (DEV_CAPTURE_FILE) return pngFrame(await readDevCaptureFixture());
 	if (process.platform === "darwin") {
-		const nativeCapture = await captureDisplayWithScreencapture(display);
+		const agentCapture = await captureWithAgent({ cmd: "display", display: display.id }, 1_500, "jpg");
+		if (agentCapture) {
+			// Only a full-resolution frame of this display will do for the overlay.
+			const width = Number(agentCapture.response.width);
+			const height = Number(agentCapture.response.height);
+			const expectedWidth = Math.round(display.bounds.width * display.scaleFactor);
+			const expectedHeight = Math.round(display.bounds.height * display.scaleFactor);
+			if (Math.abs(width - expectedWidth) <= 2 && Math.abs(height - expectedHeight) <= 2) {
+				writeDiagnostic("display-capture", {
+					via: "agent",
+					ms: agentCapture.ms,
+					captureMs: agentCapture.response.captureMs,
+					encodeMs: agentCapture.response.encodeMs,
+				});
+				return { buffer: agentCapture.buffer, mimeType: "image/jpeg", width, height, heldByAgent: true };
+			}
+			writeDiagnostic("capture-agent-size-mismatch", {
+				size: { width, height },
+				expected: { width: expectedWidth, height: expectedHeight },
+			});
+		}
+		const startedAt = Date.now();
+		const nativeCapture = pngFrame(await captureDisplayWithScreencapture(display));
 		if (nativeCapture) {
+			writeDiagnostic("display-capture", { via: "screencapture", ms: Date.now() - startedAt });
 			return nativeCapture;
 		}
 	}
 
-	return captureDisplayWithDesktopCapturer(display);
+	return pngFrame(await captureDisplayWithDesktopCapturer(display));
 }
 
 function clearPreviewReadyTimer() {
@@ -1450,6 +1923,74 @@ function clearPreviewReadyTimer() {
 	}
 }
 
+function clearSparePreviewTimer() {
+	if (sparePreviewTimer) {
+		clearTimeout(sparePreviewTimer);
+		sparePreviewTimer = null;
+	}
+}
+
+/**
+ * Keeps one hidden, fully loaded editor around so the next capture opens
+ * instantly instead of waiting for a renderer to boot.
+ */
+function scheduleSparePreviewWindow(delayMs = SPARE_PREVIEW_DELAY_MS) {
+	if (isQuitting || sparePreviewTimer) return;
+	if (sparePreviewWindow && !sparePreviewWindow.isDestroyed()) return;
+	sparePreviewTimer = setTimeout(() => {
+		sparePreviewTimer = null;
+		if (isQuitting || (sparePreviewWindow && !sparePreviewWindow.isDestroyed())) {
+			return;
+		}
+		let win: BrowserWindow;
+		try {
+			win = createPreviewWindow(null);
+		} catch (error) {
+			writeDiagnostic("spare-preview-create-failed", {
+				error: serializeError(error),
+			});
+			return;
+		}
+		sparePreviewWindow = win;
+		const discard = (reason: string) => {
+			if (sparePreviewWindow !== win) return;
+			sparePreviewWindow = null;
+			writeDiagnostic("spare-preview-discarded", { reason });
+			if (!win.isDestroyed()) win.destroy();
+		};
+		win.webContents.on("render-process-gone", () => discard("render-process-gone"));
+		win.webContents.on("did-fail-load", (_event, _code, _description, _url, isMainFrame) => {
+			if (isMainFrame) discard("load-failed");
+		});
+		win.on("closed", () => {
+			if (sparePreviewWindow === win) sparePreviewWindow = null;
+		});
+		loadWindow(win, "screenshot-preview");
+	}, delayMs);
+	sparePreviewTimer.unref();
+}
+
+function takeSparePreviewWindow(): BrowserWindow | null {
+	const win = sparePreviewWindow;
+	if (
+		!win ||
+		win.isDestroyed() ||
+		win.webContents.isLoadingMainFrame() ||
+		!win.webContents.getURL()
+	) {
+		return null;
+	}
+	sparePreviewWindow = null;
+	return win;
+}
+
+function destroySparePreviewWindow() {
+	clearSparePreviewTimer();
+	const win = sparePreviewWindow;
+	sparePreviewWindow = null;
+	if (win && !win.isDestroyed()) win.destroy();
+}
+
 function openPreviewForImage(imageBuffer: Buffer): boolean {
 	if (!isValidCapturePngPayload(imageBuffer)) {
 		writeDiagnostic("preview-image-rejected");
@@ -1457,15 +1998,32 @@ function openPreviewForImage(imageBuffer: Buffer): boolean {
 	}
 
 	const sessionId = nextCaptureSessionId + 1;
+	const display = activeCaptureDisplay ?? getCaptureDisplay();
+	const scaleFactor = display.scaleFactor || 1;
+	const warmWindow = takeSparePreviewWindow();
 	let previewWindow: BrowserWindow;
 	try {
-		previewWindow = createPreviewWindow(activeCaptureDisplay);
+		previewWindow = warmWindow ?? createPreviewWindow(display);
 	} catch (error) {
 		writeDiagnostic("preview-create-failed", {
 			sessionId,
 			error: serializeError(error),
 		});
 		return false;
+	}
+	const imageSize = readPngDimensions(imageBuffer);
+	const minimum = getPreviewMinimumSize(display.workArea);
+	previewWindow.setMinimumSize(minimum.width, minimum.height);
+	if (imageSize) {
+		previewWindow.setBounds(
+			computePreviewBounds(
+				display.workArea,
+				imageSize.width,
+				imageSize.height,
+				scaleFactor,
+				getPreferredPreviewMinWidth(),
+			),
+		);
 	}
 
 	previewWindow.on("closed", () => {
@@ -1480,6 +2038,7 @@ function openPreviewForImage(imageBuffer: Buffer): boolean {
 			activeCaptureSessionId = null;
 			activeCaptureDisplay = null;
 			capturePhase = "idle";
+			releaseOverlayForEditor();
 		}
 	});
 	previewWindow.webContents.on("did-fail-load", (_event, _code, _description, _url, isMainFrame) => {
@@ -1505,6 +2064,7 @@ function openPreviewForImage(imageBuffer: Buffer): boolean {
 	pendingRegionCaptureSession = null;
 	activeCaptureSessionId = sessionId;
 	screenshotCroppedBuffer = imageBuffer;
+	screenshotCroppedScaleFactor = scaleFactor;
 	capturePhase = "opening-preview";
 	pendingPreviewSessionId = sessionId;
 	screenshotPreviewWindow = previewWindow;
@@ -1515,10 +2075,14 @@ function openPreviewForImage(imageBuffer: Buffer): boolean {
 			previewWindow.destroy();
 		}
 	}, PREVIEW_READY_TIMEOUT_MS);
-	loadWindow(previewWindow, "screenshot-preview", {
-		sessionId: String(sessionId),
-	});
-	writeDiagnostic("preview-created", { sessionId });
+	if (warmWindow) {
+		warmWindow.webContents.send("preview-session", sessionId);
+	} else {
+		loadWindow(previewWindow, "screenshot-preview", {
+			sessionId: String(sessionId),
+		});
+	}
+	writeDiagnostic("preview-created", { sessionId, warm: Boolean(warmWindow) });
 	return true;
 }
 
@@ -1531,36 +2095,76 @@ function refreshTrayMenu() {
 	);
 	const template: MenuItemConstructorOptions[] = [
 		{
-			label: `Take Screenshot (${CAPTURE_SHORTCUT_LABEL})`,
+			label: mt("tray.capture"),
+			accelerator: CAPTURE_SHORTCUT,
+			registerAccelerator: false,
 			click: () => requestCaptureFromUser("tray-menu"),
 		},
-		{
-			label: "Repair Shortcut",
-			click: () => scheduleShortcutRecovery("tray-repair", 0, true),
-		},
-		{
-			label: "Show Diagnostics",
-			enabled: Boolean(diagnosticLogPath),
-			click: () => {
-				if (diagnosticLogPath) shell.showItemInFolder(diagnosticLogPath);
-			},
-		},
+		{ type: "separator" },
 	];
+
+	if (process.platform === "darwin") {
+		const modeItem = (mode: MacCaptureMode, label: string) => ({
+			label,
+			type: "radio" as const,
+			checked: appSettings.macCaptureMode === mode,
+			click: () => void setMacCaptureMode(mode),
+		});
+		template.push({
+			label: mt("tray.captureMode"),
+			submenu: [
+				modeItem("system", mt("tray.captureMode.system")),
+				modeItem("overlay", mt("tray.captureMode.overlay")),
+			],
+		});
+	}
+
+	const languageItem = (value: LanguagePreference, label: string) => ({
+		label,
+		type: "radio" as const,
+		checked: appSettings.language === value,
+		click: () => void setLanguagePreference(value),
+	});
+	template.push({
+		label: mt("tray.language"),
+		submenu: [
+			languageItem("auto", mt("tray.language.auto")),
+			languageItem("zh", "简体中文"),
+			languageItem("en", "English"),
+		],
+	});
+
+	if (app.isPackaged && process.platform !== "linux") {
+		template.push({
+			label: mt("tray.launchAtLogin"),
+			type: "checkbox",
+			checked: app.getLoginItemSettings().openAtLogin,
+			click: (item) => {
+				app.setLoginItemSettings({ openAtLogin: item.checked });
+				refreshTrayMenu();
+			},
+		});
+	}
 
 	if (pinnedCount > 0) {
 		template.push(
 			{ type: "separator" },
 			{
-				label: `Pinned Screenshots (${pinnedCount}/${MAX_PINNED_SCREENSHOTS})`,
+				label: mt("tray.pinned", {
+					count: pinnedCount,
+					max: MAX_PINNED_SCREENSHOTS,
+				}),
 				enabled: false,
 			},
 			{
-				label: `Restore Pinned Interaction (${PINNED_SCREENSHOT_RECOVERY_SHORTCUT_LABEL})`,
+				label: mt("tray.restorePinned", {
+					shortcut: PINNED_SCREENSHOT_RECOVERY_SHORTCUT_LABEL,
+				}),
 				enabled: hasClickThroughPin,
 				click: () => restorePinnedScreenshotInteraction("tray-menu"),
 			},
 			{
-				label: "Close All Pinned Screenshots",
+				label: mt("tray.closePinned"),
 				click: closeAllPinnedScreenshots,
 			},
 		);
@@ -1568,22 +2172,469 @@ function refreshTrayMenu() {
 
 	template.push(
 		{ type: "separator" },
-		{ label: "Quit", click: () => app.quit() },
+		{
+			label: mt("tray.guide"),
+			click: () => openOnboarding("welcome", "tray-menu"),
+		},
+		{
+			label: mt("tray.repairShortcut"),
+			click: () => scheduleShortcutRecovery("tray-repair", 0, true),
+		},
+		{
+			label: mt("tray.diagnostics"),
+			enabled: Boolean(diagnosticLogPath),
+			click: () => {
+				if (diagnosticLogPath) shell.showItemInFolder(diagnosticLogPath);
+			},
+		},
+		{ type: "separator" },
+		{ label: mt("tray.quit"), click: () => app.quit() },
 	);
 	tray.setContextMenu(Menu.buildFromTemplate(template));
 }
 
+function usesOverlaySelection() {
+	return (
+		process.platform !== "darwin" || appSettings.macCaptureMode === "overlay"
+	);
+}
+
+function applyLanguagePreference() {
+	setMainLanguage(
+		resolveLanguage(appSettings.language, app.getPreferredSystemLanguages()),
+	);
+}
+
+async function persistAppSettings() {
+	try {
+		await writeAppSettings(app.getPath("userData"), appSettings);
+	} catch (error) {
+		writeDiagnostic("settings-write-failed", { error: serializeError(error) });
+	}
+}
+
+async function setLanguagePreference(language: LanguagePreference) {
+	if (appSettings.language === language) return;
+	appSettings = { ...appSettings, language };
+	applyLanguagePreference();
+	refreshTrayMenu();
+	writeDiagnostic("language-changed", { language, resolved: getMainLanguage() });
+	await persistAppSettings();
+	// Idle windows were created with the previous language; rebuild them.
+	destroySparePreviewWindow();
+	scheduleSparePreviewWindow();
+	if (capturePhase === "idle" && regionSelectorWindow && !regionSelectorWindow.isDestroyed()) {
+		const staleSelector = regionSelectorWindow;
+		regionSelectorWindow = null;
+		regionSelectorReady = false;
+		regionSelectorLoadPromise = null;
+		staleSelector.destroy();
+		if (usesOverlaySelection()) void ensureRegionSelector();
+	}
+}
+
+async function setMacCaptureMode(mode: MacCaptureMode) {
+	if (appSettings.macCaptureMode === mode) return;
+	appSettings = { ...appSettings, macCaptureMode: mode };
+	refreshTrayMenu();
+	writeDiagnostic("capture-mode-changed", { mode });
+	await persistAppSettings();
+	if (usesOverlaySelection()) {
+		void ensureRegionSelector();
+	}
+}
+
+/**
+ * macOS remembers a hidden menu bar item in the app's own defaults (the
+ * "Allow in the Menu Bar" switch in System Settings, or ⌘-dragging the item
+ * away). The menu bar is QuickShot's only visible presence, so it always asks
+ * to be shown; the item reads these keys when it is created.
+ */
+const MENU_BAR_VISIBILITY_KEYS = ["NSStatusItem VisibleCC Item-0", "NSStatusItem Visible Item-0"];
+
+function allowMenuBarItem() {
+	if (process.platform !== "darwin") return;
+	for (const key of MENU_BAR_VISIBILITY_KEYS) {
+		if (systemPreferences.getUserDefault(key, "boolean") !== true) {
+			systemPreferences.setUserDefault(key, "boolean", true);
+		}
+	}
+}
+
 function createTray() {
-	const icon = nativeImage
-		.createFromPath(
-			path.join(process.env.VITE_PUBLIC || RENDERER_DIST, "icon.png"),
-		)
-		.resize({ width: 18, height: 18, quality: "best" });
+	allowMenuBarItem();
+	const publicDirectory = process.env.VITE_PUBLIC || RENDERER_DIST;
+	let icon: Electron.NativeImage;
+	if (process.platform === "darwin") {
+		// A monochrome template (with its @2x sibling) that macOS tints to
+		// match the menu bar, like the system's own items.
+		icon = nativeImage.createFromPath(path.join(publicDirectory, "trayTemplate.png"));
+		icon.setTemplateImage(true);
+	} else {
+		icon = nativeImage
+			.createFromPath(path.join(publicDirectory, "icon.png"))
+			.resize({ width: 16, height: 16, quality: "best" });
+	}
 
 	tray = new Tray(icon);
 	tray.setToolTip(`QuickShot · ${CAPTURE_SHORTCUT_LABEL}`);
 	refreshTrayMenu();
 	tray.on("click", () => requestCaptureFromUser("tray"));
+	// The menu bar hides items that do not fit; record where ours ended up.
+	setTimeout(() => {
+		if (tray && !tray.isDestroyed()) writeDiagnostic("tray-bounds", { ...tray.getBounds() });
+	}, 1_500);
+}
+
+const TRAY_HINT_SIZE = { width: 340, height: 84 };
+const TRAY_HINT_DURATION_MS = 3_200;
+let trayHintWindow: BrowserWindow | null = null;
+
+function escapeHtml(text: string) {
+	return text.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`);
+}
+
+/**
+ * QuickShot has no window or Dock icon, so opening it shows a small bubble
+ * under its menu bar icon for a few seconds. It never takes focus or clicks.
+ */
+function showTrayHint(reason: string) {
+	if (!tray || tray.isDestroyed()) return;
+	if (trayHintWindow && !trayHintWindow.isDestroyed()) trayHintWindow.destroy();
+
+	const bounds = tray.getBounds();
+	// macOS gives a hidden menu bar item no height. Ask for it to be shown and
+	// rebuild it once; only if it is still hidden, say where the switch is.
+	if (process.platform === "darwin" && bounds.height === 0) {
+		if (reason.endsWith(":retry")) {
+			explainHiddenMenuBarIcon(reason);
+			return;
+		}
+		writeDiagnostic("tray-reshown", { reason });
+		tray.destroy();
+		tray = null;
+		createTray();
+		setTimeout(() => showTrayHint(`${reason}:retry`), 800);
+		return;
+	}
+	const known = bounds.width > 0 && bounds.height > 0;
+	const display = known ? screen.getDisplayMatching(bounds) : screen.getPrimaryDisplay();
+	const area = display.workArea;
+	const anchorX = known ? bounds.x + bounds.width / 2 : area.x + area.width - 40;
+	const x = Math.round(
+		Math.min(
+			Math.max(area.x + 8, anchorX - TRAY_HINT_SIZE.width / 2),
+			area.x + area.width - TRAY_HINT_SIZE.width - 8,
+		),
+	);
+	const y = Math.round(known ? bounds.y + bounds.height + 2 : area.y + 4);
+	const arrowLeft = Math.round(anchorX - x);
+
+	const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;height:100%;background:transparent;overflow:hidden;-webkit-user-select:none;cursor:default;
+font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI","Microsoft YaHei",sans-serif}
+.arrow{position:absolute;top:2px;left:${arrowLeft - 7}px;width:14px;height:8px;background:rgba(30,30,32,.94);
+clip-path:polygon(50% 0,100% 100%,0 100%)}
+.bubble{position:absolute;top:10px;left:50%;transform:translateX(-50%);max-width:${TRAY_HINT_SIZE.width - 16}px;
+box-sizing:border-box;padding:9px 14px 10px;border-radius:12px;background:rgba(30,30,32,.94);color:#fff;
+box-shadow:0 10px 28px rgba(0,0,0,.3);border:.5px solid rgba(255,255,255,.12);text-align:center;white-space:nowrap}
+.title{font-size:13px;font-weight:600;letter-spacing:.01em}
+.detail{margin-top:3px;font-size:11.5px;color:rgba(255,255,255,.68)}
+kbd{font:inherit;color:#fff;background:rgba(255,255,255,.14);border-radius:4px;padding:0 4px}
+</style></head><body><div class="arrow"></div><div class="bubble"><div class="title">${escapeHtml(
+		mt("trayHint.title"),
+	)}</div><div class="detail">${escapeHtml(mt("trayHint.detail")).replace(
+		"{shortcut}",
+		`<kbd>${escapeHtml(CAPTURE_SHORTCUT_LABEL)}</kbd>`,
+	)}</div></div></body></html>`;
+
+	const hint = new BrowserWindow({
+		x,
+		y,
+		...TRAY_HINT_SIZE,
+		frame: false,
+		transparent: true,
+		backgroundColor: "#00000000",
+		resizable: false,
+		movable: false,
+		minimizable: false,
+		maximizable: false,
+		fullscreenable: false,
+		focusable: false,
+		skipTaskbar: true,
+		hasShadow: false,
+		show: false,
+		webPreferences: {
+			nodeIntegration: false,
+			contextIsolation: true,
+			sandbox: true,
+			javascript: false,
+		},
+	});
+	trayHintWindow = hint;
+	installWindowGuards(hint);
+	hint.setIgnoreMouseEvents(true);
+	hint.setAlwaysOnTop(true, "pop-up-menu");
+	hint.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+	void hint
+		.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+		.then(() => {
+			if (hint.isDestroyed()) return;
+			hint.showInactive();
+			writeDiagnostic("tray-hint", { reason, bounds });
+			setTimeout(() => {
+				if (!hint.isDestroyed()) hint.destroy();
+			}, TRAY_HINT_DURATION_MS);
+		})
+		.catch(() => {
+			if (!hint.isDestroyed()) hint.destroy();
+		});
+	hint.on("closed", () => {
+		if (trayHintWindow === hint) trayHintWindow = null;
+	});
+}
+
+type OnboardingStep = "welcome" | "permission" | "done";
+const ONBOARDING_STEPS: OnboardingStep[] = ["welcome", "permission", "done"];
+const ONBOARDING_RELAUNCH_ARGUMENT = "--quickshot-onboarding=";
+let onboardingWindow: BrowserWindow | null = null;
+
+function getScreenPermissionStatus() {
+	return process.platform === "darwin" ? systemPreferences.getMediaAccessStatus("screen") : "granted";
+}
+
+async function markOnboardingSeen() {
+	if (appSettings.onboardingVersion >= ONBOARDING_VERSION) return;
+	appSettings = { ...appSettings, onboardingVersion: ONBOARDING_VERSION };
+	await persistAppSettings();
+}
+
+/**
+ * The welcome guide: the shortcut, Screen Recording on macOS, and launch at
+ * login. Shown on first launch, from the menu, and when a capture finds no
+ * permission (opened straight at that step).
+ */
+function openOnboarding(step: OnboardingStep, reason: string) {
+	writeDiagnostic("onboarding-opened", { step, reason });
+	const existing = onboardingWindow;
+	if (existing && !existing.isDestroyed()) {
+		existing.webContents.send("onboarding-step", step);
+		existing.show();
+		if (process.platform === "darwin") app.focus({ steal: true });
+		existing.focus();
+		return;
+	}
+	const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+	const size = { width: 760, height: 540 };
+	const win = new BrowserWindow({
+		...size,
+		x: Math.round(workArea.x + (workArea.width - size.width) / 2),
+		y: Math.round(workArea.y + (workArea.height - size.height) / 2),
+		resizable: false,
+		maximizable: false,
+		fullscreenable: false,
+		show: false,
+		title: "QuickShot",
+		titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+		autoHideMenuBar: true,
+		backgroundColor: nativeTheme.shouldUseDarkColors ? "#1C1C1E" : "#FAFAFB",
+		webPreferences: {
+			preload: path.join(__dirname, "preload.mjs"),
+			nodeIntegration: false,
+			contextIsolation: true,
+			webSecurity: true,
+			allowRunningInsecureContent: false,
+			webviewTag: false,
+			additionalArguments: [`--quickshot-lang=${getMainLanguage()}`],
+		},
+	});
+	onboardingWindow = win;
+	installWindowGuards(win);
+	loadWindow(win, "onboarding", { step });
+	win.once("ready-to-show", () => {
+		if (win.isDestroyed()) return;
+		win.show();
+		if (process.platform === "darwin") app.focus({ steal: true });
+		win.focus();
+	});
+	win.on("closed", () => {
+		if (onboardingWindow === win) onboardingWindow = null;
+		void markOnboardingSeen();
+	});
+}
+
+const PERMISSION_HELPER_SIZE = { width: 400, height: 96 };
+const PERMISSION_HELPER_GAP = 10;
+let permissionHelperWindow: BrowserWindow | null = null;
+let permissionHelperTimer: NodeJS.Timeout | null = null;
+/** The guide steps aside while the helper is up, so dragging never raises it over Settings. */
+let onboardingHiddenForHelper = false;
+/** Remembers across the macOS "Quit & Reopen" that Screen Recording was just being allowed. */
+const PERMISSION_PENDING_MARKER = "permission-pending";
+
+/** The .app bundle macOS lists under Screen Recording. */
+function appBundlePath() {
+	return path.resolve(app.getPath("exe"), "..", "..", "..");
+}
+
+function closePermissionHelper() {
+	if (permissionHelperTimer) {
+		clearInterval(permissionHelperTimer);
+		permissionHelperTimer = null;
+	}
+	const helper = permissionHelperWindow;
+	permissionHelperWindow = null;
+	if (helper && !helper.isDestroyed()) helper.destroy();
+	if (onboardingHiddenForHelper) {
+		onboardingHiddenForHelper = false;
+		const guide = onboardingWindow;
+		if (guide && !guide.isDestroyed() && !isQuitting) {
+			guide.show();
+			if (process.platform === "darwin") app.focus({ steal: true });
+			guide.focus();
+		}
+	}
+}
+
+function permissionMarkerPath() {
+	return path.join(app.getPath("userData"), PERMISSION_PENDING_MARKER);
+}
+
+/**
+ * After macOS relaunches QuickShot for Screen Recording, say it worked by
+ * opening the guide's last step once. Returns whether it did.
+ */
+function celebratePermissionIfPending(): boolean {
+	const marker = permissionMarkerPath();
+	try {
+		statSync(marker);
+	} catch {
+		return false;
+	}
+	rmSync(marker, { force: true });
+	if (getScreenPermissionStatus() !== "granted") return false;
+	openOnboarding("done", "permission-granted");
+	return true;
+}
+
+/**
+ * A strip that sits under System Settings with a draggable QuickShot icon:
+ * dropping it on the Screen Recording list adds and enables the app. It
+ * follows the Settings window, never takes focus, and goes away once access
+ * is granted or Settings has been closed for a while.
+ */
+function showPermissionHelper() {
+	if (process.platform !== "darwin" || !captureAgent) return;
+	onboardingHiddenForHelper = false;
+	closePermissionHelper();
+	const helper = new BrowserWindow({
+		...PERMISSION_HELPER_SIZE,
+		frame: false,
+		transparent: true,
+		backgroundColor: "#00000000",
+		resizable: false,
+		movable: false,
+		minimizable: false,
+		maximizable: false,
+		fullscreenable: false,
+		focusable: false,
+		skipTaskbar: true,
+		hasShadow: false,
+		show: false,
+		webPreferences: {
+			preload: path.join(__dirname, "preload.mjs"),
+			nodeIntegration: false,
+			contextIsolation: true,
+			webSecurity: true,
+			allowRunningInsecureContent: false,
+			webviewTag: false,
+			additionalArguments: [`--quickshot-lang=${getMainLanguage()}`],
+		},
+	});
+	permissionHelperWindow = helper;
+	installWindowGuards(helper);
+	helper.setAlwaysOnTop(true, "floating");
+	helper.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+	loadWindow(helper, "permission-helper");
+	writeDiagnostic("permission-helper-shown");
+
+	const startedAt = Date.now();
+	let lastSeenAt = Date.now();
+	let busy = false;
+	permissionHelperTimer = setInterval(() => {
+		if (busy || helper.isDestroyed()) return;
+		if (getScreenPermissionStatus() === "granted") {
+			writeDiagnostic("permission-helper-granted", { ms: Date.now() - startedAt });
+			closePermissionHelper();
+			return;
+		}
+		busy = true;
+		void captureAgent
+			?.request({ cmd: "app-window", bundle: DEV_SETTINGS_BUNDLE ?? "com.apple.systempreferences" }, 800)
+			.then((frame) => {
+				if (helper.isDestroyed()) return;
+				if (!frame?.ok) {
+					if (helper.isVisible()) helper.hide();
+					// Settings closed (or never opened): give up after a while.
+					if (Date.now() - lastSeenAt > 20_000) closePermissionHelper();
+					return;
+				}
+				lastSeenAt = Date.now();
+				const bounds = {
+					x: Number(frame.x),
+					y: Number(frame.y),
+					width: Number(frame.width),
+					height: Number(frame.height),
+				};
+				const { workArea } = screen.getDisplayMatching(bounds);
+				const x = Math.round(
+					Math.min(
+						Math.max(workArea.x + 8, bounds.x + (bounds.width - PERMISSION_HELPER_SIZE.width) / 2),
+						workArea.x + workArea.width - PERMISSION_HELPER_SIZE.width - 8,
+					),
+				);
+				let y = Math.round(bounds.y + bounds.height + PERMISSION_HELPER_GAP);
+				// No room below: tuck it inside the window's bottom edge instead.
+				if (y + PERMISSION_HELPER_SIZE.height > workArea.y + workArea.height) {
+					y = Math.round(bounds.y + bounds.height - PERMISSION_HELPER_SIZE.height - 16);
+				}
+				const current = helper.getBounds();
+				if (current.x !== x || current.y !== y) helper.setPosition(x, y);
+				if (!helper.isVisible()) helper.showInactive();
+			})
+			.finally(() => {
+				busy = false;
+			});
+	}, 300);
+}
+
+function relaunchIntoOnboarding(step: OnboardingStep) {
+	const args = process.argv
+		.slice(1)
+		.filter((argument) => !argument.startsWith(ONBOARDING_RELAUNCH_ARGUMENT));
+	app.relaunch({ args: [...args, `${ONBOARDING_RELAUNCH_ARGUMENT}${step}`] });
+	app.quit();
+}
+
+const MENU_BAR_SETTINGS_URL = "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension";
+
+/** Says QuickShot is running and how to bring its hidden menu bar icon back. */
+function explainHiddenMenuBarIcon(reason: string) {
+	writeDiagnostic("tray-hidden", { reason });
+	app.focus({ steal: true });
+	void dialog
+		.showMessageBox({
+			type: "info",
+			message: mt("menuBarHidden.title"),
+			detail: mt("menuBarHidden.detail", { shortcut: CAPTURE_SHORTCUT_LABEL }),
+			buttons: [mt("menuBarHidden.openSettings"), mt("menuBarHidden.ok")],
+			defaultId: 0,
+			cancelId: 1,
+		})
+		.then(({ response }) => {
+			if (response === 0) void shell.openExternal(MENU_BAR_SETTINGS_URL);
+		})
+		.catch(() => {});
 }
 
 function buildDefaultScreenshotPath() {
@@ -1601,7 +2652,8 @@ async function triggerScreenshot(source = "unknown") {
 			source,
 			phase: capturePhase,
 		});
-		cancelActiveCapture(true);
+		// A restart during a stitch capture keeps stitching into the same editor.
+		cancelActiveCapture(!stitchTarget, false, Boolean(stitchTarget));
 		captureRestartTimer = setTimeout(() => {
 			captureRestartTimer = null;
 			void triggerScreenshot(`${source}:restart`);
@@ -1609,15 +2661,25 @@ async function triggerScreenshot(source = "unknown") {
 		return;
 	}
 
+	// Without Screen Recording, any capture call makes macOS show its own
+	// prompt on top of everything. Go straight to the guide instead.
+	if (process.platform === "darwin" && !DEV_CAPTURE_FILE && getScreenPermissionStatus() !== "granted") {
+		writeDiagnostic("capture-needs-permission", { source });
+		restoreStitchTarget();
+		openOnboarding("permission", "capture-without-permission");
+		return;
+	}
+
 	const captureAttempt = ++activeCaptureAttempt;
 	capturePhase = "preparing-region";
+	captureStartedAt = Date.now();
 	writeDiagnostic("capture-started", { source, captureAttempt });
 	screenshotCroppedBuffer = null;
 	pendingRegionCaptureSession = null;
-	screenshotPreviewWindow?.close();
+	if (!stitchTarget || screenshotPreviewWindow !== stitchTarget) screenshotPreviewWindow?.close();
 
 	try {
-		if (process.platform === "darwin") {
+		if (!usesOverlaySelection()) {
 			const imageBuffer =
 				await captureInteractiveSelectionWithScreencapture(captureAttempt);
 			if (captureAttempt !== activeCaptureAttempt) return;
@@ -1626,10 +2688,13 @@ async function triggerScreenshot(source = "unknown") {
 				writeDiagnostic("capture-ended-without-image", {
 					source,
 				});
+				if (interactiveCaptureErrored) explainMissingScreenRecordingPermission();
+				restoreStitchTarget();
 				return;
 			}
 
 			activeCaptureDisplay = getCaptureDisplay();
+			if (deliverStitchPiece(imageBuffer)) return;
 			if (!openPreviewForImage(imageBuffer)) {
 				cancelActiveCapture();
 			}
@@ -1637,19 +2702,29 @@ async function triggerScreenshot(source = "unknown") {
 		}
 
 		activeCaptureDisplay = getCaptureDisplay();
+		captureWindows = null;
+		armOverlayCaptureWatchdog(captureAttempt);
+		// Runs alongside the screen capture so window snapping adds no delay.
+		const windowsPromise = listScreenWindows(activeCaptureDisplay);
+		overlayCaptureStep = "overlay-window";
 		await ensureRegionSelector();
 		if (captureAttempt !== activeCaptureAttempt) return;
 		if (!regionSelectorWindow || !regionSelectorReady) {
 			capturePhase = "idle";
+			restoreStitchTarget();
 			return;
 		}
 
 		syncRegionSelectorBounds(activeCaptureDisplay);
 
-		const imageBuffer = await captureDisplayImage(activeCaptureDisplay);
+		overlayCaptureStep = "display-capture";
+		const frame = await captureDisplayImage(activeCaptureDisplay);
 		if (captureAttempt !== activeCaptureAttempt) return;
-		if (!imageBuffer) {
+		overlayCaptureStep = "overlay-ready";
+		if (!frame) {
 			capturePhase = "idle";
+			explainMissingScreenRecordingPermission();
+			restoreStitchTarget();
 			return;
 		}
 
@@ -1657,12 +2732,36 @@ async function triggerScreenshot(source = "unknown") {
 		activeCaptureSessionId = sessionId;
 		pendingRegionCaptureSession = {
 			sessionId,
-			imageBuffer,
+			imageBuffer: frame.buffer,
+			mimeType: frame.mimeType,
 		};
+		regionFrozenFrame = { sessionId, frame };
 		regionSelectorWindow.webContents.send(
 			"capture-session",
 			toIpcRegionCaptureSession(pendingRegionCaptureSession),
 		);
+		clearRegionReadyWatchdog();
+		regionReadyWatchdog = setTimeout(() => {
+			regionReadyWatchdog = null;
+			if (activeCaptureSessionId !== sessionId || capturePhase !== "preparing-region") return;
+			writeDiagnostic("region-selector-timeout", { sessionId });
+			cancelActiveCapture(false, false);
+			// Replace the overlay window; whatever stalled it should not stall the next capture.
+			const staleWindow = regionSelectorWindow;
+			regionSelectorWindow = null;
+			regionSelectorReady = false;
+			regionSelectorLoadPromise = null;
+			if (staleWindow && !staleWindow.isDestroyed()) staleWindow.destroy();
+			void ensureRegionSelector();
+		}, REGION_READY_TIMEOUT_MS);
+		void windowsPromise.then((windows) => {
+			// Sent even when empty: the overlay then knows a click means the whole screen.
+			if (activeCaptureSessionId !== sessionId) return;
+			captureWindows = { sessionId, windows };
+			if (regionSelectorWindow && !regionSelectorWindow.isDestroyed()) {
+				regionSelectorWindow.webContents.send("capture-windows", captureWindows);
+			}
+		});
 	} catch (error) {
 		if (captureAttempt !== activeCaptureAttempt) return;
 		writeDiagnostic("capture-failed", {
@@ -1673,8 +2772,135 @@ async function triggerScreenshot(source = "unknown") {
 		activeCaptureDisplay = null;
 		pendingRegionCaptureSession = null;
 		capturePhase = "idle";
+		explainMissingScreenRecordingPermission();
+		restoreStitchTarget();
 		return;
 	}
+}
+
+/**
+ * Last line of defence: a capture stuck preparing for several seconds is
+ * abandoned, so the next shortcut press starts cleanly instead of restarting
+ * into the same stall.
+ */
+function armOverlayCaptureWatchdog(captureAttempt: number) {
+	clearOverlayCaptureWatchdog();
+	overlayCaptureWatchdog = setTimeout(() => {
+		overlayCaptureWatchdog = null;
+		if (captureAttempt !== activeCaptureAttempt || capturePhase !== "preparing-region") return;
+		writeDiagnostic("capture-stalled", { step: overlayCaptureStep });
+		cancelActiveCapture(false, false);
+	}, OVERLAY_CAPTURE_TIMEOUT_MS);
+}
+
+function clearOverlayCaptureWatchdog() {
+	if (overlayCaptureWatchdog) {
+		clearTimeout(overlayCaptureWatchdog);
+		overlayCaptureWatchdog = null;
+	}
+}
+
+function clearRegionReadyWatchdog() {
+	if (regionReadyWatchdog) {
+		clearTimeout(regionReadyWatchdog);
+		regionReadyWatchdog = null;
+	}
+}
+
+/** Brings back the editor that was hidden for a stitch capture, unchanged. */
+function restoreStitchTarget() {
+	const target = stitchTarget;
+	stitchTarget = null;
+	if (target && !target.isDestroyed()) presentPreviewWindow(target);
+}
+
+/**
+ * Sends a finished capture to the editor that asked for it, instead of
+ * opening a new editor. Returns false when no stitch is pending.
+ */
+function deliverStitchPiece(imageBuffer: Buffer): boolean {
+	const target = stitchTarget;
+	if (!target) return false;
+	stitchTarget = null;
+	if (target.isDestroyed()) return false;
+	const display = activeCaptureDisplay ?? getCaptureDisplay();
+	target.webContents.send("stitch-piece", {
+		imageBytes: toIpcPngBytes(imageBuffer),
+		scaleFactor: display.scaleFactor || 1,
+	});
+	clearRegionReadyWatchdog();
+	clearOverlayCaptureWatchdog();
+	overlayCaptureStep = "idle";
+	activeCaptureSessionId = null;
+	activeCaptureDisplay = null;
+	pendingRegionCaptureSession = null;
+	screenshotCroppedBuffer = null;
+	capturePhase = "idle";
+	presentPreviewWindow(target);
+	releaseFrozenFrame();
+	hideRegionSelector();
+	writeDiagnostic("stitch-piece-delivered", { bytes: imageBuffer.length });
+	return true;
+}
+
+/** Hides a window and waits until it is really off screen, so a capture misses it. */
+function hideWindowForCapture(win: BrowserWindow) {
+	if (win.isDestroyed() || !win.isVisible()) return Promise.resolve();
+	return new Promise<void>((resolve) => {
+		const done = () => setTimeout(resolve, 60);
+		const timer = setTimeout(done, 300);
+		win.once("hide", () => {
+			clearTimeout(timer);
+			done();
+		});
+		win.hide();
+	});
+}
+
+/** Takes the overlay down once the editor it handed over to is showing (or failed). */
+function releaseOverlayForEditor() {
+	if (!overlayAwaitingEditor) return;
+	overlayAwaitingEditor = false;
+	releaseFrozenFrame();
+	hideRegionSelector();
+}
+
+/** Lets the agent drop the lossless frame it keeps for the overlay. */
+function releaseFrozenFrame() {
+	if (regionFrozenFrame?.frame.heldByAgent) void captureAgent?.request({ cmd: "release" }, 1_000);
+	regionFrozenFrame = null;
+}
+
+/**
+ * Crops the overlay session's frozen screen; `rect` is in frame pixels. The
+ * agent crops its lossless copy; otherwise the frame itself is a PNG.
+ */
+async function cropFrozenFrame(sessionId: number, rect: unknown): Promise<Buffer | null> {
+	const held = regionFrozenFrame;
+	if (!held || held.sessionId !== sessionId || !rect || typeof rect !== "object") return null;
+	const { frame } = held;
+	const { x, y, width, height } = rect as Record<string, unknown>;
+	if (
+		![x, y, width, height].every((value) => Number.isInteger(value)) ||
+		(x as number) < 0 ||
+		(y as number) < 0 ||
+		(width as number) < 1 ||
+		(height as number) < 1 ||
+		(x as number) + (width as number) > frame.width ||
+		(y as number) + (height as number) > frame.height
+	) {
+		return null;
+	}
+	const bounds = { x: x as number, y: y as number, width: width as number, height: height as number };
+	if (frame.heldByAgent) {
+		const cropped = await captureWithAgent({ cmd: "crop", rect: bounds }, 2_000);
+		if (cropped) return cropped.buffer;
+		// The agent restarted and lost its copy; the full-quality preview will do.
+		writeDiagnostic("frame-crop-from-preview");
+	}
+	const image = nativeImage.createFromBuffer(frame.buffer);
+	const cropped = image.crop(bounds);
+	return cropped.isEmpty() ? null : cropped.toPNG();
 }
 
 function hideRegionSelector() {
@@ -1686,9 +2912,27 @@ function hideRegionSelector() {
 	} catch {}
 }
 
-function cancelActiveCapture(closePreview = false) {
+/**
+ * After the overlay closes without opening the editor, hand the foreground
+ * back to the app the user was in, so a quick copy can be pasted right away.
+ * Hiding QuickShot also hides pinned screenshots, so it stays put while any
+ * pin or editor window is open.
+ */
+function yieldForegroundAfterOverlay() {
+	if (process.platform !== "darwin") return;
+	const editorOpen = Boolean(screenshotPreviewWindow && !screenshotPreviewWindow.isDestroyed());
+	if (editorOpen || pinnedScreenshots.size > 0) return;
+	app.hide();
+}
+
+function cancelActiveCapture(closePreview = false, restoreForeground = true, keepStitch = false) {
 	const previousPhase = capturePhase;
 	clearCaptureRestartTimer();
+	clearRegionReadyWatchdog();
+	clearOverlayCaptureWatchdog();
+	overlayCaptureStep = "idle";
+	releaseFrozenFrame();
+	overlayAwaitingEditor = false;
 	activeCaptureAttempt += 1;
 	void terminateActiveCaptureProcess("capture-cancelled");
 	hideRegionSelector();
@@ -1697,18 +2941,27 @@ function cancelActiveCapture(closePreview = false) {
 	activeCaptureDisplay = null;
 	screenshotCroppedBuffer = null;
 	pendingRegionCaptureSession = null;
+	captureWindows = null;
 	capturePhase = "idle";
 	clearPreviewReadyTimer();
 	if (closePreview && screenshotPreviewWindow && !screenshotPreviewWindow.isDestroyed()) {
 		screenshotPreviewWindow.close();
 	}
 	writeDiagnostic("capture-cancelled", { previousPhase, closePreview });
+	if (stitchTarget && !keepStitch) {
+		restoreStitchTarget();
+		return;
+	}
+	if (restoreForeground && previousPhase === "selecting-region") {
+		yieldForegroundAfterOverlay();
+	}
 }
 
 function registerCaptureShortcut(
 	force = false,
 	reason = "unspecified",
 ): boolean {
+	if (!ENABLE_CAPTURE_SHORTCUT) return false;
 	const wasRegistered = globalShortcut.isRegistered(CAPTURE_SHORTCUT);
 	if (force && globalShortcut.isRegistered(CAPTURE_SHORTCUT)) {
 		globalShortcut.unregister(CAPTURE_SHORTCUT);
@@ -1751,7 +3004,7 @@ function registerCaptureShortcut(
 	tray?.setToolTip(
 		registered
 			? `QuickShot · ${CAPTURE_SHORTCUT_LABEL}`
-			: "QuickShot · 快捷键注册失败，请用托盘点击截图",
+			: mt("tray.tooltipShortcutFailed"),
 	);
 	return registered;
 }
@@ -1879,13 +3132,109 @@ function registerIpcHandlers() {
 			return { success: false };
 		}
 
-		regionSelectorWindow.showInactive();
+		// The overlay takes keyboard focus so Enter, arrows and shortcuts work.
+		// QuickShot is an accessory app, so it has to be activated explicitly.
+		clearRegionReadyWatchdog();
+		clearOverlayCaptureWatchdog();
+		overlayCaptureStep = "idle";
+		regionSelectorWindow.show();
+		if (process.platform === "darwin") app.focus({ steal: true });
+		regionSelectorWindow.focus();
 		if (!globalShortcut.isRegistered("Escape")) {
 			globalShortcut.register("Escape", cancelActiveCapture);
 		}
 		capturePhase = "selecting-region";
 		pendingRegionCaptureSession = null;
+		writeDiagnostic("region-selector-shown", { sessionId, ms: Date.now() - captureStartedAt });
 		return { success: true };
+	});
+
+	ipcMain.handle("onboarding-state", (event) => {
+		if (!isTrustedWindowSender(event, onboardingWindow)) return null;
+		return {
+			platform: process.platform,
+			permission: getScreenPermissionStatus(),
+			shortcut: CAPTURE_SHORTCUT_LABEL,
+			launchAtLogin: app.getLoginItemSettings().openAtLogin,
+		};
+	});
+
+	ipcMain.handle("onboarding-request-permission", async (event) => {
+		const guide = onboardingWindow;
+		if (!guide || !isTrustedWindowSender(event, guide)) return { success: false };
+		// Open the Screen Recording pane and put a draggable QuickShot right
+		// under it; dropping it on the list is all it takes. The guide hides
+		// meanwhile so nothing of QuickShot's covers Settings during the drag.
+		if (!DEV_SETTINGS_BUNDLE) void shell.openExternal(SCREEN_RECORDING_SETTINGS_URL);
+		showPermissionHelper();
+		onboardingHiddenForHelper = true;
+		guide.hide();
+		const fs = await import("node:fs/promises");
+		await fs.writeFile(permissionMarkerPath(), new Date().toISOString()).catch(() => {});
+		return { success: true, permission: getScreenPermissionStatus() };
+	});
+
+	ipcMain.on("permission-helper-drag", (event) => {
+		const helper = permissionHelperWindow;
+		if (!helper || helper.isDestroyed() || event.sender !== helper.webContents) return;
+		const icon = nativeImage
+			.createFromPath(path.join(process.env.VITE_PUBLIC || RENDERER_DIST, "icon.png"))
+			.resize({ width: 64, height: 64, quality: "best" });
+		writeDiagnostic("permission-helper-drag", { bundle: appBundlePath() });
+		event.sender.startDrag({ file: appBundlePath(), icon });
+	});
+
+	ipcMain.handle("onboarding-relaunch", (event) => {
+		if (!isTrustedWindowSender(event, onboardingWindow)) return { success: false };
+		writeDiagnostic("onboarding-relaunch");
+		// Screen Recording only takes effect in a new process.
+		setTimeout(() => relaunchIntoOnboarding("done"), 50);
+		return { success: true };
+	});
+
+	ipcMain.handle("onboarding-set-launch-at-login", (event, enabled: unknown) => {
+		if (!isTrustedWindowSender(event, onboardingWindow) || typeof enabled !== "boolean") {
+			return { success: false };
+		}
+		app.setLoginItemSettings({ openAtLogin: enabled });
+		refreshTrayMenu();
+		return { success: true, launchAtLogin: app.getLoginItemSettings().openAtLogin };
+	});
+
+	ipcMain.handle("onboarding-finish", async (event, options: unknown) => {
+		const win = onboardingWindow;
+		if (!win || !isTrustedWindowSender(event, win)) return { success: false };
+		const capture = Boolean(options && typeof options === "object" && (options as { capture?: unknown }).capture);
+		await markOnboardingSeen();
+		win.close();
+		if (capture) setTimeout(() => requestCaptureFromUser("onboarding"), 350);
+		return { success: true };
+	});
+
+	ipcMain.handle("capture-for-stitch", async (event) => {
+		const editor = screenshotPreviewWindow;
+		if (!editor || editor.isDestroyed() || !isTrustedWindowSender(event, editor)) {
+			return { success: false, error: "no editor" };
+		}
+		if (capturePhase !== "idle" || stitchTarget) return { success: false, error: "busy" };
+		stitchTarget = editor;
+		writeDiagnostic("stitch-capture-requested");
+		// The editor must not end up in its own capture.
+		await hideWindowForCapture(editor);
+		if (stitchTarget !== editor) return { success: false, error: "cancelled" };
+		void triggerScreenshot("stitch");
+		return { success: true };
+	});
+
+	ipcMain.handle("get-capture-windows", (event, sessionId: number) => {
+		if (
+			!isTrustedWindowSender(event, regionSelectorWindow) ||
+			!Number.isInteger(sessionId) ||
+			captureWindows?.sessionId !== sessionId
+		) {
+			return { success: false as const };
+		}
+		return { success: true as const, windows: captureWindows.windows };
 	});
 
 	ipcMain.handle("cancel-capture-session", (event, sessionId: number) => {
@@ -1903,9 +3252,16 @@ function registerIpcHandlers() {
 
 	ipcMain.handle(
 		"screenshot-region-selected",
-		(
+		async (
 			event,
-			payload: { sessionId: number; croppedImageBytes: Uint8Array },
+			payload: {
+				sessionId: number;
+				croppedImageBytes?: Uint8Array;
+				action?: "edit" | "copy" | "save" | "pin";
+				windowId?: number;
+				/** With `windowId`: the window in frozen-frame pixels, cropped if the window capture fails. */
+				rect?: { x: number; y: number; width: number; height: number };
+			},
 		) => {
 			if (
 				!isTrustedWindowSender(event, regionSelectorWindow) ||
@@ -1916,22 +3272,89 @@ function registerIpcHandlers() {
 				return { success: false, error: "stale capture session" };
 			}
 
-			let croppedImageBuffer: Buffer;
-			try {
-				croppedImageBuffer = validateCapturePngPayload(
-					payload.croppedImageBytes,
-				);
-			} catch {
-				return { success: false, error: "invalid image data" };
+			let croppedImageBuffer: Buffer | null = null;
+			if (payload.croppedImageBytes !== undefined) {
+				try {
+					croppedImageBuffer = validateCapturePngPayload(payload.croppedImageBytes);
+				} catch {
+					return { success: false, error: "invalid image data" };
+				}
 			}
 
-			if (!openPreviewForImage(croppedImageBuffer)) {
-				return { success: false, error: "preview unavailable" };
+			const action = payload.action ?? "edit";
+			if (!["edit", "copy", "save", "pin"].includes(action)) {
+				return { success: false, error: "unknown action" };
 			}
-			hideRegionSelector();
-			return { success: true };
+
+			// A click on a window captures that window itself instead of the
+			// frozen pixels under it. Only ids this session listed are accepted.
+			const windowId = payload.windowId;
+			if (
+				process.platform === "darwin" &&
+				!DEV_CAPTURE_FILE &&
+				typeof windowId === "number" &&
+				captureWindows?.sessionId === payload.sessionId &&
+				captureWindows.windows.some((window) => window.id === windowId)
+			) {
+				const windowImage = await captureMacWindowImage(windowId);
+				if (payload.sessionId !== activeCaptureSessionId) {
+					return { success: false, error: "stale capture session" };
+				}
+				if (windowImage) croppedImageBuffer = windowImage;
+			}
+			croppedImageBuffer ??= await cropFrozenFrame(payload.sessionId, payload.rect);
+			if (payload.sessionId !== activeCaptureSessionId) {
+				return { success: false, error: "stale capture session" };
+			}
+			if (!croppedImageBuffer) {
+				return { success: false, error: "invalid image data" };
+			}
+			if (action === "edit") {
+				if (deliverStitchPiece(croppedImageBuffer)) return { success: true };
+				if (!openPreviewForImage(croppedImageBuffer)) {
+					return { success: false, error: "preview unavailable" };
+				}
+				overlayAwaitingEditor = true;
+				return { success: true };
+			}
+
+			// Quick actions finish straight from the overlay, skipping the editor.
+			// The overlay stays up if the action fails, so nothing is lost.
+			if (action === "pin" && !canCreatePinnedScreenshot(pinnedScreenshots.size)) {
+				return { success: false, error: "pin-limit" };
+			}
+			writeDiagnostic("region-quick-action", { action });
+			try {
+				if (action === "copy") {
+					clipboard.writeImage(nativeImage.createFromBuffer(croppedImageBuffer));
+				} else if (action === "save") {
+					await writeQuickSaveScreenshot(croppedImageBuffer);
+				} else if (action === "pin" && !createPinnedScreenshotWindow(croppedImageBuffer)) {
+					return { success: false, error: "pin-limit" };
+				}
+				if (payload.sessionId === activeCaptureSessionId) cancelActiveCapture(false);
+				return { success: true };
+			} catch (error) {
+				writeDiagnostic("region-quick-action-failed", {
+					action,
+					error: serializeError(error),
+				});
+				return { success: false, error: "quick action failed" };
+			}
 		},
 	);
+
+	// A warm editor may subscribe after the session event was sent; it asks here.
+	ipcMain.handle("get-pending-preview-session", (event) => {
+		if (
+			!isTrustedWindowSender(event, screenshotPreviewWindow) ||
+			capturePhase !== "opening-preview" ||
+			pendingPreviewSessionId === null
+		) {
+			return { success: false as const };
+		}
+		return { success: true as const, sessionId: pendingPreviewSessionId };
+	});
 
 	ipcMain.handle("get-preview-session", (event, sessionId: number) => {
 		if (
@@ -1948,6 +3371,7 @@ function registerIpcHandlers() {
 		return {
 			success: true,
 			imageBytes: toIpcPngBytes(screenshotCroppedBuffer),
+			scaleFactor: screenshotCroppedScaleFactor,
 		};
 	});
 
@@ -1963,6 +3387,7 @@ function registerIpcHandlers() {
 		}
 
 		presentPreviewWindow(screenshotPreviewWindow);
+		releaseOverlayForEditor();
 		clearPreviewReadyTimer();
 		pendingPreviewSessionId = null;
 		activeCaptureSessionId = null;
@@ -1970,6 +3395,7 @@ function registerIpcHandlers() {
 		screenshotCroppedBuffer = null;
 		capturePhase = "idle";
 		writeDiagnostic("preview-ready", { sessionId });
+		scheduleSparePreviewWindow();
 		return { success: true };
 	});
 
@@ -1979,12 +3405,17 @@ function registerIpcHandlers() {
 				return { success: false, error: "untrusted sender" };
 			}
 			const pngBuffer = normalizePngPayload(pngData, MAX_EXPORT_PNG_BYTES);
-			const result = await dialog.showSaveDialog({
-				title: "Save Screenshot",
+			const parent = screenshotPreviewWindow;
+			const options: Electron.SaveDialogOptions = {
+				title: mt("dialog.saveTitle"),
 				defaultPath: buildDefaultScreenshotPath(),
-				filters: [{ name: "PNG Image", extensions: ["png"] }],
+				filters: [{ name: mt("dialog.pngFilter"), extensions: ["png"] }],
 				properties: ["createDirectory", "showOverwriteConfirmation"],
-			});
+			};
+			const result =
+				parent && !parent.isDestroyed()
+					? await dialog.showSaveDialog(parent, options)
+					: await dialog.showSaveDialog(options);
 			if (result.canceled || !result.filePath) {
 				return { success: false, canceled: true };
 			}
@@ -2032,14 +3463,14 @@ function registerIpcHandlers() {
 				return {
 					success: false as const,
 					code: "untrusted-sender" as const,
-					error: "无法固定当前截图",
+					error: mt("pin.untrusted"),
 				};
 			}
 			if (!canCreatePinnedScreenshot(pinnedScreenshots.size)) {
 				return {
 					success: false as const,
 					code: "limit-reached" as const,
-					error: `最多同时固定 ${MAX_PINNED_SCREENSHOTS} 张截图`,
+					error: mt("pin.limit", { max: MAX_PINNED_SCREENSHOTS }),
 				};
 			}
 
@@ -2053,7 +3484,7 @@ function registerIpcHandlers() {
 					return {
 						success: false as const,
 						code: "limit-reached" as const,
-						error: `最多同时固定 ${MAX_PINNED_SCREENSHOTS} 张截图`,
+						error: mt("pin.limit", { max: MAX_PINNED_SCREENSHOTS }),
 					};
 				}
 				return { success: true as const };
@@ -2064,7 +3495,7 @@ function registerIpcHandlers() {
 				return {
 					success: false as const,
 					code: "create-failed" as const,
-					error: "悬浮截图创建失败，请重试",
+					error: mt("pin.failed"),
 				};
 			}
 		},
@@ -2200,23 +3631,20 @@ function registerIpcHandlers() {
 		"extract-text",
 		async (event, pngData: ArrayBuffer | Uint8Array) => {
 			if (!isTrustedWindowSender(event, screenshotPreviewWindow)) {
-				return ocrFailure("invalid-image", "无法读取当前截图");
+				return ocrFailure("invalid-image", mt("ocr.unreadable"));
 			}
-			if (process.platform !== "darwin") {
-				return ocrFailure(
-					"unsupported-platform",
-					"文本提取目前仅支持 macOS",
-				);
+			if (!isOcrSupported()) {
+				return ocrFailure("unsupported-platform", mt("ocr.unsupported"));
 			}
 			if (activeOcrTask) {
-				return ocrFailure("busy", "正在提取文字，请稍候");
+				return ocrFailure("busy", mt("ocr.busy"));
 			}
 
 			let pngBuffer: Buffer;
 			try {
 				pngBuffer = validateCapturePngPayload(pngData);
 			} catch {
-				return ocrFailure("invalid-image", "截图数据无效，请重新截图");
+				return ocrFailure("invalid-image", mt("ocr.invalidImage"));
 			}
 			return extractTextFromPng(pngBuffer);
 		},
@@ -2229,13 +3657,18 @@ function registerIpcHandlers() {
 				typeof text !== "string" ||
 				Buffer.byteLength(text, "utf8") > MAX_OCR_TEXT_BYTES
 			) {
-				return { success: false, error: "无效的文本内容" };
+				return { success: false, error: mt("text.invalid") };
 			}
 			clipboard.writeText(text);
 			return { success: true };
 		} catch {
-			return { success: false, error: "复制文本失败，请重试" };
+			return { success: false, error: mt("text.copyFailed") };
 		}
+	});
+
+	ipcMain.handle("minimize-window", (event) => {
+		if (!isTrustedSender(event)) return;
+		BrowserWindow.fromWebContents(event.sender)?.minimize();
 	});
 
 	ipcMain.handle("read-asset-data-url", async (event, relativePath: string) => {
@@ -2252,17 +3685,6 @@ function registerIpcHandlers() {
 		}
 	});
 
-	ipcMain.handle("get-asset-base-path", (event) => {
-		try {
-			if (!isTrustedSender(event)) {
-				return null;
-			}
-			const p = path.join(app.getAppPath(), "dist");
-			return pathToFileURL(`${p}${path.sep}`).toString();
-		} catch {
-			return null;
-		}
-	});
 }
 
 app.whenReady().then(async () => {
@@ -2277,18 +3699,49 @@ app.whenReady().then(async () => {
 	if (process.platform === "darwin") {
 		app.setActivationPolicy("accessory");
 	}
+	if (process.platform === "win32") {
+		app.setAppUserModelId("com.quickshot.app");
+	}
+	appSettings = await readAppSettings(app.getPath("userData"));
+	applyLanguagePreference();
 
-	Menu.setApplicationMenu(Menu.buildFromTemplate([]));
+	// macOS routes Cmd+C/V/X/A/Z in text fields through the Edit menu.
+	Menu.setApplicationMenu(
+		Menu.buildFromTemplate(
+			process.platform === "darwin" ? [{ role: "editMenu" }] : [],
+		),
+	);
 
 	session.defaultSession.setPermissionCheckHandler(() => false);
 	session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
 
 	registerIpcHandlers();
 	createTray();
+	nativeTheme.on("updated", syncPreviewChromeWithTheme);
+	// First launch (or a relaunch for Screen Recording) opens the guide;
+	// otherwise, when opened by hand rather than at login, point at the icon.
+	const relaunchStep = process.argv
+		.find((argument) => argument.startsWith(ONBOARDING_RELAUNCH_ARGUMENT))
+		?.slice(ONBOARDING_RELAUNCH_ARGUMENT.length) as OnboardingStep | undefined;
+	const openedAtLogin =
+		process.platform === "darwin" &&
+		(app.getLoginItemSettings().wasOpenedAtLogin || os.uptime() < 120);
+	if (relaunchStep && ONBOARDING_STEPS.includes(relaunchStep)) {
+		rmSync(permissionMarkerPath(), { force: true });
+		openOnboarding(relaunchStep, "relaunch");
+	} else if (process.platform === "darwin" && celebratePermissionIfPending()) {
+		// Opened at the guide's last step.
+	} else if (appSettings.onboardingVersion < ONBOARDING_VERSION && !process.argv.includes("--capture-region")) {
+		openOnboarding("welcome", "first-launch");
+	} else if (!openedAtLogin && !process.argv.includes("--capture-region")) {
+		setTimeout(() => showTrayHint("launch"), 1_200);
+	}
 
-	if (process.platform !== "darwin") {
+	if (usesOverlaySelection()) {
 		await ensureRegionSelector();
 	}
+	scheduleSparePreviewWindow(2_500);
+	warmCaptureAgent("app-ready");
 
 	if (ENABLE_CAPTURE_SHORTCUT) {
 		registerCaptureShortcut(false, "app-ready");
@@ -2299,6 +3752,7 @@ app.whenReady().then(async () => {
 	const recoverAfterWake = (reason: string) => {
 		writeDiagnostic("power-recovery", { reason, phase: capturePhase });
 		scheduleShortcutRecovery(reason, 250, true);
+		warmCaptureAgent(reason);
 		if (pinnedScreenshots.size > 0) {
 			ensurePinnedScreenshotRecoveryShortcut();
 		}
@@ -2307,7 +3761,7 @@ app.whenReady().then(async () => {
 		writeDiagnostic("power-inactive", { reason, phase: capturePhase });
 		restorePinnedScreenshotInteraction(reason);
 		if (capturePhase !== "idle" || activeCaptureProcess) {
-			cancelActiveCapture(true);
+			cancelActiveCapture(true, false);
 		}
 	};
 	powerMonitor.on("suspend", () => cancelForInactivity("power-suspend"));
@@ -2351,8 +3805,46 @@ app.whenReady().then(async () => {
 	}
 });
 
+function readBundleStamp(bundle: string): BundleStamp | null {
+	try {
+		const stats = statSync(path.join(bundle, "Contents", "Resources", "app.asar"));
+		return { ino: stats.ino, mtimeMs: stats.mtimeMs };
+	} catch {
+		return null;
+	}
+}
+
+/** The bundle this process was launched from, and how its build looked then. */
+const OWN_BUNDLE =
+	app.isPackaged && process.platform === "darwin" ? bundleFromExecutable(process.execPath) : null;
+const OWN_LAUNCH_STAMP = OWN_BUNDLE ? readBundleStamp(OWN_BUNDLE) : null;
+
+/** Quits so a newer QuickShot that was just opened can take over. */
+function handOverTo(bundle: string) {
+	writeDiagnostic("hand-over", { from: OWN_BUNDLE, to: bundle });
+	// The new copy waits for this one to release the single-instance lock.
+	spawn("/bin/sh", ["-c", 'sleep 1.2; /usr/bin/open -n "$0"', bundle], {
+		detached: true,
+		stdio: "ignore",
+	}).unref();
+	app.quit();
+}
+
 app.on("second-instance", (_event, commandLine) => {
 	writeDiagnostic("second-instance", { commandLine });
+	const otherBundle = bundleFromExecutable(commandLine[0]);
+	if (
+		OWN_BUNDLE &&
+		OWN_LAUNCH_STAMP &&
+		otherBundle &&
+		shouldHandOver(
+			{ bundle: OWN_BUNDLE, launchStamp: OWN_LAUNCH_STAMP },
+			{ bundle: otherBundle, stamp: readBundleStamp(otherBundle) },
+		)
+	) {
+		handOverTo(otherBundle);
+		return;
+	}
 	scheduleShortcutRecovery("second-instance", 0, true);
 	if (commandLine.includes("--capture-region")) {
 		requestCaptureFromUser("launch-command");
@@ -2360,13 +3852,18 @@ app.on("second-instance", (_event, commandLine) => {
 	}
 	if (screenshotPreviewWindow && !screenshotPreviewWindow.isDestroyed()) {
 		presentPreviewWindow(screenshotPreviewWindow);
+		return;
 	}
+	showTrayHint("second-instance");
 });
 app.on("will-quit", () => {
 	isQuitting = true;
+	closePermissionHelper();
+	captureAgent?.stop();
 	forceTerminateActiveCaptureProcess("app-will-quit");
 	abortActiveOcr("app-will-quit", true);
 	closeAllPinnedScreenshots();
+	destroySparePreviewWindow();
 	removeActiveOcrTemporaryDirectory();
 	clearCaptureRestartTimer();
 	if (shortcutRecoveryTimer) clearTimeout(shortcutRecoveryTimer);
@@ -2386,6 +3883,8 @@ app.on("window-all-closed", () => {
 });
 app.on("activate", () => {
 	scheduleShortcutRecovery("app-activate", 0, true);
+	// Opening QuickShot again from Finder, Launchpad or Spotlight.
+	if (capturePhase === "idle") showTrayHint("reopen");
 });
 
 process.on("uncaughtExceptionMonitor", (error, origin) => {

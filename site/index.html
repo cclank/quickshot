@@ -1,0 +1,1819 @@
+<!doctype html>
+<html lang="zh-CN" data-lang="zh" data-os="mac">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>QuickShot · 优雅的本地截图与标注工具</title>
+<meta name="author" content="岚叔">
+<meta name="description" content="QuickShot 是一款免费、开源、完全本地运行的截图工具：悬停识别窗口，单击即截；标注、美化、拼接，几秒钟得到可以直接分享的成品图。支持 macOS 与 Windows。">
+<meta name="theme-color" content="#fbfbfd" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="canonical" href="https://quickshot.lanshuagent.com/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://quickshot.lanshuagent.com/">
+<meta property="og:title" content="QuickShot · 截图，本该如此优雅">
+<meta property="og:description" content="悬停识别窗口，单击即截。标注、美化、拼接，全部在你的电脑上完成。免费开源，支持 macOS 与 Windows。">
+<meta property="og:image" content="https://quickshot.lanshuagent.com/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://quickshot.lanshuagent.com/og.png">
+<script>
+(function () {
+	var root = document.documentElement;
+	var lang;
+	var match = /[?&]lang=(zh|en)\b/.exec(location.search);
+	if (match) lang = match[1];
+	else try { lang = localStorage.getItem("quickshot.site.lang"); } catch (e) {}
+	if (lang !== "zh" && lang !== "en") {
+		var preferred = (navigator.languages && navigator.languages[0]) || navigator.language || "";
+		lang = /^zh/i.test(preferred) ? "zh" : "en";
+	}
+	root.setAttribute("data-lang", lang);
+	root.lang = lang === "zh" ? "zh-CN" : "en";
+	var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent;
+	root.setAttribute("data-os", /win/i.test(platform) ? "win" : "mac");
+	root.classList.add("js");
+})();
+</script>
+<style>
+@property --spin { syntax: "<angle>"; inherits: true; initial-value: 0deg; }
+
+:root {
+	--bg: #fbfbfd;
+	--bg-alt: #f3f3f6;
+	--surface: #ffffff;
+	--surface-2: #f7f7f9;
+	--text: #1d1d1f;
+	--text-2: #515156;
+	--text-3: #86868b;
+	--line: rgba(0, 0, 0, 0.08);
+	--line-strong: rgba(0, 0, 0, 0.14);
+	--btn: #1d1d1f;
+	--btn-text: #ffffff;
+	--btn-hover: #3a3a3d;
+	--chip: rgba(0, 0, 0, 0.045);
+	--key: #ffffff;
+	--key-edge: rgba(0, 0, 0, 0.12);
+	--key-shadow: 0 1px 0 rgba(0, 0, 0, 0.06), 0 6px 14px -6px rgba(0, 0, 0, 0.16), inset 0 -2px 0 rgba(0, 0, 0, 0.06);
+	--shadow-shot: 0 1px 0 rgba(255, 255, 255, 0.6) inset, 0 40px 90px -30px rgba(28, 25, 60, 0.35), 0 18px 40px -20px rgba(28, 25, 60, 0.25);
+	--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 30px -18px rgba(0, 0, 0, 0.18);
+	--spectrum: #ff5a7a, #ff9f43, #ffd43b, #38d9a9, #4dabf7, #9775fa, #ff5a7a;
+	--grad-text: linear-gradient(92deg, #ff4f74 0%, #ff8a3d 22%, #e9a800 38%, #1fbf8f 57%, #3b9ef0 76%, #8b6cf6 100%);
+	--focus: #4dabf7;
+	--radius-lg: 22px;
+	--radius: 16px;
+	--font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+	--mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+	color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #000000;
+		--bg-alt: #0c0c0f;
+		--surface: #141417;
+		--surface-2: #1b1b1f;
+		--text: #f5f5f7;
+		--text-2: #b2b2b8;
+		--text-3: #7d7d84;
+		--line: rgba(255, 255, 255, 0.09);
+		--line-strong: rgba(255, 255, 255, 0.16);
+		--btn: #f5f5f7;
+		--btn-text: #0b0b0d;
+		--btn-hover: #ffffff;
+		--chip: rgba(255, 255, 255, 0.07);
+		--key: #26262b;
+		--key-edge: rgba(255, 255, 255, 0.1);
+		--key-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 8px 18px -8px rgba(0, 0, 0, 0.8), inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+		--shadow-shot: 0 40px 100px -30px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.06);
+		--shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 20px 40px -24px rgba(0, 0, 0, 0.9);
+		--grad-text: linear-gradient(92deg, #ff6b8a 0%, #ffa25a 22%, #ffd43b 40%, #38d9a9 58%, #5cb5ff 76%, #a68bff 100%);
+		color-scheme: dark;
+	}
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; scroll-padding-top: 72px; }
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font-family: var(--font);
+	font-size: 17px;
+	line-height: 1.6;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	overflow-x: hidden;
+}
+img { display: block; max-width: 100%; height: auto; }
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 6px; }
+html[data-lang="zh"] .en, html[data-lang="en"] .zh { display: none !important; }
+html[data-os="mac"] .win-only, html[data-os="win"] .mac-only { display: none !important; }
+html[data-lang="en"] h1, html[data-lang="en"] h2 { letter-spacing: -0.028em; }
+
+.wrap { width: 100%; max-width: 1160px; margin: 0 auto; padding: 0 max(16px, env(safe-area-inset-left)); }
+.wrap-narrow { max-width: 880px; }
+.grad { background: var(--grad-text); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.phrase { display: inline-block; white-space: nowrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Buttons */
+.btn {
+	display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+	height: 48px; padding: 0 24px; border-radius: 999px; border: 0; cursor: pointer;
+	background: var(--btn); color: var(--btn-text); font-size: 16px; font-weight: 600;
+	transition: background .2s, transform .2s;
+	white-space: nowrap;
+}
+.btn:hover { background: var(--btn-hover); }
+.btn:active { transform: scale(.98); }
+.btn svg { width: 18px; height: 18px; flex: none; }
+.btn-ghost { background: transparent; color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.btn-ghost:hover { background: var(--chip); }
+.btn-sm { height: 34px; padding: 0 16px; font-size: 14px; }
+
+/* Keycaps */
+kbd {
+	display: inline-flex; align-items: center; justify-content: center;
+	min-width: 1.9em; height: 1.9em; padding: 0 .5em; border-radius: .45em;
+	background: var(--key); box-shadow: var(--key-shadow), 0 0 0 1px var(--key-edge);
+	font-family: var(--font); font-size: .82em; font-weight: 600; color: var(--text); line-height: 1;
+}
+html[data-os="mac"] kbd.mod::before { content: "⌘"; }
+html[data-os="win"] kbd.mod::before { content: "Ctrl"; }
+html[data-os="mac"] kbd.shift::before { content: "⇧"; }
+html[data-os="win"] kbd.shift::before { content: "Shift"; }
+html[data-os="mac"] kbd.enter::before { content: "↩"; }
+html[data-os="win"] kbd.enter::before { content: "Enter"; }
+html[data-os="mac"] kbd.del::before { content: "⌫"; }
+html[data-os="win"] kbd.del::before { content: "Delete"; }
+
+/* Navigation */
+.nav {
+	position: sticky; top: 0; z-index: 50;
+	transition: background .25s, box-shadow .25s;
+}
+.nav.scrolled {
+	background: color-mix(in srgb, var(--bg) 78%, transparent);
+	-webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+	box-shadow: 0 1px 0 var(--line);
+}
+.nav-in { display: flex; align-items: center; height: 60px; gap: 24px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
+.brand img { width: 28px; height: 28px; border-radius: 7px; }
+.nav-author {
+	display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px 0 4px; margin-right: 4px; border-radius: 999px;
+	font-size: 13px; color: var(--text-2); white-space: nowrap; transition: background .2s;
+}
+.nav-author:hover { background: var(--chip); color: var(--text); }
+.nav-author .avatar {
+	width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; flex: none;
+	font-size: 12.5px; font-weight: 700; color: #fff;
+	background: linear-gradient(135deg, #ff5a7a, #ff9f43 30%, #38d9a9 62%, #4dabf7 82%, #9775fa);
+	box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .5);
+}
+.nav-author .label { color: var(--text-3); }
+.nav-author b { font-weight: 650; color: var(--text); }
+@media (max-width: 600px) { .nav-author .label { display: none; } .nav-author { padding-right: 8px; margin-right: 0; } }
+.nav-links { display: flex; gap: 26px; margin-left: 12px; font-size: 14px; color: var(--text-2); }
+.nav-links a:hover { color: var(--text); }
+.nav-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.icon-btn {
+	display: inline-flex; align-items: center; justify-content: center; height: 34px; min-width: 34px; padding: 0 10px;
+	border-radius: 999px; border: 0; background: transparent; cursor: pointer; color: var(--text-2); font-size: 13px; font-weight: 600;
+}
+.icon-btn:hover { background: var(--chip); color: var(--text); }
+.icon-btn svg { width: 19px; height: 19px; }
+@media (max-width: 900px) { .nav-links { display: none; } }
+
+/* Hero */
+.hero { position: relative; padding: clamp(40px, 7vw, 88px) 0 clamp(40px, 6vw, 72px); text-align: center; overflow: hidden; }
+.hero-bg {
+	position: absolute; inset: -20% -10% auto; height: 900px; pointer-events: none; z-index: -1;
+	background:
+		radial-gradient(40% 50% at 18% 30%, rgba(255, 90, 122, .13), transparent 70%),
+		radial-gradient(35% 45% at 82% 24%, rgba(77, 171, 247, .14), transparent 70%),
+		radial-gradient(40% 40% at 55% 60%, rgba(151, 117, 250, .10), transparent 70%);
+}
+.pill {
+	display: inline-flex; align-items: center; gap: 10px; padding: 6px 14px 6px 8px; border-radius: 999px;
+	background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 6px 18px -10px rgba(0,0,0,.2);
+	font-size: 13px; font-weight: 500; color: var(--text-2);
+}
+.pill .tag {
+	padding: 2px 9px; border-radius: 999px; color: #fff; font-weight: 600; font-size: 12px;
+	background: linear-gradient(90deg, #ff5a7a, #ff9f43, #38d9a9, #4dabf7, #9775fa);
+}
+.pill:hover { color: var(--text); }
+.pill .tag { flex: none; white-space: nowrap; }
+@media (max-width: 600px) { .pill .pill-extra { display: none; } }
+h1 {
+	margin: 26px auto 0; max-width: 15ch;
+	font-size: clamp(44px, 8.2vw, 96px); line-height: 1.04; letter-spacing: -0.03em; font-weight: 750;
+}
+html[data-lang="zh"] h1 { max-width: 12em; letter-spacing: -0.02em; font-feature-settings: "halt"; }
+.hero .lead { margin: 24px auto 0; max-width: 34em; }
+.lead { font-size: clamp(17px, 1.7vw, 21px); line-height: 1.6; color: var(--text-2); margin: 0; }
+html[data-lang="zh"] .lead { max-width: 30em; }
+.foot-author { color: var(--text-2); }
+.foot-author b { color: var(--text); }
+.hero-keys { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 30px; font-size: 22px; }
+.hero-keys .hint { font-size: 14px; color: var(--text-3); margin-left: 8px; }
+.cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 30px; }
+.cta-note { margin-top: 14px; font-size: 13px; color: var(--text-3); }
+/* Both platforms are offered; the visitor's own comes first and filled. */
+html[data-os="mac"] .cta .dl-win, html[data-os="win"] .cta .dl-mac { background: transparent; color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
+html[data-os="mac"] .cta .dl-win:hover, html[data-os="win"] .cta .dl-mac:hover { background: var(--chip); }
+html[data-os="win"] .cta .dl-win { order: -1; }
+.cta-source { margin-top: 10px; font-size: 14px; }
+@media (max-width: 600px) { .cta .dl-mac, .cta .dl-win { min-width: 230px; } }
+.cta-source a { color: var(--text-2); }
+.cta-source a:hover { color: var(--text); }
+
+.hero-shot { position: relative; margin: clamp(48px, 7vw, 80px) auto 0; max-width: 1080px; padding: 0 clamp(0px, 2vw, 24px); }
+.hero-shot .shot-wrap { position: relative; }
+.hero-shot .frame {
+	position: relative; border-radius: 14px; overflow: hidden; background: var(--surface);
+	box-shadow: var(--shadow-shot);
+}
+.hero-shot .frame video { border-radius: 0; }
+.hero-glow {
+	position: absolute; inset: 8% 6% -4%; z-index: -1; border-radius: 40px; filter: blur(60px); opacity: .55;
+	background: conic-gradient(from 200deg, var(--spectrum));
+}
+@media (prefers-color-scheme: dark) { .hero-glow { opacity: .38; } }
+
+/* The spectrum outline QuickShot draws around a window */
+.ring {
+	position: absolute; inset: 0; border-radius: inherit; padding: var(--ring-w, 3px);
+	background: conic-gradient(from var(--spin), var(--spectrum));
+	-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor; mask-composite: exclude;
+	pointer-events: none;
+}
+.ring-glow { position: absolute; inset: 0; border-radius: inherit; filter: blur(var(--glow, 8px)); opacity: .75; pointer-events: none; }
+.ring-glow .ring { padding: calc(var(--ring-w, 3px) + 1px); }
+.spin { animation: spin 9s linear infinite; }
+@keyframes spin { to { --spin: 360deg; } }
+.hero-ring { position: absolute; inset: -7px; border-radius: 20px; --ring-w: 3.5px; --glow: 10px; pointer-events: none; }
+.sel-label {
+	position: absolute; left: 0; bottom: calc(100% + 8px);
+	display: inline-flex; gap: 8px; align-items: baseline; white-space: nowrap;
+	padding: 5px 10px; border-radius: 8px; background: rgba(28, 28, 32, .86); color: #fff;
+	font-size: 12px; font-weight: 600; letter-spacing: .01em;
+	box-shadow: 0 6px 16px -6px rgba(0,0,0,.4);
+	-webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+.sel-label small { font-size: 11px; font-weight: 500; opacity: .66; font-variant-numeric: tabular-nums; }
+.hero-ring .sel-label { left: 7px; bottom: calc(100% + 10px); }
+@media (max-width: 600px) { .hero-ring .sel-label { display: none; } }
+
+/* Sections */
+section { position: relative; }
+.section { padding: clamp(88px, 12vw, 160px) 0; }
+.section.alt { background: var(--bg-alt); }
+.sec-head { max-width: 760px; }
+.sec-head.center { margin: 0 auto; text-align: center; }
+.sec-head.center .lead { margin-left: auto; margin-right: auto; }
+.eyebrow {
+	display: inline-block; font-size: 14px; font-weight: 650; letter-spacing: .04em;
+	background: var(--grad-text); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+html[data-lang="en"] .eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: 13px; }
+h2 { margin: 12px 0 18px; font-size: clamp(34px, 5.2vw, 60px); line-height: 1.08; letter-spacing: -0.025em; font-weight: 720; }
+h3 { margin: 0 0 6px; font-size: 19px; line-height: 1.35; letter-spacing: -0.01em; font-weight: 650; }
+p { margin: 0; }
+.muted { color: var(--text-2); }
+.small { font-size: 14px; }
+
+.reveal { transition: opacity .9s cubic-bezier(.2,.7,.2,1), transform .9s cubic-bezier(.2,.7,.2,1); }
+html.js .reveal:not(.in) { opacity: 0; transform: translateY(28px); }
+.reveal.d1 { transition-delay: .08s; } .reveal.d2 { transition-delay: .16s; } .reveal.d3 { transition-delay: .24s; }
+
+/* Capture playground */
+.demo-wrap { margin-top: clamp(40px, 6vw, 64px); }
+.desk {
+	position: relative; aspect-ratio: 16 / 10; border-radius: clamp(10px, 1.6vw, 20px); overflow: hidden;
+	container-type: inline-size; isolation: isolate; user-select: none; -webkit-user-select: none;
+	touch-action: pan-y; cursor: default;
+	background:
+		radial-gradient(60% 80% at 12% 18%, #ffb3c7 0%, transparent 60%),
+		radial-gradient(55% 70% at 88% 12%, #a9d4ff 0%, transparent 60%),
+		radial-gradient(70% 70% at 70% 95%, #c5b5ff 0%, transparent 60%),
+		radial-gradient(60% 60% at 20% 95%, #ffe0a3 0%, transparent 60%),
+		linear-gradient(135deg, #f7d6e6, #dfe4ff);
+	box-shadow: var(--shadow-shot);
+}
+@media (prefers-color-scheme: dark) {
+	.desk {
+		background:
+			radial-gradient(60% 80% at 12% 18%, #5b2a4a 0%, transparent 60%),
+			radial-gradient(55% 70% at 88% 12%, #1f3f6b 0%, transparent 60%),
+			radial-gradient(70% 70% at 70% 95%, #3b2d72 0%, transparent 60%),
+			radial-gradient(60% 60% at 20% 95%, #5a3b1c 0%, transparent 60%),
+			linear-gradient(135deg, #1a1426, #0f1830);
+	}
+}
+.menubar {
+	position: absolute; inset: 0 0 auto; height: 3.2cqw; display: flex; align-items: center; gap: 1.6cqw; padding: 0 1.4cqw;
+	background: rgba(255,255,255,.42); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+	font-size: 1.15cqw; color: rgba(0,0,0,.78); z-index: 5;
+}
+@media (prefers-color-scheme: dark) { .menubar { background: rgba(20,20,26,.5); color: rgba(255,255,255,.85); } }
+.menubar b { font-weight: 700; }
+.menubar .right { margin-left: auto; display: flex; align-items: center; gap: 1.4cqw; }
+.menubar .qs-icon { width: 1.9cqw; height: 1.9cqw; border-radius: .4cqw; }
+.menubar .glyph { width: 1.5cqw; height: 1.1cqw; border-radius: .25cqw; border: .14cqw solid currentColor; opacity: .7; }
+.dock {
+	position: absolute; left: 50%; bottom: 1.2cqw; transform: translateX(-50%); z-index: 5;
+	display: flex; gap: .9cqw; padding: .8cqw; border-radius: 1.8cqw;
+	background: rgba(255,255,255,.35); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+	box-shadow: inset 0 0 0 1px rgba(255,255,255,.4);
+}
+@media (prefers-color-scheme: dark) { .dock { background: rgba(30,30,36,.45); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); } }
+.dock i { width: 3.6cqw; height: 3.6cqw; border-radius: .9cqw; display: block; }
+.win {
+	position: absolute; left: var(--x); top: var(--y); width: var(--w); height: var(--h);
+	border-radius: 1cqw; overflow: hidden; background: #fff; color: #1d1d1f;
+	box-shadow: 0 0 0 .07cqw rgba(0,0,0,.12), 0 2.2cqw 4.5cqw -1.6cqw rgba(30,20,60,.45);
+	font-size: 1.05cqw; line-height: 1.4;
+}
+.win .tb { height: 2.6cqw; display: flex; align-items: center; gap: .55cqw; padding: 0 1cqw; border-bottom: .07cqw solid rgba(0,0,0,.07); background: #f6f6f8; }
+.win .tb i { width: .95cqw; height: .95cqw; border-radius: 50%; background: #ff5f57; display: block; }
+.win .tb i:nth-child(2) { background: #febc2e; } .win .tb i:nth-child(3) { background: #28c840; }
+.win .tb span { margin: 0 auto; transform: translateX(-2cqw); font-weight: 600; font-size: 1cqw; color: rgba(0,0,0,.6); }
+.win.dark { background: #1e1e22; color: #f2f2f5; }
+.win.dark .tb { background: #2a2a2f; border-color: rgba(255,255,255,.06); }
+.win.dark .tb span { color: rgba(255,255,255,.7); }
+/* Window: dashboard */
+.w-dash .body { display: grid; grid-template-columns: 22% 1fr; height: calc(100% - 2.6cqw); }
+.w-dash aside { background: #fafbfc; border-right: .07cqw solid #eceef1; padding: 1.4cqw 1.1cqw; display: grid; align-content: start; gap: .9cqw; }
+.w-dash aside b { display: flex; align-items: center; gap: .6cqw; font-size: 1.1cqw; margin-bottom: .6cqw; }
+.w-dash aside b::before { content: ""; width: 1.6cqw; height: 1.6cqw; border-radius: .45cqw; background: #34b27b; }
+.w-dash aside span { height: .8cqw; border-radius: .4cqw; background: #e7e9ee; }
+.w-dash aside span:first-of-type { background: #d6f0e3; }
+.w-dash main { padding: 1.5cqw 1.6cqw; display: grid; grid-template-rows: auto auto 1fr; gap: 1.2cqw; }
+.w-dash h4 { margin: 0; font-size: 1.6cqw; letter-spacing: -.02em; }
+.w-dash .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1cqw; }
+.w-dash .kpi { border-radius: .8cqw; border: .07cqw solid #e8eaee; padding: .9cqw 1cqw; }
+.w-dash .kpi em { display: block; font-style: normal; font-size: .85cqw; color: #8a8f99; }
+.w-dash .kpi strong { display: block; font-size: 1.55cqw; letter-spacing: -.02em; }
+.w-dash .kpi small { font-size: .8cqw; color: #1f9d5a; }
+.w-dash .chart { border-radius: .8cqw; border: .07cqw solid #e8eaee; padding: .6cqw; min-height: 0; }
+.w-dash .chart svg { width: 100%; height: 100%; display: block; }
+/* Window: notes */
+.w-notes .body { display: grid; grid-template-columns: 34% 1fr; height: calc(100% - 2.6cqw); }
+.w-notes aside { background: #fbf8ec; border-right: .07cqw solid #efe9d2; padding: 1cqw; display: grid; gap: .7cqw; align-content: start; }
+.w-notes aside div { border-radius: .6cqw; padding: .6cqw .7cqw; }
+.w-notes aside div:first-child { background: #f7e7a6; }
+.w-notes aside b { display: block; font-size: .95cqw; }
+.w-notes aside span { display: block; height: .6cqw; width: 80%; border-radius: .3cqw; background: rgba(0,0,0,.09); margin-top: .4cqw; }
+.w-notes main { padding: 1.4cqw 1.6cqw; }
+.w-notes main h5 { margin: 0 0 .8cqw; font-size: 1.5cqw; letter-spacing: -.02em; }
+.w-notes main p { margin: 0 0 .7cqw; font-size: 1cqw; color: #55565c; }
+.w-notes main ul { margin: 0; padding-left: 1.4cqw; font-size: 1cqw; color: #55565c; }
+/* Window: music */
+.w-music .body { padding: 1.4cqw; display: grid; gap: 1.1cqw; }
+.w-music .art { aspect-ratio: 1; border-radius: .9cqw; background: conic-gradient(from 210deg at 40% 60%, #ff5a7a, #9775fa, #4dabf7, #38d9a9, #ffd43b, #ff9f43, #ff5a7a); box-shadow: 0 1.2cqw 2.4cqw -1cqw rgba(151,117,250,.6); }
+.w-music .meta b { display: block; font-size: 1.25cqw; }
+.w-music .meta span { font-size: .95cqw; color: #9a9aa3; }
+.w-music .bar { height: .45cqw; border-radius: .3cqw; background: rgba(255,255,255,.12); overflow: hidden; }
+.w-music .bar::before { content: ""; display: block; height: 100%; width: 38%; background: #fff; border-radius: inherit; }
+.w-music .ctrl { display: flex; justify-content: center; gap: 2cqw; align-items: center; }
+.w-music .ctrl i { display: block; width: 1.3cqw; height: 1.3cqw; border-radius: 50%; background: rgba(255,255,255,.5); }
+.w-music .ctrl i:nth-child(2) { width: 2.6cqw; height: 2.6cqw; background: #fff; }
+
+.sel { position: absolute; z-index: 20; pointer-events: none; opacity: 0; transition: opacity .18s; --ring-w: max(2px, .26cqw); --glow: max(5px, .55cqw); border-radius: 1.1cqw; }
+.sel.on { opacity: 1; }
+.sel.anim { transition: opacity .18s, left .22s cubic-bezier(.2,.8,.2,1), top .22s cubic-bezier(.2,.8,.2,1), width .22s cubic-bezier(.2,.8,.2,1), height .22s cubic-bezier(.2,.8,.2,1), border-radius .22s; }
+.sel.area { border-radius: 2px; --ring-w: max(1.6px, .19cqw); }
+.sel.area .ring-glow { opacity: 0; }
+.sel.full { border-radius: 0; }
+.sel .sel-label { font-size: max(10px, 1cqw); padding: .35em .7em; border-radius: .6em; bottom: calc(100% + .6cqw); }
+.sel.full .sel-label, .sel.flip .sel-label { bottom: auto; top: 1cqw; left: 1cqw; }
+.sel.full .sel-label { top: 4.2cqw; }
+.sel.flip .sel-label { top: calc(100% + .6cqw); }
+.sel.snap { animation: snap .38s cubic-bezier(.2,.8,.2,1); }
+@keyframes snap { 40% { transform: scale(.985); } }
+.flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 30; }
+.flash.go { animation: flash .5s ease-out; }
+@keyframes flash { 0% { opacity: 0; } 15% { opacity: .55; } 100% { opacity: 0; } }
+.cursor {
+	position: absolute; left: 0; top: 0; width: 2.1cqw; min-width: 14px; z-index: 40; pointer-events: none;
+	transform: translate(-100px, -100px); opacity: 0; transition: opacity .3s;
+	filter: drop-shadow(0 1px 2px rgba(0,0,0,.35));
+}
+.cursor.on { opacity: 1; }
+.cursor.press svg { transform: scale(.88); transform-origin: 10% 10%; }
+.toast {
+	position: absolute; right: 1.8cqw; bottom: 1.8cqw; z-index: 35;
+	display: flex; align-items: center; gap: 1cqw; padding: .8cqw 1.4cqw .8cqw .8cqw; border-radius: 1.2cqw;
+	background: rgba(28,28,32,.88); color: #fff; font-size: max(10px, 1.1cqw); line-height: 1.35;
+	-webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+	box-shadow: 0 1.6cqw 3.2cqw -1.2cqw rgba(0,0,0,.6);
+	transform: translateY(20%) scale(.96); opacity: 0; pointer-events: none;
+	transition: opacity .3s, transform .4s cubic-bezier(.2,.8,.2,1);
+}
+.toast.on { opacity: 1; transform: none; }
+.toast img { width: 7.5cqw; min-width: 46px; border-radius: .5cqw; box-shadow: 0 0 0 1px rgba(255,255,255,.12); }
+.toast b { display: block; font-weight: 650; }
+.toast span { opacity: .7; font-variant-numeric: tabular-nums; }
+.demo-hint { display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 18px; font-size: 14px; color: var(--text-3); text-align: center; }
+.demo-hint .dot { width: 8px; height: 8px; border-radius: 50%; background: conic-gradient(var(--spectrum)); flex: none; }
+
+.ways { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: clamp(40px, 6vw, 64px); }
+.way { padding: 26px 26px 24px; border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-card); }
+.way .ico { width: 44px; height: 44px; margin-bottom: 18px; }
+.way p { font-size: 15px; color: var(--text-2); line-height: 1.6; }
+@media (max-width: 820px) { .ways { grid-template-columns: 1fr; } }
+
+.split { display: grid; grid-template-columns: 1fr 1.25fr; gap: clamp(32px, 6vw, 80px); align-items: center; }
+.split.rev { grid-template-columns: 1.25fr 1fr; }
+.split.wide { grid-template-columns: .82fr 1.5fr; }
+.split.rev > :first-child { order: 2; }
+@media (max-width: 900px) { .split, .split.rev, .split.wide { grid-template-columns: 1fr; } .split.rev > :first-child { order: 0; } }
+.checks { list-style: none; padding: 0; margin: 28px 0 0; display: grid; gap: 16px; }
+.checks li { display: grid; grid-template-columns: 26px 1fr; gap: 12px; align-items: start; color: var(--text-2); font-size: 16px; }
+.checks li strong { color: var(--text); font-weight: 650; }
+.checks svg { width: 22px; height: 22px; margin-top: 2px; }
+.shot { border-radius: 14px; overflow: hidden; box-shadow: var(--shadow-shot); background: var(--surface); }
+video.demo-video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 10; background: #d9d4f2; }
+.video-tabs { display: flex; justify-content: center; margin-bottom: 14px; }
+.video-tabs .seg { display: inline-grid; min-width: min(100%, 340px); max-width: 100%; }
+.video-tabs .seg button { height: 32px; font-size: 13px; padding: 0 14px; }
+.sub-h { font-size: clamp(24px, 3vw, 34px); letter-spacing: -.02em; line-height: 1.2; margin: 0; }
+.showcase { margin: clamp(40px, 6vw, 64px) 0 clamp(48px, 7vw, 80px); }
+.key-pairs { display: flex; flex-wrap: wrap; gap: 10px 22px; margin-top: 24px; font-size: 14px; }
+.key-pairs > span { display: inline-flex; align-items: center; gap: 4px; }
+.key-pairs em { font-style: normal; color: var(--text-2); margin-left: 6px; }
+.shot img { width: 100%; }
+figure { margin: 0; }
+figcaption { margin-top: 14px; font-size: 13px; color: var(--text-3); text-align: center; }
+.detail-row { margin-top: clamp(64px, 9vw, 112px); }
+
+/* Annotate */
+.annot { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; margin-top: clamp(40px, 6vw, 64px); }
+.tools { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 960px) { .tools { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tools li {
+	display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px;
+	background: var(--surface); box-shadow: var(--shadow-card); font-size: 15px; font-weight: 550;
+	transition: transform .25s;
+}
+.tools li:hover { transform: translateY(-2px); }
+.tools li svg { width: 20px; height: 20px; flex: none; color: var(--text-2); }
+.tools li kbd { margin-left: auto; font-size: 12px; }
+.annot-notes { margin-top: 22px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 20px; font-size: 14px; color: var(--text-2); }
+@media (max-width: 960px) { .annot-notes { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .annot-notes { grid-template-columns: 1fr; } }
+.annot-notes div { display: flex; gap: 10px; align-items: baseline; }
+.annot-notes div::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: conic-gradient(var(--spectrum)); flex: none; transform: translateY(-2px); }
+@media (max-width: 380px) { .tools { grid-template-columns: 1fr; } }
+
+/* Beautify studio */
+.studio {
+	display: grid; grid-template-columns: minmax(0, 1fr) 300px; margin-top: clamp(40px, 6vw, 64px);
+	border-radius: var(--radius-lg); overflow: hidden; background: var(--surface); box-shadow: var(--shadow-shot);
+}
+@media (max-width: 920px) { .studio { grid-template-columns: minmax(0, 1fr); } }
+.stage {
+	display: grid; place-items: center; min-width: 0; padding: clamp(16px, 3vw, 40px); min-height: 320px;
+	background:
+		linear-gradient(45deg, var(--chip) 25%, transparent 25%, transparent 75%, var(--chip) 75%) 0 0 / 18px 18px,
+		linear-gradient(45deg, var(--chip) 25%, transparent 25%, transparent 75%, var(--chip) 75%) 9px 9px / 18px 18px,
+		var(--surface-2);
+}
+.canvas { position: relative; overflow: hidden; display: grid; place-items: center; transition: background .35s; width: 100%; }
+.canvas .blur-bg { position: absolute; inset: -10%; background: url(assets/raw.webp) center / cover; filter: blur(32px) saturate(1.5); opacity: 0; transition: opacity .35s; }
+.canvas.bg-blur .blur-bg { opacity: 1; }
+.canvas .frame {
+	position: relative; overflow: hidden; background: #fff;
+	transition: border-radius .2s, box-shadow .2s, padding .2s, background .2s;
+}
+.canvas .frame img { width: 100%; display: block; }
+.canvas .tb { display: none; height: 0; align-items: center; gap: 7px; padding: 0 12px; }
+.canvas .tb i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; display: block; }
+.canvas .tb i:nth-child(2) { background: #febc2e; } .canvas .tb i:nth-child(3) { background: #28c840; }
+.canvas.f-light .tb, .canvas.f-dark .tb { display: flex; height: var(--tb); }
+.canvas.f-light .frame { background: #f4f4f6; box-shadow: var(--shadow), 0 0 0 1px rgba(0,0,0,.08); }
+.canvas.f-dark .frame { background: #232327; box-shadow: var(--shadow), 0 0 0 1px rgba(0,0,0,.4); }
+.canvas.f-dark .frame img { border-radius: 0 0 4px 4px; }
+.canvas.f-glass .frame { padding: var(--glass); background: rgba(255,255,255,.28); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); box-shadow: var(--shadow), inset 0 0 0 1px rgba(255,255,255,.5); }
+.canvas.f-glass .frame img { border-radius: var(--inner-radius); }
+.canvas .frame { box-shadow: var(--shadow); }
+.canvas .sig {
+	position: absolute; right: 3.2%; bottom: 2.2%; font-family: "Snell Roundhand", "Apple Chancery", "Segoe Script", "Brush Script MT", cursive;
+	font-size: var(--sig-size, 18px); font-style: italic; color: var(--sig, rgba(0,0,0,.45)); transition: opacity .25s; white-space: nowrap;
+}
+.canvas.no-sig .sig { opacity: 0; }
+.studio.plain .canvas { background: transparent !important; }
+.studio.plain .canvas .blur-bg, .studio.plain .canvas .sig { opacity: 0; }
+.studio.plain .canvas .frame { box-shadow: none !important; border-radius: 0 !important; padding: 0 !important; background: transparent !important; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.studio.plain .canvas .tb { display: none !important; }
+.studio.plain .canvas .frame img { border-radius: 0 !important; }
+.studio.plain .controls .group:not(.keep) { opacity: .4; pointer-events: none; }
+
+.controls { padding: 22px 20px; border-left: 1px solid var(--line); display: grid; gap: 20px; align-content: start; font-size: 13px; }
+@media (max-width: 920px) { .controls { border-left: 0; border-top: 1px solid var(--line); grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .controls { grid-template-columns: 1fr; } }
+.controls .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.controls .label { font-size: 12px; font-weight: 600; color: var(--text-3); margin-bottom: 8px; display: flex; justify-content: space-between; }
+.controls .label output { font-variant-numeric: tabular-nums; font-weight: 500; }
+.controls .title { font-size: 15px; font-weight: 650; }
+.switch { position: relative; width: 40px; height: 24px; border-radius: 999px; background: var(--line-strong); border: 0; cursor: pointer; transition: background .2s; flex: none; padding: 0; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .22s cubic-bezier(.2,.8,.2,1); }
+.switch[aria-checked="true"] { background: #2f88ff; }
+.switch[aria-checked="true"]::after { transform: translateX(16px); }
+.swatches { display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px; }
+.swatch { aspect-ratio: 1; border-radius: 9px; border: 0; cursor: pointer; padding: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); transition: transform .15s; }
+.swatch:hover { transform: scale(1.06); }
+.swatch[aria-checked="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px #2f88ff; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 3px; border-radius: 10px; background: var(--chip); gap: 2px; }
+.seg button { border: 0; background: transparent; height: 28px; border-radius: 7px; font-size: 12px; font-weight: 550; color: var(--text-2); cursor: pointer; white-space: nowrap; padding: 0 4px; }
+.seg button[aria-checked="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; cursor: pointer; margin: 0; }
+input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 4px; background: linear-gradient(to right, var(--text) var(--p, 50%), var(--line-strong) var(--p, 50%)); }
+input[type="range"]::-moz-range-track { height: 4px; border-radius: 4px; background: var(--line-strong); }
+input[type="range"]::-moz-range-progress { height: 4px; border-radius: 4px; background: var(--text); }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -7px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 .5px rgba(0,0,0,.2), 0 2px 6px rgba(0,0,0,.25); }
+input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 .5px rgba(0,0,0,.2), 0 2px 6px rgba(0,0,0,.25); }
+
+/* Stitch */
+.layouts { display: flex; gap: 10px; margin-top: 28px; flex-wrap: wrap; }
+.layout { display: flex; align-items: center; gap: 10px; padding: 10px 14px 10px 10px; border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-card); font-size: 14px; font-weight: 550; }
+.layout .mini { width: 38px; height: 38px; border-radius: 9px; background: var(--chip); display: grid; gap: 3px; padding: 6px; }
+.layout .mini i { border-radius: 2.5px; background: linear-gradient(135deg, #ff9f43, #ff5a7a); display: block; }
+.layout .mini i:nth-child(2) { background: linear-gradient(135deg, #4dabf7, #9775fa); }
+.layout .mini i:nth-child(3) { background: linear-gradient(135deg, #38d9a9, #4dabf7); }
+.layout .mini i:nth-child(4) { background: linear-gradient(135deg, #ffd43b, #ff9f43); }
+.mini.v { grid-template-rows: repeat(3, 1fr); }
+.mini.h { grid-template-columns: repeat(3, 1fr); }
+.mini.g { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+/* Features */
+.features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: clamp(40px, 6vw, 64px); }
+@media (max-width: 960px) { .features { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) { .features { grid-template-columns: 1fr; } }
+.feature { padding: 26px; border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-card); }
+.feature .ico {
+	width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; margin-bottom: 18px;
+	background: color-mix(in srgb, var(--tint) 14%, transparent); color: var(--tint);
+}
+.feature .ico svg { width: 22px; height: 22px; }
+.feature p { font-size: 15px; color: var(--text-2); }
+.feature .keys { margin-top: 14px; display: flex; gap: 5px; font-size: 13px; }
+
+/* Privacy */
+.privacy { background: #050507; color: #f5f5f7; overflow: hidden; }
+.privacy .lead { color: #a9a9b0; }
+.privacy .orb { position: absolute; width: 760px; height: 760px; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 50%; opacity: .22; filter: blur(90px); background: conic-gradient(from 90deg, var(--spectrum)); pointer-events: none; }
+.privacy .wrap { position: relative; }
+.pgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 56px; }
+@media (max-width: 900px) { .pgrid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 480px) { .pgrid { grid-template-columns: 1fr; } }
+.pcard { padding: 24px; border-radius: var(--radius); background: rgba(255,255,255,.05); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); text-align: left; }
+.pcard svg { width: 26px; height: 26px; margin-bottom: 14px; }
+.pcard p { color: #a9a9b0; font-size: 14px; }
+.privacy .fine { margin-top: 36px; font-size: 13px; color: #85858c; }
+
+/* Shortcuts */
+.os-toggle { display: inline-grid; grid-auto-flow: column; padding: 3px; border-radius: 999px; background: var(--chip); margin-top: 8px; }
+.os-toggle button { border: 0; background: transparent; padding: 6px 16px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--text-2); cursor: pointer; }
+html[data-os="mac"] .os-toggle [data-os-btn="mac"], html[data-os="win"] .os-toggle [data-os-btn="win"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.keys-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 44px; align-items: start; }
+@media (max-width: 960px) { .keys-grid { grid-template-columns: 1fr; } }
+.kcard { border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-card); padding: 8px 22px 14px; }
+.kcard h3 { font-size: 13px; font-weight: 650; color: var(--text-3); padding: 14px 0 6px; margin: 0; letter-spacing: .02em; }
+.krow { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 15px; }
+.kcard h3 + .krow { border-top: 0; }
+.krow .k { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; font-size: 13px; flex: none; max-width: 60%; }
+.krow .k span { color: var(--text-3); font-size: 12px; align-self: center; }
+
+/* Download */
+.dl {
+	position: relative; text-align: center; padding: clamp(48px, 7vw, 80px) clamp(20px, 5vw, 64px);
+	border-radius: 28px; background: var(--surface); box-shadow: var(--shadow-shot); overflow: hidden;
+}
+.dl::before { content: ""; position: absolute; inset: auto -20% -60% -20%; height: 120%; background: radial-gradient(50% 50% at 50% 50%, rgba(151,117,250,.16), transparent 70%); pointer-events: none; }
+.dl .app-icon { width: 104px; height: 104px; margin: 0 auto 26px; border-radius: 24px; box-shadow: 0 24px 50px -18px rgba(20, 20, 60, .55); }
+.dl h2 { margin-top: 0; }
+.dl-buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 34px; position: relative; }
+.dl-buttons .btn { height: 56px; padding: 0 26px; }
+.dl-buttons .btn small { display: block; font-size: 11px; font-weight: 500; opacity: .65; line-height: 1.2; }
+.dl-buttons .btn .txt { text-align: left; line-height: 1.25; }
+.dl-meta { margin-top: 18px; font-size: 13px; color: var(--text-3); position: relative; }
+.dl-meta a { text-decoration: underline; text-underline-offset: 2px; }
+
+.steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 40px; }
+@media (max-width: 960px) { .steps { grid-template-columns: minmax(0, 1fr); } }
+.step { min-width: 0; border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-card); padding: 24px; display: flex; flex-direction: column; }
+.step .n { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; font-weight: 700; margin-bottom: 16px; color: #fff; background: linear-gradient(135deg, #ff5a7a, #9775fa); }
+.step:nth-child(2) .n { background: linear-gradient(135deg, #ff9f43, #ff5a7a); }
+.step:nth-child(3) .n { background: linear-gradient(135deg, #38d9a9, #4dabf7); }
+.step p { font-size: 15px; color: var(--text-2); }
+.step .pic { margin-top: auto; padding-top: 18px; }
+.step .pic img { border-radius: 10px; box-shadow: 0 0 0 1px var(--line), 0 12px 28px -16px rgba(0,0,0,.35); }
+.code {
+	display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 6px 6px 6px 12px; border-radius: 10px;
+	background: #111114; color: #e8e8ee; font-family: var(--mono); font-size: 12px; line-height: 1.5;
+	box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+}
+.code code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+.code code::-webkit-scrollbar { display: none; }
+.code button { flex: none; border: 0; border-radius: 7px; background: rgba(255,255,255,.1); color: #fff; font-size: 12px; font-weight: 600; padding: 6px 10px; cursor: pointer; font-family: var(--font); }
+.code button:hover { background: rgba(255,255,255,.18); }
+.win-note { margin-top: 18px; font-size: 14px; color: var(--text-3); text-align: center; }
+
+/* FAQ */
+.faq { margin-top: 40px; border-top: 1px solid var(--line); }
+.faq details { border-bottom: 1px solid var(--line); }
+.faq summary {
+	list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+	padding: 22px 2px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em;
+}
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after {
+	content: ""; width: 12px; height: 12px; flex: none; border-right: 2px solid var(--text-3); border-bottom: 2px solid var(--text-3);
+	transform: translateY(-3px) rotate(45deg); transition: transform .25s;
+}
+.faq details[open] summary::after { transform: translateY(2px) rotate(-135deg); }
+.faq .a { padding: 0 2px 24px; color: var(--text-2); font-size: 16px; max-width: 46em; }
+.faq .a code { font-family: var(--mono); font-size: 13px; padding: 2px 6px; border-radius: 6px; background: var(--chip); }
+
+/* Footer */
+footer { padding: 56px 0 calc(48px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); font-size: 14px; color: var(--text-3); }
+.foot { display: flex; flex-wrap: wrap; gap: 24px; justify-content: space-between; align-items: flex-start; }
+.foot .brand { color: var(--text); }
+.foot p { margin-top: 10px; max-width: 30em; }
+.foot-links { display: flex; flex-wrap: wrap; gap: 22px; }
+.foot-links a:hover { color: var(--text); }
+.copyright { margin-top: 32px; font-size: 12px; }
+
+@media (max-width: 600px) {
+	body { font-size: 16px; }
+	.hero-keys { font-size: 19px; }
+	.hero-keys .hint { flex-basis: 100%; margin: 6px 0 0; }
+	.hero-keys { flex-wrap: wrap; }
+	.btn { height: 46px; padding: 0 20px; font-size: 15px; }
+	.nav-actions .btn-sm { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+	html { scroll-behavior: auto; }
+	.spin { animation: none; }
+	.reveal, html.js .reveal:not(.in) { transition: none; opacity: 1; transform: none; }
+	.sel.anim, .toast, .canvas, .canvas .frame { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="nav" id="nav">
+	<div class="wrap nav-in">
+		<a class="brand" href="#top" aria-label="QuickShot">
+			<img src="assets/icon.svg" alt="" width="28" height="28">
+			<span>QuickShot</span>
+		</a>
+		<nav class="nav-links" aria-label="Sections">
+			<a href="#capture"><span class="zh">截图</span><span class="en">Capture</span></a>
+			<a href="#annotate"><span class="zh">标注</span><span class="en">Annotate</span></a>
+			<a href="#beautify"><span class="zh">美化</span><span class="en">Beautify</span></a>
+			<a href="#stitch"><span class="zh">拼接</span><span class="en">Stitch</span></a>
+			<a href="#shortcuts"><span class="zh">快捷键</span><span class="en">Shortcuts</span></a>
+			<a href="#faq"><span class="zh">常见问题</span><span class="en">FAQ</span></a>
+		</nav>
+		<div class="nav-actions">
+			<a class="nav-author" href="https://github.com/cclank" title="作者 岚叔">
+				<span class="avatar" aria-hidden="true">岚</span>
+				<span class="label"><span class="zh">作者</span><span class="en">by</span></span>
+				<b>岚叔</b>
+			</a>
+			<button class="icon-btn" type="button" id="lang-toggle">
+				<span class="zh" aria-label="Switch to English">EN</span><span class="en" aria-label="切换到中文">中文</span>
+			</button>
+			<a class="icon-btn" href="https://github.com/cclank/quickshot" aria-label="GitHub">
+				<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+			</a>
+			<a class="btn btn-sm" href="#download"><span class="zh">下载</span><span class="en">Download</span></a>
+		</div>
+	</div>
+</header>
+
+<main>
+<!-- Hero -->
+<section class="hero" id="top">
+	<div class="hero-bg" aria-hidden="true"></div>
+	<div class="wrap">
+		<a class="pill reveal" href="#download">
+			<span class="tag"><span class="zh">免费</span><span class="en">Free</span></span>
+			<span class="zh">macOS 与 Windows · 完全本地运行<span class="pill-extra"> · 源代码公开</span></span><span class="en">macOS &amp; Windows · Runs offline<span class="pill-extra"> · Source on GitHub</span></span>
+		</a>
+		<h1 class="reveal d1">
+			<span class="zh"><span class="phrase">截图，</span><span class="phrase">本该<span class="grad">如此优雅</span>。</span></span>
+			<span class="en">Screenshots, <span class="grad">beautifully simple.</span></span>
+		</h1>
+		<p class="lead reveal d2">
+			<span class="zh">悬停就能识别窗口，单击即截下。标注、美化、拼接，几秒钟得到一张可以直接分享的成品图，全程只在你的电脑上完成。</span>
+			<span class="en">Hover to find a window, click to capture it. Annotate, beautify and stitch, and in seconds you have an image that is ready to share. Everything happens on your own computer.</span>
+		</p>
+		<div class="hero-keys reveal d2" aria-label="Shortcut">
+			<kbd class="mod"></kbd><kbd class="shift"></kbd><kbd>X</kbd>
+			<span class="hint"><span class="zh">在任何地方按下，即刻开始</span><span class="en">Press it anywhere to start</span></span>
+		</div>
+		<div class="cta reveal d3">
+			<a class="btn dl-mac" href="#download">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg>
+				<span class="zh">下载 macOS 版</span><span class="en">Download for macOS</span>
+			</a>
+			<a class="btn dl-win" href="#download">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></svg>
+				<span class="zh">下载 Windows 版</span><span class="en">Download for Windows</span>
+			</a>
+		</div>
+		<p class="cta-source reveal d3"><a href="https://github.com/cclank/quickshot"><span class="zh">在 GitHub 查看源码 →</span><span class="en">View source on GitHub →</span></a></p>
+		<p class="cta-note reveal d3"><span class="zh">macOS 12 及以上（Apple 芯片与 Intel）· Windows 10 / 11</span><span class="en">macOS 12 or later (Apple silicon &amp; Intel) · Windows 10 / 11</span></p>
+
+		<div class="hero-shot reveal d3">
+			<div class="hero-glow" aria-hidden="true"></div>
+			<div class="shot-wrap">
+			<div class="frame">
+				<video class="demo-video" data-video="overview" muted loop playsinline controls preload="auto" width="1920" height="1200"
+					poster="assets/video/overview-zh.webp" src="assets/video/overview-zh.mp4"
+					aria-label="录屏演示：按下快捷键，悬停识别窗口，单击截下，在编辑器里标注、换背景并复制"
+					data-label-en="Screen recording: press the shortcut, hover to find a window, click to capture, then annotate, change the background and copy"></video>
+			</div>
+			<div class="hero-ring" aria-hidden="true">
+				<div class="ring-glow"><div class="ring spin"></div></div>
+				<div class="ring spin"></div>
+				<span class="sel-label">QuickShot <small>2880 × 1800</small></span>
+			</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<!-- Capture -->
+<section class="section" id="capture">
+	<div class="wrap">
+		<div class="sec-head center reveal">
+			<span class="eyebrow"><span class="zh">截图</span><span class="en">Capture</span></span>
+			<h2><span class="zh">悬停识别窗口，<br>单击即截。</span><span class="en">Hover a window.<br>Click. Done.</span></h2>
+			<p class="lead"><span class="zh">屏幕保持原样，不变暗也不变色。QuickShot 只为鼠标下的窗口描出一圈彩虹轮廓，松手就进入编辑器。</span><span class="en">Your screen stays exactly as it is, with no dimming and no tint. QuickShot simply rings the window under your pointer in a spectrum outline, and lets go straight into the editor.</span></p>
+		</div>
+
+		<div class="demo-wrap reveal">
+			<div class="desk" id="desk" role="img" aria-label="Interactive demo: hover a window to highlight it, click to capture it, drag to capture an area, click the desktop to capture the full screen">
+				<div class="menubar" aria-hidden="true">
+					<b>QuickShot</b><span class="zh">文件</span><span class="en">File</span><span class="zh">编辑</span><span class="en">Edit</span><span class="zh">窗口</span><span class="en">Window</span>
+					<div class="right"><img class="qs-icon" src="assets/icon.svg" alt=""><i class="glyph"></i><span>9:41</span></div>
+				</div>
+
+				<div class="win w-dash" data-name="Northwind" style="--x:4.5%;--y:11%;--w:54%;--h:62%;z-index:2">
+					<div class="tb"><i></i><i></i><i></i><span>Northwind</span></div>
+					<div class="body">
+						<aside><b>Northwind</b><span></span><span></span><span></span><span></span></aside>
+						<main>
+							<h4><span class="zh">季度概览</span><span class="en">Quarterly overview</span></h4>
+							<div class="kpis">
+								<div class="kpi"><em><span class="zh">总收入</span><span class="en">Revenue</span></em><strong>¥1.28M</strong><small>▲ 12.4%</small></div>
+								<div class="kpi"><em><span class="zh">订单</span><span class="en">Orders</span></em><strong>8,419</strong><small style="color:#d64545">▼ 3.1%</small></div>
+								<div class="kpi"><em><span class="zh">转化率</span><span class="en">Conversion</span></em><strong>4.82%</strong><small>▲ 0.6</small></div>
+							</div>
+							<div class="chart">
+								<svg viewBox="0 0 300 100" preserveAspectRatio="none" aria-hidden="true">
+									<defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#34b27b" stop-opacity=".28"/><stop offset="1" stop-color="#34b27b" stop-opacity="0"/></linearGradient></defs>
+									<path d="M0 82 C30 70 50 68 70 58 S110 30 130 34 S160 48 180 38 S220 18 245 22 S280 30 300 6 L300 100 L0 100 Z" fill="url(#area)"/>
+									<path d="M0 82 C30 70 50 68 70 58 S110 30 130 34 S160 48 180 38 S220 18 245 22 S280 30 300 6" fill="none" stroke="#34b27b" stroke-width="2.2" vector-effect="non-scaling-stroke"/>
+								</svg>
+							</div>
+						</main>
+					</div>
+				</div>
+
+				<div class="win w-notes" data-name="Draft" style="--x:47%;--y:45%;--w:41%;--h:42%;z-index:3">
+					<div class="tb"><i></i><i></i><i></i><span>Draft</span></div>
+					<div class="body">
+						<aside>
+							<div><b><span class="zh">发布清单</span><span class="en">Launch list</span></b><span></span></div>
+							<div><b><span class="zh">会议纪要</span><span class="en">Meeting notes</span></b><span></span></div>
+							<div><b><span class="zh">灵感</span><span class="en">Ideas</span></b><span></span></div>
+						</aside>
+						<main>
+							<h5><span class="zh">发布清单</span><span class="en">Launch list</span></h5>
+							<p><span class="zh">周五之前完成以下几项：</span><span class="en">Before Friday:</span></p>
+							<ul>
+								<li><span class="zh">截取新版仪表盘</span><span class="en">Capture the new dashboard</span></li>
+								<li><span class="zh">标出转化率的变化</span><span class="en">Call out the conversion jump</span></li>
+								<li><span class="zh">给客户名称打码</span><span class="en">Blur customer names</span></li>
+								<li><span class="zh">拼成一张发给团队</span><span class="en">Stitch and send to the team</span></li>
+							</ul>
+						</main>
+					</div>
+				</div>
+
+				<div class="win w-music dark" data-name="Playlist" style="--x:65%;--y:9%;--w:21%;--h:49%;z-index:1">
+					<div class="tb"><i></i><i></i><i></i><span></span></div>
+					<div class="body">
+						<div class="art"></div>
+						<div class="meta"><b>Spectrum</b><span>Prism Drive</span></div>
+						<div class="bar"></div>
+						<div class="ctrl"><i></i><i></i><i></i></div>
+					</div>
+				</div>
+
+				<div class="dock" aria-hidden="true">
+					<i style="background:linear-gradient(135deg,#5ac8fa,#007aff)"></i>
+					<i style="background:linear-gradient(135deg,#ffd60a,#ff9f0a)"></i>
+					<i style="background:linear-gradient(135deg,#34b27b,#0ea5e9)"></i>
+					<i style="background:#1a1a2e url(assets/icon.svg) center/100% no-repeat"></i>
+					<i style="background:linear-gradient(135deg,#ff6b8a,#9775fa)"></i>
+				</div>
+
+				<div class="sel" id="sel" aria-hidden="true">
+					<div class="ring-glow"><div class="ring spin"></div></div>
+					<div class="ring spin"></div>
+					<span class="sel-label" id="sel-label"></span>
+				</div>
+				<svg class="cursor" id="cursor" viewBox="0 0 20 24" aria-hidden="true"><path d="M2 1.5v18.2l4.6-4.3 3 6.9 3.1-1.3-3-6.8h6.4z" fill="#111" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+				<div class="flash" id="flash"></div>
+				<div class="toast" id="toast" aria-live="polite">
+					<img src="assets/editor-light.webp" alt="" width="120" height="75" loading="lazy">
+					<div><b><span class="zh">已截取，正在打开编辑器</span><span class="en">Captured, opening the editor</span></b><span id="toast-size"></span></div>
+				</div>
+			</div>
+			<p class="demo-hint"><span class="dot"></span><span class="zh">试试看：在上面移动鼠标，单击窗口、拖动框选，或点一下桌面。</span><span class="en">Try it: move your pointer over the desktop above, click a window, drag an area, or click the wallpaper.</span></p>
+		</div>
+
+		<div class="ways">
+			<article class="way reveal">
+				<svg class="ico" viewBox="0 0 44 44" aria-hidden="true"><defs><linearGradient id="sp1" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#ff5a7a"/><stop offset=".35" stop-color="#ffd43b"/><stop offset=".65" stop-color="#38d9a9"/><stop offset="1" stop-color="#9775fa"/></linearGradient></defs><rect x="3" y="7" width="38" height="30" rx="7" fill="none" stroke="url(#sp1)" stroke-width="3"/><rect x="8" y="12" width="28" height="20" rx="3" fill="currentColor" opacity=".1"/><circle cx="12" cy="16" r="1.6" fill="#ff5f57"/><circle cx="17" cy="16" r="1.6" fill="#febc2e"/><circle cx="22" cy="16" r="1.6" fill="#28c840"/></svg>
+				<h3><span class="zh">单击，截取窗口</span><span class="en">Click to capture a window</span></h3>
+				<p><span class="zh">悬停时窗口亮起彩虹轮廓，单击就截下它。macOS 上单独截取窗口本身，叠在上面的窗口不会混进来，圆角外保持透明。</span><span class="en">The window under your pointer lights up; click and it is yours. On macOS the window is captured on its own, so overlapping windows stay out and the rounded corners stay transparent.</span></p>
+			</article>
+			<article class="way reveal d1">
+				<svg class="ico" viewBox="0 0 44 44" aria-hidden="true"><rect x="6" y="9" width="30" height="22" rx="1.5" fill="currentColor" opacity=".08"/><rect x="6" y="9" width="30" height="22" rx="1.5" fill="none" stroke="url(#sp1)" stroke-width="2.4"/><path d="M33 28l7 7m-7-7v6m0-6h6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity=".7"/></svg>
+				<h3><span class="zh">拖动，框选区域</span><span class="en">Drag to capture an area</span></h3>
+				<p><span class="zh">按住拖出任意大小，旁边实时显示像素尺寸。松开鼠标，编辑器已经在等你。</span><span class="en">Drag out any rectangle with its pixel size shown live. Release, and the editor is already waiting.</span></p>
+			</article>
+			<article class="way reveal d2">
+				<svg class="ico" viewBox="0 0 44 44" aria-hidden="true"><rect x="3" y="6" width="38" height="26" rx="3" fill="none" stroke="url(#sp1)" stroke-width="2.6"/><path d="M15 38h14M22 32v6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" opacity=".6"/><rect x="8" y="11" width="13" height="9" rx="1.5" fill="currentColor" opacity=".12"/><rect x="24" y="15" width="12" height="12" rx="1.5" fill="currentColor" opacity=".12"/></svg>
+				<h3><span class="zh">点桌面，截取全屏</span><span class="en">Click the desktop for full screen</span></h3>
+				<p><span class="zh">在没有窗口的地方单击，整个屏幕就是你的画布。右键或按 Esc 随时取消。</span><span class="en">Click anywhere without a window and the whole screen is captured. Right-click or press Esc to cancel at any time.</span></p>
+			</article>
+		</div>
+
+		<div class="split detail-row">
+			<div class="reveal">
+				<h3 class="sub-h"><span class="zh">截图的时候，<br>屏幕依旧安静。</span><span class="en">While you capture,<br>the screen stays calm.</span></h3>
+				<ul class="checks">
+					<li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#38d9a9" opacity=".18"/><path d="m7.5 12.5 3 3 6-6.5" fill="none" stroke="#1fbf8f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong><span class="zh">画面不变</span><span class="en">Nothing shifts</span></strong><br><span class="zh">没有灰色遮罩，没有颜色变化，没有放大镜挡视线。</span><span class="en">No grey veil, no colour shift, no magnifier in the way.</span></span></li>
+					<li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#4dabf7" opacity=".18"/><path d="m7.5 12.5 3 3 6-6.5" fill="none" stroke="#3b9ef0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong><span class="zh">名称与尺寸一目了然</span><span class="en">Name and size at a glance</span></strong><br><span class="zh">轮廓上方标出应用名和截图的像素尺寸。</span><span class="en">A small label shows the app and the exact pixel size.</span></span></li>
+					<li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#9775fa" opacity=".18"/><path d="m7.5 12.5 3 3 6-6.5" fill="none" stroke="#8b6cf6" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong><span class="zh">即按即开</span><span class="en">Instant editor</span></strong><br><span class="zh">编辑窗口在后台预热，截完立刻打开。</span><span class="en">The editor is warmed up in the background and opens the moment you let go.</span></span></li>
+					<li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#ff9f43" opacity=".2"/><path d="m7.5 12.5 3 3 6-6.5" fill="none" stroke="#f08a24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong><span class="zh">也能用系统选区</span><span class="en">System selection, if you prefer</span></strong><br><span class="zh">macOS 上可在菜单栏切换为原生十字准星，按空格截单个窗口。</span><span class="en">On macOS you can switch to the native crosshair from the menu bar and press Space for a single window.</span></span></li>
+				</ul>
+			</div>
+			<figure class="reveal d1">
+				<div class="video-tabs"><div class="seg" role="radiogroup" aria-label="Recording">
+					<button type="button" role="radio" aria-checked="true" data-tab-video="capture-window"><span class="zh">单击截取窗口</span><span class="en">Click a window</span></button>
+					<button type="button" role="radio" aria-checked="false" data-tab-video="capture-area"><span class="zh">拖动框选区域</span><span class="en">Drag an area</span></button>
+				</div></div>
+				<div class="shot"><video class="demo-video" data-video="capture-window" muted loop playsinline controls preload="none" width="1920" height="1200"
+					poster="assets/video/capture-window-zh.webp" src="assets/video/capture-window-zh.mp4"
+					aria-label="录屏演示：悬停时窗口亮起彩虹轮廓，单击截取窗口或拖动框选区域，随后编辑器打开" data-label-en="Screen recording: windows light up as the pointer hovers; click one or drag an area, and the editor opens"></video></div>
+				<figcaption><span class="zh">QuickShot 界面录屏：屏幕原样保留，只多了一圈轮廓。</span><span class="en">Recorded in QuickShot: the screen stays untouched apart from the outline.</span></figcaption>
+			</figure>
+		</div>
+	</div>
+</section>
+
+<!-- Annotate -->
+<section class="section alt" id="annotate">
+	<div class="wrap">
+		<div class="sec-head reveal">
+			<span class="eyebrow"><span class="zh">标注</span><span class="en">Annotate</span></span>
+			<h2><span class="zh">十种工具，<br>一个按键一种。</span><span class="en">Ten tools.<br>One key each.</span></h2>
+			<p class="lead"><span class="zh">箭头、方框、序号、文字、荧光笔、打码……每个标注都能再次选中、移动、改色，撤销与重做不限次数。</span><span class="en">Arrows, boxes, numbered steps, text, highlighter, blur. Every mark stays editable: select it again to move, resize or recolour it, with unlimited undo.</span></p>
+		</div>
+		<div class="annot">
+			<figure class="reveal">
+				<div class="shot"><video class="demo-video" data-video="annotate" muted loop playsinline controls preload="none" width="1920" height="1200"
+					poster="assets/video/annotate-zh.webp" src="assets/video/annotate-zh.mp4"
+					aria-label="录屏演示：用快捷键依次画方框、箭头、文字、序号、荧光笔和打码" data-label-en="Screen recording: a box, an arrow, text, numbered steps, a highlight and blur, each picked with its key"></video></div>
+			</figure>
+			<div class="reveal d1">
+				<ul class="tools">
+					<li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3l14 8-6 1.6L10 19z"/></svg><span class="zh">选择</span><span class="en">Select</span><kbd>V</kbd></li>
+					<li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/></svg><span class="zh">矩形</span><span class="en">Rectangle</span><kbd>R</kbd></li>
+					<li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><ellipse cx="12" cy="12" rx="8.5" ry="7"/></svg><span class="zh">椭圆</span><span class="en">Ellipse</span><kbd>O</kbd></li>
+					<li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19 19 5M10 5h9v9"/></svg><span class="zh">箭头</span><span class="en">Arrow</span><kbd>A</kbd></li>
+					<li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 19 19 5"/></svg><span class="zh">直线</span><span class="en">Line</span><kbd>L</kbd></li>
+					<li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/></svg><span class="zh">画笔</span><span class="en">Pen</span><kbd>P</kbd></li>
+					<li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-5 5v3h6l2-2M14 4l6 6-7 7-6-6z"/></svg><span class="zh">荧光笔</span><span class="en">Highlighter</span><kbd>H</kbd></li>
+					<li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg><span class="zh">文字</span><span class="en">Text</span><kbd>T</kbd></li>
+					<li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M10.5 9.5 12.5 8v8"/></svg><span class="zh">序号</span><span class="en">Step</span><kbd>N</kbd></li>
+					<li><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="5" height="5" rx="1" opacity=".9"/><rect x="9.5" y="4" width="5" height="5" rx="1" opacity=".35"/><rect x="15" y="4" width="5" height="5" rx="1" opacity=".7"/><rect x="4" y="9.5" width="5" height="5" rx="1" opacity=".4"/><rect x="9.5" y="9.5" width="5" height="5" rx="1" opacity=".8"/><rect x="15" y="9.5" width="5" height="5" rx="1" opacity=".3"/><rect x="4" y="15" width="5" height="5" rx="1" opacity=".7"/><rect x="9.5" y="15" width="5" height="5" rx="1" opacity=".3"/><rect x="15" y="15" width="5" height="5" rx="1" opacity=".9"/></svg><span class="zh">打码</span><span class="en">Blur</span><kbd>M</kbd></li>
+				</ul>
+				<div class="annot-notes">
+					<div><span class="zh">按住 Shift 画正方形、正圆和 45° 线</span><span class="en">Hold Shift for squares, circles and 45° lines</span></div>
+					<div><span class="zh">文字支持底色与描边，兼容中文输入法</span><span class="en">Text with a fill or outline, IME friendly</span></div>
+					<div><span class="zh">打码可选像素化或模糊</span><span class="en">Pixelate or blur anything sensitive</span></div>
+					<div><span class="zh">按像素密度换算，Retina 屏与普通屏一致</span><span class="en">Scaled to pixel density, so Retina and standard screens match</span></div>
+				</div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<!-- Beautify -->
+<section class="section" id="beautify">
+	<div class="wrap">
+		<div class="sec-head center reveal">
+			<span class="eyebrow"><span class="zh">美化</span><span class="en">Beautify</span></span>
+			<h2><span class="zh">一键变成<br>可以发布的成品图。</span><span class="en">From capture<br>to cover image.</span></h2>
+			<p class="lead"><span class="zh">渐变、纯色或截图自身的模糊背景，窗口样式、圆角与多层柔和阴影，再署上你的名字。调好后点“设为默认”，下次截图自动沿用。</span><span class="en">Gradients, solid colours or a blur of the shot itself, window frames, rounded corners, layered soft shadows and your signature. Set it as the default and every next capture starts looking like this.</span></p>
+		</div>
+
+		<div class="studio reveal" id="studio">
+			<div class="stage">
+				<div class="canvas f-dark" id="canvas">
+					<div class="blur-bg"></div>
+					<div class="frame" id="frame">
+						<div class="tb"><i></i><i></i><i></i></div>
+						<img src="assets/raw.webp" width="1800" height="1125" loading="lazy" id="raw"
+							alt="一张原始截图：Northwind 销售仪表盘" data-alt-en="A raw screenshot of the Northwind sales dashboard">
+					</div>
+					<span class="sig">QuickShot</span>
+				</div>
+			</div>
+			<div class="controls" id="controls">
+				<div class="group keep row">
+					<span class="title"><span class="zh">美化</span><span class="en">Beautify</span></span>
+					<button class="switch" type="button" role="switch" aria-checked="true" id="beautify-toggle" aria-label="Beautify"></button>
+				</div>
+				<div class="group">
+					<div class="label"><span class="zh">背景</span><span class="en">Background</span></div>
+					<div class="swatches" role="radiogroup" aria-label="Background" id="swatches"></div>
+				</div>
+				<div class="group">
+					<div class="label"><span class="zh">窗口</span><span class="en">Frame</span></div>
+					<div class="seg" role="radiogroup" id="frames">
+						<button type="button" role="radio" data-frame="none"><span class="zh">无</span><span class="en">None</span></button>
+						<button type="button" role="radio" data-frame="light"><span class="zh">浅色</span><span class="en">Light</span></button>
+						<button type="button" role="radio" data-frame="dark"><span class="zh">深色</span><span class="en">Dark</span></button>
+						<button type="button" role="radio" data-frame="glass"><span class="zh">玻璃</span><span class="en">Glass</span></button>
+					</div>
+				</div>
+				<div class="group">
+					<div class="label"><span class="zh">比例</span><span class="en">Aspect</span></div>
+					<div class="seg" role="radiogroup" id="ratios">
+						<button type="button" role="radio" data-ratio="auto"><span class="zh">自动</span><span class="en">Auto</span></button>
+						<button type="button" role="radio" data-ratio="1.7778">16:9</button>
+						<button type="button" role="radio" data-ratio="1.3333">4:3</button>
+						<button type="button" role="radio" data-ratio="1">1:1</button>
+					</div>
+				</div>
+				<div class="group">
+					<label class="label" for="pad"><span><span class="zh">边距</span><span class="en">Padding</span></span><output id="pad-out"></output></label>
+					<input type="range" id="pad" min="0" max="16" step="0.5" value="7">
+				</div>
+				<div class="group">
+					<label class="label" for="radius"><span><span class="zh">圆角</span><span class="en">Corners</span></span><output id="radius-out"></output></label>
+					<input type="range" id="radius" min="0" max="28" step="1" value="14">
+				</div>
+				<div class="group">
+					<label class="label" for="shadow"><span><span class="zh">阴影</span><span class="en">Shadow</span></span><output id="shadow-out"></output></label>
+					<input type="range" id="shadow" min="0" max="100" step="1" value="70">
+				</div>
+				<div class="group row">
+					<span class="title" style="font-size:13px"><span class="zh">署名</span><span class="en">Signature</span></span>
+					<button class="switch" type="button" role="switch" aria-checked="true" id="sig-toggle" aria-label="Signature"></button>
+				</div>
+			</div>
+		</div>
+
+		<div class="split wide showcase" style="margin-bottom:0">
+			<div class="reveal">
+				<h3 class="sub-h"><span class="zh">署上你的名字，<br>定下你的风格。</span><span class="en">Sign it.<br>Make it yours.</span></h3>
+				<ul class="checks">
+					<li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#ff5a7a" opacity=".16"/><path d="m7.5 12.5 3 3 6-6.5" fill="none" stroke="#ff4f74" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong><span class="zh">中英文署名</span><span class="en">Any signature</span></strong><br><span class="zh">手写、衬线、几何、等宽等字体，粗细、字号、颜色与不透明度随心调整，中英文混排也协调。</span><span class="en">Script, serif, geometric or mono, in any weight, size, colour and opacity, with Chinese and Latin text in matching faces.</span></span></li>
+					<li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#4dabf7" opacity=".18"/><path d="m7.5 12.5 3 3 6-6.5" fill="none" stroke="#3b9ef0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong><span class="zh">放在边距或截图内</span><span class="en">In the margin or on the image</span></strong><br><span class="zh">署名可以安静地待在背景边距，也可以压在截图上。</span><span class="en">Keep it quietly in the background margin, or set it over the capture.</span></span></li>
+					<li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#9775fa" opacity=".18"/><path d="m7.5 12.5 3 3 6-6.5" fill="none" stroke="#8b6cf6" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong><span class="zh">设为默认，一键恢复</span><span class="en">Set as default, reset anytime</span></strong><br><span class="zh">调好的背景、窗口与署名点“设为默认”，之后的截图都用这套样式；临时改动随时恢复。</span><span class="en">Save your background, frame and signature as the default for every new capture, and undo a passing experiment in one click.</span></span></li>
+				</ul>
+			</div>
+			<figure class="reveal d1">
+				<div class="video-tabs"><div class="seg" role="radiogroup" aria-label="Recording">
+					<button type="button" role="radio" aria-checked="true" data-tab-video="beautify" data-label-zh="录屏演示：切换渐变背景，调整边距与圆角，换窗口样式并开启署名" data-label-en="Screen recording: switching gradients, adjusting padding and corners, changing the frame and turning on the signature"><span class="zh">美化样式</span><span class="en">Styles</span></button>
+					<button type="button" role="radio" aria-checked="false" data-tab-video="signature" data-label-zh="录屏演示：输入署名，切换字体、粗细、字号、位置与不透明度" data-label-en="Screen recording: typing a signature, then changing its font, weight, size, position and opacity"><span class="zh">署名</span><span class="en">Signature</span></button>
+					<button type="button" role="radio" aria-checked="false" data-tab-video="personalize" data-label-zh="录屏演示：调好样式后设为默认，临时改动一键恢复，重新截图时自动沿用" data-label-en="Screen recording: a style is set as the default, a change is reset in one click, and the next capture opens in that style"><span class="zh">设为默认</span><span class="en">Default style</span></button>
+				</div></div>
+				<div class="shot"><video class="demo-video" data-video="beautify" muted loop playsinline controls preload="none" width="1920" height="1200"
+					poster="assets/video/beautify-zh.webp" src="assets/video/beautify-zh.mp4"
+					aria-label="录屏演示：切换渐变背景，调整边距与圆角，换窗口样式并开启署名" data-label-en="Screen recording: switching gradients, adjusting padding and corners, changing the frame and turning on the signature"></video></div>
+			</figure>
+		</div>
+	</div>
+</section>
+
+<!-- Stitch -->
+<section class="section alt" id="stitch">
+	<div class="wrap">
+		<div class="split wide">
+			<div class="reveal">
+				<span class="eyebrow"><span class="zh">拼接</span><span class="en">Stitch</span></span>
+				<h2><span class="zh">多张截图，<br>拼成一张。</span><span class="en">Many shots.<br>One image.</span></h2>
+				<p class="lead"><span class="zh">在编辑器里按 <kbd class="mod"></kbd> <kbd class="shift"></kbd> <kbd>A</kbd> 再截一张，或者直接粘贴、拖入图片。顺序、间距和对齐随手调整，标注会跟着所在的那张一起移动。</span><span class="en">In the editor, press <kbd class="mod"></kbd> <kbd class="shift"></kbd> <kbd>A</kbd> to capture another, or paste and drop images in. Reorder, space and align them freely, and each annotation moves with its own piece.</span></p>
+				<div class="layouts">
+					<div class="layout"><span class="mini v"><i></i><i></i><i></i></span><span class="zh">纵向</span><span class="en">Vertical</span></div>
+					<div class="layout"><span class="mini h"><i></i><i></i><i></i></span><span class="zh">横向</span><span class="en">Horizontal</span></div>
+					<div class="layout"><span class="mini g"><i></i><i></i><i></i><i></i></span><span class="zh">网格</span><span class="en">Grid</span></div>
+				</div>
+				<p class="small muted" style="margin-top:22px"><span class="zh">美化、导出、贴图与文字提取都作用于拼好的整张图，每一步都能撤销。</span><span class="en">Beautify, export, pin and text extraction all work on the stitched result, and every step can be undone.</span></p>
+			</div>
+			<figure class="reveal d1">
+				<div class="shot"><video class="demo-video" data-video="stitch" muted loop playsinline controls preload="none" width="1920" height="1200"
+					poster="assets/video/stitch-zh.webp" src="assets/video/stitch-zh.mp4"
+					aria-label="录屏演示：在编辑器里再截两个窗口拼在一起，切换横向、网格并调整间距" data-label-en="Screen recording: two more windows are captured into the stitch, then switched to horizontal and grid with more spacing"></video></div>
+			</figure>
+		</div>
+	</div>
+</section>
+
+<!-- Details -->
+<section class="section" id="details">
+	<div class="wrap">
+		<div class="sec-head center reveal">
+			<span class="eyebrow"><span class="zh">细节</span><span class="en">Details</span></span>
+			<h2><span class="zh">处处用心。</span><span class="en">Thoughtful, everywhere.</span></h2>
+		</div>
+		<div class="split wide showcase">
+			<div class="reveal">
+				<h3 class="sub-h"><span class="zh">贴到桌面，<br>随手提取文字。</span><span class="en">Pin it.<br>Read it.</span></h3>
+				<p class="lead" style="margin-top:16px"><span class="zh">把截图置顶悬浮在桌面上对照着看，可调透明度、开启鼠标穿透；一键识别图中的文字，复制即可粘贴。macOS 使用 Apple Vision，Windows 使用系统自带 OCR，全部在本机完成。</span><span class="en">Float a capture above everything for reference, with adjustable opacity and click-through. Pull the text out of any shot in one click. Apple Vision on macOS and the built-in OCR on Windows, all on your machine.</span></p>
+				<div class="key-pairs">
+					<span><kbd class="mod"></kbd><kbd class="shift"></kbd><kbd>P</kbd><em><span class="zh">贴到桌面</span><span class="en">Pin</span></em></span>
+					<span><kbd class="mod"></kbd><kbd class="shift"></kbd><kbd>T</kbd><em><span class="zh">提取文字</span><span class="en">Extract text</span></em></span>
+				</div>
+			</div>
+			<figure class="reveal d1">
+				<div class="shot"><video class="demo-video" data-video="pin-ocr" muted loop playsinline controls preload="none" width="1920" height="1200"
+					poster="assets/video/pin-ocr-zh.webp" src="assets/video/pin-ocr-zh.mp4"
+					aria-label="录屏演示：提取截图中的文字，再把截图贴到桌面，关闭编辑器后它仍浮在最上层" data-label-en="Screen recording: the text is extracted from a capture, then the capture is pinned and stays on top after the editor closes"></video></div>
+			</figure>
+		</div>
+		<div class="features">
+			<article class="feature reveal" style="--tint:#ff5a7a">
+				<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="11" height="12" rx="2"/><rect x="16" y="9" width="5" height="9" rx="1.5"/><path d="M6 3h5"/></svg></div>
+				<h3><span class="zh">各平台比例</span><span class="en">Ratios for every feed</span></h3>
+				<p><span class="zh">1:1、4:3、16:9、3:4、9:16 一键切换，截图居中排好，发到哪里都合适。</span><span class="en">Switch between 1:1, 4:3, 16:9, 3:4 and 9:16 in one click, with the shot centred for any feed.</span></p>
+			</article>
+			<article class="feature reveal d1" style="--tint:#4dabf7">
+				<div class="ico"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1" opacity=".9"/><rect x="9" y="3" width="6" height="6" rx="1" opacity=".25"/><rect x="15" y="3" width="6" height="6" rx="1" opacity=".9"/><rect x="3" y="9" width="6" height="6" rx="1" opacity=".25"/><rect x="9" y="9" width="6" height="6" rx="1" opacity=".9"/><rect x="15" y="9" width="6" height="6" rx="1" opacity=".25"/><rect x="3" y="15" width="6" height="6" rx="1" opacity=".9"/><rect x="9" y="15" width="6" height="6" rx="1" opacity=".25"/><rect x="15" y="15" width="6" height="6" rx="1" opacity=".9"/></svg></div>
+				<h3><span class="zh">透明背景</span><span class="en">Transparent background</span></h3>
+				<p><span class="zh">选择透明背景导出 PNG，窗口圆角外干干净净，直接放进设计稿或文档。</span><span class="en">Export a PNG with a transparent background and clean rounded corners, ready for slides and design files.</span></p>
+			</article>
+			<article class="feature reveal d2" style="--tint:#9775fa">
+				<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M9 9l2 2 4-4"/></svg></div>
+				<h3><span class="zh">高清不失真</span><span class="en">Pixel-sharp</span></h3>
+				<p><span class="zh">按截图的像素密度导出，Retina 屏上的截图依旧锐利，标注粗细在不同屏幕上保持一致。</span><span class="en">Exports at the capture's own pixel density, so Retina shots stay crisp and marks look the same on every screen.</span></p>
+			</article>
+			<article class="feature reveal" style="--tint:#ff9f43">
+				<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M12 11v6M9 14h6"/></svg></div>
+				<h3><span class="zh">粘贴、拖入都能拼</span><span class="en">Paste or drop to stitch</span></h3>
+				<p><span class="zh">把剪贴板或访达里的图片粘贴、拖进编辑器，它就会拼进当前截图。</span><span class="en">Paste an image or drop one from Finder into the editor, and it joins the current stitch.</span></p>
+				<div class="keys"><kbd class="mod"></kbd><kbd>V</kbd></div>
+			</article>
+			<article class="feature reveal d1" style="--tint:#38d9a9">
+				<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg></div>
+				<h3><span class="zh">无限撤销</span><span class="en">Unlimited undo</span></h3>
+				<p><span class="zh">标注、样式、拼接，每一步都能撤销与重做，放心尝试。</span><span class="en">Annotations, styles and stitching all go through undo and redo, so experiment freely.</span></p>
+				<div class="keys"><kbd class="mod"></kbd><kbd>Z</kbd></div>
+			</article>
+			<article class="feature reveal d2" style="--tint:#f5b700">
+				<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M7 12h10M7 16h6"/></svg></div>
+				<h3><span class="zh">菜单栏常驻</span><span class="en">Lives in the menu bar</span></h3>
+				<p><span class="zh">不占程序坞。在菜单栏图标里切换选区方式、界面语言、登录时启动，或重新打开使用指南。</span><span class="en">Out of your Dock. Switch selection mode and language, launch at login or reopen the guide from the menu bar icon.</span></p>
+			</article>
+			<article class="feature reveal" style="--tint:#5c6bc0">
+				<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></div>
+				<h3><span class="zh">深色与浅色</span><span class="en">Light and dark</span></h3>
+				<p><span class="zh">界面跟随系统外观自动切换，夜里截图也不刺眼。</span><span class="en">The interface follows your system appearance, easy on the eyes at night.</span></p>
+			</article>
+			<article class="feature reveal d1" style="--tint:#ff6b8a">
+				<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h8M8 3v2M5.5 5c.8 3 3 5.5 6.5 7M10.5 5c-.8 3.5-3 6.5-6.5 8"/><path d="m13 21 4-10 4 10M14.5 17.5h5"/></svg></div>
+				<h3><span class="zh">中文与英文</span><span class="en">Chinese and English</span></h3>
+				<p><span class="zh">完整的双语界面，菜单栏里随时切换。</span><span class="en">A fully bilingual interface you can switch from the menu bar.</span></p>
+			</article>
+			<article class="feature reveal d2" style="--tint:#0ea5e9">
+				<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></div>
+				<h3><span class="zh">复制、保存、另存</span><span class="en">Copy, save, save as</span></h3>
+				<p><span class="zh">一键复制成品图到剪贴板，或保存到“下载”文件夹，按 <kbd class="mod"></kbd> <kbd class="enter"></kbd> 复制并关闭。</span><span class="en">Copy the result, save it to Downloads, or press <kbd class="mod"></kbd> <kbd class="enter"></kbd> to copy and close.</span></p>
+			</article>
+		</div>
+	</div>
+</section>
+
+<!-- Privacy -->
+<section class="section privacy" id="privacy">
+	<div class="orb" aria-hidden="true"></div>
+	<div class="wrap">
+		<div class="sec-head center reveal">
+			<span class="eyebrow"><span class="zh">隐私</span><span class="en">Privacy</span></span>
+			<h2><span class="zh">你的截图，<br>只属于你。</span><span class="en">Your screenshots<br>stay yours.</span></h2>
+			<p class="lead"><span class="zh">截图常常包含聊天、账单和工作资料。QuickShot 从设计上就只在本机处理它们。</span><span class="en">Screenshots often hold chats, invoices and work in progress. QuickShot is built to handle them only on your machine.</span></p>
+		</div>
+		<div class="pgrid">
+			<div class="pcard reveal"><svg viewBox="0 0 24 24" fill="none" stroke="#38d9a9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><h3><span class="zh">本机处理</span><span class="en">On device</span></h3><p><span class="zh">截图、标注、美化和文字提取都在你的电脑上完成。</span><span class="en">Capture, annotation, styling and OCR all run locally.</span></p></div>
+			<div class="pcard reveal d1"><svg viewBox="0 0 24 24" fill="none" stroke="#4dabf7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 2l20 20M8.5 16.4A5 5 0 0 1 12 15c1.4 0 2.6.5 3.5 1.4M5 12.9a10 10 0 0 1 4.2-2.4M19 12.9a10 10 0 0 0-2.3-1.6M2 8.8a15 15 0 0 1 4.2-2.7M22 8.8A15 15 0 0 0 10.7 5M12 20h.01"/></svg><h3><span class="zh">没有联网代码</span><span class="en">No network code</span></h3><p><span class="zh">应用里没有上传、同步或检查更新的请求。</span><span class="en">Nothing uploads, syncs or phones home.</span></p></div>
+			<div class="pcard reveal d2"><svg viewBox="0 0 24 24" fill="none" stroke="#9775fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 13-6.2M16 19l5-5M21 19l-5-5"/></svg><h3><span class="zh">无账号、无统计</span><span class="en">No account, no analytics</span></h3><p><span class="zh">下载即用，不收集任何使用数据。</span><span class="en">Download and go. No usage data is collected.</span></p></div>
+			<div class="pcard reveal d3"><svg viewBox="0 0 24 24" fill="none" stroke="#ff9f43" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></svg><h3><span class="zh">源代码公开</span><span class="en">Open source</span></h3><p><span class="zh">每一行代码都可以在 GitHub 上查看和验证。</span><span class="en">Every line can be read and checked on GitHub.</span></p></div>
+		</div>
+		<p class="fine center reveal" style="text-align:center"><span class="zh">渲染进程开启上下文隔离并禁用 Node.js，只通过白名单 IPC 与主进程通信。这个页面同样没有统计代码和第三方字体。</span><span class="en">Renderers run with context isolation and Node.js disabled, talking to the main process only through an allow-listed IPC. This page has no analytics or third-party fonts either.</span></p>
+	</div>
+</section>
+
+<!-- Shortcuts -->
+<section class="section alt" id="shortcuts">
+	<div class="wrap">
+		<div class="sec-head center reveal">
+			<span class="eyebrow"><span class="zh">快捷键</span><span class="en">Shortcuts</span></span>
+			<h2><span class="zh">双手不离键盘。</span><span class="en">Keep your hands on the keys.</span></h2>
+			<div class="os-toggle" role="group" aria-label="Platform">
+				<button type="button" data-os-btn="mac">macOS</button>
+				<button type="button" data-os-btn="win">Windows</button>
+			</div>
+		</div>
+		<div class="keys-grid">
+			<div class="kcard reveal">
+				<h3><span class="zh">任意位置</span><span class="en">Anywhere</span></h3>
+				<div class="krow"><span class="zh">截图</span><span class="en">Take a screenshot</span><span class="k"><kbd class="mod"></kbd><kbd class="shift"></kbd><kbd>X</kbd></span></div>
+				<div class="krow"><span class="zh">恢复鼠标穿透的贴图</span><span class="en">Restore click-through pins</span><span class="k"><kbd class="mod"></kbd><kbd class="shift"></kbd><kbd>L</kbd></span></div>
+				<h3><span class="zh">选区</span><span class="en">Selection</span></h3>
+				<div class="krow"><span class="zh">截取窗口 / 全屏</span><span class="en">Window / full screen</span><span class="k"><span class="zh">单击</span><span class="en">Click</span></span></div>
+				<div class="krow"><span class="zh">截取区域</span><span class="en">Area</span><span class="k"><span class="zh">拖动</span><span class="en">Drag</span></span></div>
+				<div class="krow"><span class="zh">取消</span><span class="en">Cancel</span><span class="k"><kbd>Esc</kbd></span></div>
+			</div>
+			<div class="kcard reveal d1">
+				<h3><span class="zh">编辑器</span><span class="en">Editor</span></h3>
+				<div class="krow"><span class="zh">撤销 / 重做</span><span class="en">Undo / redo</span><span class="k"><kbd class="mod"></kbd><kbd>Z</kbd><span>/</span><kbd class="mod"></kbd><kbd class="shift"></kbd><kbd>Z</kbd></span></div>
+				<div class="krow"><span class="zh">复制成品图</span><span class="en">Copy image</span><span class="k"><kbd class="mod"></kbd><kbd>C</kbd></span></div>
+				<div class="krow"><span class="zh">复制并关闭</span><span class="en">Copy and close</span><span class="k"><kbd class="mod"></kbd><kbd class="enter"></kbd></span></div>
+				<div class="krow"><span class="zh">保存到“下载”</span><span class="en">Save to Downloads</span><span class="k"><kbd class="mod"></kbd><kbd>S</kbd></span></div>
+				<div class="krow"><span class="zh">另存为</span><span class="en">Save as</span><span class="k"><kbd class="mod"></kbd><kbd class="shift"></kbd><kbd>S</kbd></span></div>
+				<div class="krow"><span class="zh">贴到桌面</span><span class="en">Pin to desktop</span><span class="k"><kbd class="mod"></kbd><kbd class="shift"></kbd><kbd>P</kbd></span></div>
+				<div class="krow"><span class="zh">提取文字</span><span class="en">Extract text</span><span class="k"><kbd class="mod"></kbd><kbd class="shift"></kbd><kbd>T</kbd></span></div>
+			</div>
+			<div class="kcard reveal d2">
+				<h3><span class="zh">编辑器</span><span class="en">Editor</span></h3>
+				<div class="krow"><span class="zh">再截一张拼接</span><span class="en">Capture another to stitch</span><span class="k"><kbd class="mod"></kbd><kbd class="shift"></kbd><kbd>A</kbd></span></div>
+				<div class="krow"><span class="zh">拼接剪贴板里的图片</span><span class="en">Stitch from clipboard</span><span class="k"><kbd class="mod"></kbd><kbd>V</kbd></span></div>
+				<div class="krow"><span class="zh">复制一份标注</span><span class="en">Duplicate annotation</span><span class="k"><kbd class="mod"></kbd><kbd>D</kbd></span></div>
+				<div class="krow"><span class="zh">变细 / 变粗</span><span class="en">Thinner / thicker</span><span class="k"><kbd>[</kbd><kbd>]</kbd></span></div>
+				<div class="krow"><span class="zh">样式面板</span><span class="en">Style panel</span><span class="k"><kbd class="mod"></kbd><kbd>.</kbd></span></div>
+				<div class="krow"><span class="zh">取消选中 / 关闭</span><span class="en">Deselect / close</span><span class="k"><kbd>Esc</kbd></span></div>
+			</div>
+		</div>
+	</div>
+</section>
+
+<!-- Download -->
+<section class="section" id="download">
+	<div class="wrap">
+		<div class="dl reveal">
+			<img class="app-icon" src="assets/icon.svg" alt="QuickShot" width="104" height="104">
+			<h2><span class="zh">现在就开始<br>优雅地截图。</span><span class="en">Start capturing<br>beautifully.</span></h2>
+			<p class="lead" style="margin:0 auto"><span class="zh">免费下载，源代码公开。一个快捷键，从此告别凌乱的截图。</span><span class="en">Free to download, open to read. One shortcut, and messy screenshots are behind you.</span></p>
+			<div class="dl-buttons">
+				<a class="btn" href="https://github.com/cclank/quickshot/releases/download/v1.1.0/QuickShot-Mac-arm64-1.1.0.dmg">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg>
+					<span class="txt"><span class="zh">macOS · Apple 芯片</span><span class="en">macOS · Apple silicon</span><small>.dmg</small></span>
+				</a>
+				<a class="btn btn-ghost" href="https://github.com/cclank/quickshot/releases/download/v1.1.0/QuickShot-Mac-x64-1.1.0.dmg">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg>
+					<span class="txt"><span class="zh">macOS · Intel</span><span class="en">macOS · Intel</span><small>.dmg</small></span>
+				</a>
+				<a class="btn btn-ghost" href="https://github.com/cclank/quickshot/releases/download/v1.1.0/QuickShot-Win-x64-1.1.0-Setup.exe">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></svg>
+					<span class="txt">Windows<small>Setup.exe</small></span>
+				</a>
+			</div>
+			<p class="dl-meta"><span class="zh">版本 1.1.0 · macOS 12 及以上 · Windows 10 / 11（64 位）· <a href="https://github.com/cclank/quickshot/releases">全部版本</a></span><span class="en">Version 1.1.0 · macOS 12 or later · Windows 10 / 11 (64-bit) · <a href="https://github.com/cclank/quickshot/releases">All releases</a></span></p>
+		</div>
+
+		<div class="sec-head center reveal" style="margin-top:clamp(72px,10vw,120px)">
+			<h2 style="font-size:clamp(28px,3.6vw,40px)"><span class="zh">三步装好，一分钟上手。</span><span class="en">Three steps, one minute.</span></h2>
+		</div>
+		<div class="steps">
+			<div class="step reveal">
+				<span class="n">1</span>
+				<h3><span class="zh">拖进“应用程序”</span><span class="en">Drag to Applications</span></h3>
+				<p><span class="zh">打开 DMG，把 QuickShot 拖到“应用程序”文件夹。</span><span class="en">Open the DMG and drag QuickShot onto the Applications folder.</span></p>
+				<div class="pic">
+					<svg viewBox="0 0 320 170" role="img" aria-label="DMG window: drag the QuickShot icon onto Applications" style="width:100%;height:auto;border-radius:10px;box-shadow:0 0 0 1px var(--line),0 12px 28px -16px rgba(0,0,0,.35)">
+						<defs><linearGradient id="dmg" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#fdf2f8"/><stop offset="1" stop-color="#eef4ff"/></linearGradient><linearGradient id="arrow" x1="0" x2="1"><stop offset="0" stop-color="#ff5a7a"/><stop offset=".5" stop-color="#ffd43b"/><stop offset="1" stop-color="#4dabf7"/></linearGradient></defs>
+						<rect width="320" height="170" fill="url(#dmg)"/>
+						<rect width="320" height="22" fill="#f1f1f4"/><circle cx="14" cy="11" r="4.5" fill="#ff5f57"/><circle cx="28" cy="11" r="4.5" fill="#febc2e"/><circle cx="42" cy="11" r="4.5" fill="#28c840"/>
+						<image href="assets/icon.svg" x="56" y="54" width="62" height="62"/>
+						<text x="87" y="136" text-anchor="middle" font-size="11" fill="#333" font-family="-apple-system, sans-serif">QuickShot</text>
+						<path d="M134 85h52" stroke="url(#arrow)" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 9"/><path d="M182 77l10 8-10 8" fill="none" stroke="#4dabf7" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+						<rect x="204" y="56" width="58" height="58" rx="12" fill="#4dabf7" opacity=".9"/><path d="M220 98l13-28 13 28M225 88h16" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+						<text x="233" y="136" text-anchor="middle" font-size="11" fill="#333" font-family="-apple-system, sans-serif">Applications</text>
+					</svg>
+				</div>
+			</div>
+			<div class="step reveal d1">
+				<span class="n">2</span>
+				<h3><span class="zh">首次打开被拦截？</span><span class="en">Blocked on first launch?</span></h3>
+				<p><span class="zh">QuickShot 暂未经过 Apple 公证，macOS 可能提示“无法验证开发者”。在“终端”运行下面这行后重新打开即可，只需一次：</span><span class="en">QuickShot is not notarised by Apple yet, so macOS may say it cannot verify the developer. Run this once in Terminal, then open it again:</span></p>
+				<div class="code"><code id="xattr">sudo xattr -rd com.apple.quarantine /Applications/QuickShot.app</code><button type="button" data-copy="xattr"><span class="zh">复制</span><span class="en">Copy</span></button></div>
+				<p class="small" style="margin-top:12px;color:var(--text-3)"><span class="zh">也可以在“系统设置 → 隐私与安全性”底部点“仍要打开”。</span><span class="en">Or choose “Open Anyway” at the bottom of System Settings → Privacy &amp; Security.</span></p>
+			</div>
+			<div class="step reveal d2">
+				<span class="n">3</span>
+				<h3><span class="zh">跟着指引授权</span><span class="en">Follow the guide</span></h3>
+				<p><span class="zh">欢迎指引会展示快捷键，并带你允许“屏幕录制”：把系统设置下方出现的 QuickShot 图标拖进列表，就完成了。</span><span class="en">The welcome guide shows the shortcut and walks you through Screen Recording: drag the QuickShot icon that appears under System Settings into the list, and you are done.</span></p>
+				<div class="pic"><img src="assets/onboarding-permission.webp" width="1520" height="1080" loading="lazy"
+					alt="QuickShot 欢迎指引的授权页：允许 QuickShot 录制屏幕的三个步骤"
+					data-alt-en="The permission step of QuickShot's welcome guide, with three steps to allow screen recording"></div>
+			</div>
+		</div>
+		<p class="win-note reveal"><span class="zh">Windows：运行安装程序即可；如果出现 SmartScreen 提示，点“更多信息 → 仍要运行”。</span><span class="en">Windows: run the installer. If SmartScreen appears, choose “More info → Run anyway”.</span></p>
+	</div>
+</section>
+
+<!-- FAQ -->
+<section class="section alt" id="faq">
+	<div class="wrap wrap-narrow">
+		<div class="sec-head center reveal">
+			<span class="eyebrow"><span class="zh">常见问题</span><span class="en">FAQ</span></span>
+			<h2><span class="zh">还有疑问？</span><span class="en">Questions?</span></h2>
+		</div>
+		<div class="faq reveal">
+			<details>
+				<summary><span class="zh">QuickShot 免费吗？</span><span class="en">Is QuickShot free?</span></summary>
+				<div class="a"><span class="zh">免费。源代码以 GPL-3.0 许可证公开在 GitHub，欢迎提交 Issue 和 Pull Request。</span><span class="en">Yes. The source code is on GitHub under the GPL-3.0 license, and issues and pull requests are welcome.</span></div>
+			</details>
+			<details>
+				<summary><span class="zh">截图会上传到云端吗？</span><span class="en">Are my screenshots uploaded anywhere?</span></summary>
+				<div class="a"><span class="zh">不会。QuickShot 没有联网代码、账号或统计，截图、标注、美化和文字提取都在本机完成。</span><span class="en">No. QuickShot has no network code, accounts or analytics. Capturing, annotating, styling and text extraction all happen on your computer.</span></div>
+			</details>
+			<details>
+				<summary><span class="zh">为什么提示“无法验证开发者”？</span><span class="en">Why does macOS say it cannot verify the developer?</span></summary>
+				<div class="a"><span class="zh">QuickShot 目前没有 Apple 开发者签名与公证，macOS 会拦截首次打开。在“终端”运行 <code>sudo xattr -rd com.apple.quarantine /Applications/QuickShot.app</code>，或在“系统设置 → 隐私与安全性”底部点“仍要打开”，之后就不会再出现。</span><span class="en">QuickShot is not yet signed and notarised with an Apple developer ID, so macOS blocks the first launch. Run <code>sudo xattr -rd com.apple.quarantine /Applications/QuickShot.app</code> in Terminal, or choose “Open Anyway” in System Settings → Privacy &amp; Security. You only need to do this once.</span></div>
+			</details>
+			<details>
+				<summary><span class="zh">需要哪些权限？</span><span class="en">Which permissions does it need?</span></summary>
+				<div class="a"><span class="zh">macOS 上只需要“屏幕录制”，用来看到屏幕上的内容。首次启动的指引会一步步带你完成：把 QuickShot 图标拖进系统设置的列表即可。Windows 不需要额外权限。</span><span class="en">On macOS, only Screen Recording, so it can see what is on screen. The first-launch guide walks you through it: drag the QuickShot icon into the list in System Settings. Windows needs no extra permission.</span></div>
+			</details>
+			<details>
+				<summary><span class="zh">打开后在哪里找到它？</span><span class="en">Where is it after I open it?</span></summary>
+				<div class="a"><span class="zh">QuickShot 常驻菜单栏（Windows 在通知区域）。按快捷键即可截图；点菜单栏图标可以切换选区方式、界面语言、登录时启动，或重新打开使用指南。</span><span class="en">QuickShot lives in the menu bar (the notification area on Windows). Press the shortcut to capture, or click the icon to switch selection mode or language, launch at login, or reopen the guide.</span></div>
+			</details>
+			<details>
+				<summary><span class="zh">支持哪些系统？</span><span class="en">Which systems are supported?</span></summary>
+				<div class="a"><span class="zh">macOS 12 及以上，Apple 芯片与 Intel 各有安装包；Windows 10 与 11（64 位）。Windows 上的文字提取使用系统设置中已安装的 OCR 语言。</span><span class="en">macOS 12 or later, with separate builds for Apple silicon and Intel, and Windows 10 and 11 (64-bit). Text extraction on Windows uses the OCR languages installed in Windows Settings.</span></div>
+			</details>
+		</div>
+	</div>
+</section>
+</main>
+
+<footer>
+	<div class="wrap">
+		<div class="foot">
+			<div>
+				<a class="brand" href="#top"><img src="assets/icon.svg" alt="" width="28" height="28"><span>QuickShot</span></a>
+				<p><span class="zh">轻巧、安静、完全本地运行的截图与标注工具。</span><span class="en">A light, quiet screenshot and annotation tool that runs entirely on your computer.</span></p>
+				<p class="foot-author"><span class="zh">作者</span><span class="en">Made by</span> <b>岚叔</b></p>
+			</div>
+			<nav class="foot-links" aria-label="Footer">
+				<a href="https://github.com/cclank/quickshot">GitHub</a>
+				<a href="https://github.com/cclank/quickshot/releases"><span class="zh">版本发布</span><span class="en">Releases</span></a>
+				<a href="https://github.com/cclank/quickshot/issues"><span class="zh">反馈问题</span><span class="en">Feedback</span></a>
+				<a href="https://github.com/cclank/quickshot/blob/main/LICENSE"><span class="zh">GPL-3.0 许可证</span><span class="en">GPL-3.0 license</span></a>
+				<a href="https://github.com/cclank/quickshot/blob/main/THIRD_PARTY_NOTICES.md"><span class="zh">第三方声明</span><span class="en">Third-party notices</span></a>
+			</nav>
+		</div>
+		<p class="copyright">© 2026 岚叔 · QuickShot · <span class="zh">本页面不含任何统计代码</span><span class="en">This page contains no tracking</span></p>
+	</div>
+</footer>
+
+<script>
+(function () {
+	"use strict";
+	var root = document.documentElement;
+	var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+	/* Language */
+	var TITLES = {
+		zh: "QuickShot · 优雅的本地截图与标注工具",
+		en: "QuickShot · Beautiful screenshots, entirely offline",
+	};
+	var altImages = Array.prototype.slice.call(document.querySelectorAll("img[data-alt-en]"));
+	altImages.forEach(function (img) { img.setAttribute("data-alt-zh", img.alt); });
+	function applyLang(lang) {
+		root.setAttribute("data-lang", lang);
+		root.lang = lang === "zh" ? "zh-CN" : "en";
+		document.title = TITLES[lang];
+		altImages.forEach(function (img) { img.alt = img.getAttribute("data-alt-" + lang); });
+		var toggle = document.getElementById("lang-toggle");
+		toggle.setAttribute("aria-label", lang === "zh" ? "Switch to English" : "切换到中文");
+	}
+	applyLang(root.getAttribute("data-lang") === "en" ? "en" : "zh");
+	document.getElementById("lang-toggle").addEventListener("click", function () {
+		var next = root.getAttribute("data-lang") === "zh" ? "en" : "zh";
+		applyLang(next);
+		try { localStorage.setItem("quickshot.site.lang", next); } catch (e) {}
+		updateSelLabel();
+		refreshVideos();
+	});
+
+	/* Platform for shortcuts */
+	document.querySelectorAll("[data-os-btn]").forEach(function (button) {
+		button.addEventListener("click", function () { root.setAttribute("data-os", button.getAttribute("data-os-btn")); });
+	});
+
+	/* Sticky nav */
+	var nav = document.getElementById("nav");
+	function onScroll() { nav.classList.toggle("scrolled", window.scrollY > 8); }
+	window.addEventListener("scroll", onScroll, { passive: true });
+	onScroll();
+
+	/* Reveal on scroll */
+	var reveals = document.querySelectorAll(".reveal");
+	if ("IntersectionObserver" in window && !reduceMotion) {
+		var io = new IntersectionObserver(function (entries) {
+			entries.forEach(function (entry) {
+				if (entry.isIntersecting) { entry.target.classList.add("in"); io.unobserve(entry.target); }
+			});
+		}, { rootMargin: "0px 0px -8% 0px", threshold: 0.08 });
+		reveals.forEach(function (el) { io.observe(el); });
+	} else {
+		reveals.forEach(function (el) { el.classList.add("in"); });
+	}
+
+	/* Recordings: language-matched, played only while on screen */
+	var videos = Array.prototype.slice.call(document.querySelectorAll("video[data-video]"));
+	function loadVideo(video, play) {
+		var lang = root.getAttribute("data-lang") === "en" ? "en" : "zh";
+		var name = video.getAttribute("data-video");
+		var src = "assets/video/" + name + "-" + lang + ".mp4";
+		if (video.getAttribute("src") !== src) {
+			video.poster = "assets/video/" + name + "-" + lang + ".webp";
+			video.setAttribute("src", src);
+		}
+		if (play && !reduceMotion) {
+			var attempt = video.play();
+			if (attempt && attempt.catch) attempt.catch(function () {});
+		}
+	}
+	function labelVideos(lang) {
+		videos.forEach(function (video) {
+			if (!video.hasAttribute("data-label-zh")) video.setAttribute("data-label-zh", video.getAttribute("aria-label"));
+			video.setAttribute("aria-label", video.getAttribute("data-label-" + lang));
+		});
+	}
+	videos.forEach(function (video) {
+		// Autoplaying loops need no controls; with reduced motion they stay put until asked.
+		if (!reduceMotion) video.removeAttribute("controls");
+	});
+	var visibleVideos = new Set();
+	if ("IntersectionObserver" in window) {
+		var videoObserver = new IntersectionObserver(function (entries) {
+			entries.forEach(function (entry) {
+				if (entry.isIntersecting) { visibleVideos.add(entry.target); loadVideo(entry.target, true); }
+				else { visibleVideos.delete(entry.target); entry.target.pause(); }
+			});
+		}, { threshold: 0.35 });
+		videos.forEach(function (video) { videoObserver.observe(video); });
+	}
+	function refreshVideos() {
+		labelVideos(root.getAttribute("data-lang") === "en" ? "en" : "zh");
+		videos.forEach(function (video) {
+			var wasPlaying = !video.paused;
+			if (video.getAttribute("src")) loadVideo(video, wasPlaying || visibleVideos.has(video));
+		});
+	}
+	labelVideos(root.getAttribute("data-lang") === "en" ? "en" : "zh");
+	document.querySelectorAll("[data-tab-video]").forEach(function (tab) {
+		tab.addEventListener("click", function () {
+			var group = tab.parentElement;
+			group.querySelectorAll("[data-tab-video]").forEach(function (other) { other.setAttribute("aria-checked", String(other === tab)); });
+			var video = tab.closest("figure").querySelector("video");
+			video.setAttribute("data-video", tab.getAttribute("data-tab-video"));
+			if (tab.hasAttribute("data-label-zh")) {
+				video.setAttribute("data-label-zh", tab.getAttribute("data-label-zh"));
+				video.setAttribute("data-label-en", tab.getAttribute("data-label-en"));
+				video.setAttribute("aria-label", tab.getAttribute("data-label-" + (root.getAttribute("data-lang") === "en" ? "en" : "zh")));
+			}
+			loadVideo(video, true);
+		});
+	});
+
+	/* Copy buttons */
+	document.querySelectorAll("[data-copy]").forEach(function (button) {
+		button.addEventListener("click", function () {
+			var text = document.getElementById(button.getAttribute("data-copy")).textContent;
+			var original = button.innerHTML;
+			function done() {
+				button.innerHTML = '<span class="zh">已复制</span><span class="en">Copied</span>';
+				setTimeout(function () { button.innerHTML = original; }, 1600);
+			}
+			if (navigator.clipboard && navigator.clipboard.writeText) {
+				navigator.clipboard.writeText(text).then(done, function () { selectText(); });
+			} else { selectText(); }
+			function selectText() {
+				var range = document.createRange();
+				range.selectNodeContents(document.getElementById(button.getAttribute("data-copy")));
+				var selection = window.getSelection();
+				selection.removeAllRanges();
+				selection.addRange(range);
+			}
+		});
+	});
+
+	/* ------------------------------------------------------------------ */
+	/* Capture playground: the overlay, in miniature                       */
+	/* ------------------------------------------------------------------ */
+	var desk = document.getElementById("desk");
+	var sel = document.getElementById("sel");
+	var selLabel = document.getElementById("sel-label");
+	var cursor = document.getElementById("cursor");
+	var flash = document.getElementById("flash");
+	var toast = document.getElementById("toast");
+	var toastSize = document.getElementById("toast-size");
+	var wins = Array.prototype.slice.call(desk.querySelectorAll(".win"));
+	var SCREEN_PX = 2880; // the demo desktop stands in for a 1440 × 900 pt Retina screen
+	var current = null; // { kind, name, x, y, w, h }
+	var toastTimer = 0;
+
+	function deskBox() { return desk.getBoundingClientRect(); }
+	function windowRect(win) {
+		var d = deskBox();
+		var r = win.getBoundingClientRect();
+		return { x: r.left - d.left, y: r.top - d.top, w: r.width, h: r.height };
+	}
+	function windowAt(x, y) {
+		var best = null;
+		var bestZ = -1;
+		wins.forEach(function (win) {
+			var r = windowRect(win);
+			if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+				var z = Number(win.style.zIndex) || 0;
+				if (z > bestZ) { best = { win: win, rect: r }; bestZ = z; }
+			}
+		});
+		return best;
+	}
+	function toPixels(value) { return Math.round(value / deskBox().width * SCREEN_PX); }
+	function fullScreenName() { return root.getAttribute("data-lang") === "zh" ? "全屏" : "Full Screen"; }
+	function areaName() { return root.getAttribute("data-lang") === "zh" ? "区域" : "Area"; }
+
+	function targetAt(x, y) {
+		var hit = windowAt(x, y);
+		var d = deskBox();
+		if (hit) return { kind: "window", name: hit.win.getAttribute("data-name"), x: hit.rect.x, y: hit.rect.y, w: hit.rect.w, h: hit.rect.h };
+		return { kind: "full", name: null, x: 0, y: 0, w: d.width, h: d.height };
+	}
+
+	function updateSelLabel() {
+		if (!current) return;
+		var name = current.kind === "full" ? fullScreenName() : current.kind === "area" ? areaName() : current.name;
+		selLabel.innerHTML = "";
+		selLabel.appendChild(document.createTextNode(name + " "));
+		var size = document.createElement("small");
+		size.textContent = toPixels(current.w) + " × " + toPixels(current.h);
+		selLabel.appendChild(size);
+	}
+
+	function showTarget(target, animate) {
+		current = target;
+		var pad = target.kind === "full" ? 0 : target.kind === "area" ? 0 : 2;
+		sel.classList.toggle("anim", !!animate && !reduceMotion);
+		sel.classList.toggle("area", target.kind === "area");
+		sel.classList.toggle("full", target.kind === "full");
+		sel.classList.toggle("flip", target.kind !== "full" && target.y < deskBox().width * 0.03);
+		sel.style.left = (target.x - pad) + "px";
+		sel.style.top = (target.y - pad) + "px";
+		sel.style.width = (target.w + pad * 2) + "px";
+		sel.style.height = (target.h + pad * 2) + "px";
+		sel.classList.add("on");
+		updateSelLabel();
+	}
+	function hideTarget() { sel.classList.remove("on"); current = null; }
+
+	function capture() {
+		if (!current) return;
+		var w = toPixels(current.w);
+		var h = toPixels(current.h);
+		var name = current.kind === "full" ? fullScreenName() : current.kind === "area" ? areaName() : current.name;
+		toastSize.textContent = name + " · " + w + " × " + h;
+		if (!reduceMotion) {
+			flash.classList.remove("go");
+			void flash.offsetWidth;
+			flash.classList.add("go");
+			sel.classList.remove("snap");
+			void sel.offsetWidth;
+			sel.classList.add("snap");
+		}
+		toast.classList.add("on");
+		clearTimeout(toastTimer);
+		toastTimer = setTimeout(function () { toast.classList.remove("on"); }, 2200);
+	}
+
+	/* Real pointer */
+	var drag = null;
+	var userActive = false;
+	var resumeTimer = 0;
+	function local(event) {
+		var d = deskBox();
+		return { x: Math.max(0, Math.min(d.width, event.clientX - d.left)), y: Math.max(0, Math.min(d.height, event.clientY - d.top)) };
+	}
+	function takeOver() {
+		userActive = true;
+		clearTimeout(resumeTimer);
+		autoplay.stop();
+		cursor.classList.remove("on");
+	}
+	desk.addEventListener("pointerenter", function (event) { if (event.pointerType === "mouse") takeOver(); });
+	desk.addEventListener("pointermove", function (event) {
+		if (!userActive && event.pointerType !== "mouse") return;
+		if (!userActive) takeOver();
+		var p = local(event);
+		if (drag) {
+			if (!drag.moved && Math.hypot(p.x - drag.x, p.y - drag.y) < 4) return;
+			drag.moved = true;
+			showTarget({ kind: "area", x: Math.min(drag.x, p.x), y: Math.min(drag.y, p.y), w: Math.abs(p.x - drag.x), h: Math.abs(p.y - drag.y) }, false);
+			return;
+		}
+		var target = targetAt(p.x, p.y);
+		var same = current && current.kind === target.kind && current.name === target.name;
+		if (!same) showTarget(target, true);
+	});
+	desk.addEventListener("pointerdown", function (event) {
+		if (event.button !== 0) return;
+		takeOver();
+		var p = local(event);
+		drag = { x: p.x, y: p.y, moved: false, id: event.pointerId };
+		if (event.pointerType === "mouse") desk.setPointerCapture(event.pointerId);
+		if (!current) showTarget(targetAt(p.x, p.y), true);
+	});
+	desk.addEventListener("pointerup", function (event) {
+		if (!drag) return;
+		var p = local(event);
+		if (!drag.moved) showTarget(targetAt(p.x, p.y), false);
+		else if (current && (current.w < 6 || current.h < 6)) { drag = null; return; }
+		drag = null;
+		capture();
+	});
+	desk.addEventListener("pointercancel", function () { drag = null; });
+	desk.addEventListener("contextmenu", function (event) { event.preventDefault(); drag = null; hideTarget(); });
+	desk.addEventListener("pointerleave", function (event) {
+		if (drag && event.pointerType === "mouse") return;
+		if (event.pointerType === "mouse") hideTarget();
+		userActive = false;
+		clearTimeout(resumeTimer);
+		resumeTimer = setTimeout(function () { if (!userActive) autoplay.start(); }, 2500);
+	});
+
+	/* Autoplay: a pointer tours the desktop when nobody is using it */
+	var autoplay = (function () {
+		var running = false;
+		var token = 0;
+		var pos = { x: 0, y: 0 };
+		function sleep(ms, my) {
+			return new Promise(function (resolve, reject) {
+				setTimeout(function () { my === token ? resolve() : reject("stopped"); }, ms);
+			});
+		}
+		function placeCursor(x, y) {
+			pos = { x: x, y: y };
+			cursor.style.transform = "translate(" + (x - 2) + "px," + (y - 1) + "px)";
+		}
+		function moveTo(x, y, ms, my, onStep) {
+			var from = { x: pos.x, y: pos.y };
+			var start = performance.now();
+			return new Promise(function (resolve, reject) {
+				function frame(now) {
+					if (my !== token) { reject("stopped"); return; }
+					var t = Math.min(1, (now - start) / ms);
+					var e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+					var cx = from.x + (x - from.x) * e;
+					var cy = from.y + (y - from.y) * e;
+					placeCursor(cx, cy);
+					if (onStep) onStep(cx, cy);
+					else {
+						var target = targetAt(cx, cy);
+						if (!current || current.kind !== target.kind || current.name !== target.name) showTarget(target, true);
+					}
+					if (t < 1) requestAnimationFrame(frame); else resolve();
+				}
+				requestAnimationFrame(frame);
+			});
+		}
+		function at(win, fx, fy) {
+			var r = windowRect(win);
+			return { x: r.x + r.w * fx, y: r.y + r.h * fy };
+		}
+		async function loop(my) {
+			var d = deskBox();
+			placeCursor(d.width * 0.5, d.height * 0.92);
+			cursor.classList.add("on");
+			await sleep(400, my);
+			while (my === token) {
+				var p = at(wins[0], 0.45, 0.55);
+				await moveTo(p.x, p.y, 900, my); await sleep(1300, my);
+				p = at(wins[2], 0.5, 0.45);
+				await moveTo(p.x, p.y, 800, my); await sleep(1100, my);
+				p = at(wins[1], 0.6, 0.6);
+				await moveTo(p.x, p.y, 700, my); await sleep(700, my);
+				cursor.classList.add("press"); capture(); await sleep(160, my); cursor.classList.remove("press");
+				await sleep(2000, my);
+				d = deskBox();
+				var a = at(wins[0], 0.3, 0.32);
+				var b = at(wins[0], 0.93, 0.62);
+				await moveTo(a.x, a.y, 800, my); await sleep(400, my);
+				cursor.classList.add("press");
+				var sx = a.x, sy = a.y;
+				await moveTo(b.x, b.y, 1100, my, function (cx, cy) {
+					showTarget({ kind: "area", x: Math.min(sx, cx), y: Math.min(sy, cy), w: Math.abs(cx - sx), h: Math.abs(cy - sy) }, false);
+				});
+				await sleep(300, my);
+				cursor.classList.remove("press"); capture();
+				await sleep(2200, my);
+				await moveTo(d.width * 0.3, d.height * 0.88, 900, my); await sleep(1400, my);
+			}
+		}
+		return {
+			start: function () {
+				if (running || reduceMotion) return;
+				running = true;
+				token += 1;
+				loop(token).catch(function () {});
+			},
+			stop: function () {
+				running = false;
+				token += 1;
+			},
+		};
+	})();
+
+	if (reduceMotion) {
+		requestAnimationFrame(function () {
+			var r = windowRect(wins[0]);
+			showTarget({ kind: "window", name: "Northwind", x: r.x, y: r.y, w: r.w, h: r.h }, false);
+		});
+	} else if ("IntersectionObserver" in window) {
+		new IntersectionObserver(function (entries) {
+			entries.forEach(function (entry) {
+				if (entry.isIntersecting && !userActive) autoplay.start();
+				if (!entry.isIntersecting) { autoplay.stop(); cursor.classList.remove("on"); hideTarget(); }
+			});
+		}, { threshold: 0.35 }).observe(desk);
+	}
+	window.addEventListener("resize", function () {
+		if (current && current.kind !== "area") {
+			var c = current;
+			if (c.kind === "full") showTarget(targetAt(-1, -1), false);
+			else wins.forEach(function (win) { if (win.getAttribute("data-name") === c.name) { var r = windowRect(win); showTarget({ kind: "window", name: c.name, x: r.x, y: r.y, w: r.w, h: r.h }, false); } });
+		}
+	});
+
+	/* ------------------------------------------------------------------ */
+	/* Beautify studio                                                     */
+	/* ------------------------------------------------------------------ */
+	var BACKGROUNDS = [
+		{ id: "sunset", css: "linear-gradient(135deg, #ff8fb1 0%, #ffa97a 50%, #ffd36e 100%)", sig: "rgba(70, 30, 20, .55)", label: "Sunset" },
+		{ id: "ocean", css: "linear-gradient(135deg, #8fd3fe 0%, #5b8cff 100%)", sig: "rgba(255, 255, 255, .8)", label: "Ocean" },
+		{ id: "aurora", css: "radial-gradient(70% 90% at 15% 15%, #b892ff 0%, transparent 60%), radial-gradient(70% 90% at 90% 20%, #6be4d4 0%, transparent 55%), radial-gradient(80% 80% at 60% 100%, #ff9ac1 0%, transparent 60%), #8f9cf9", sig: "rgba(255, 255, 255, .85)", label: "Aurora" },
+		{ id: "mint", css: "linear-gradient(135deg, #d9f99d 0%, #86efac 50%, #5eead4 100%)", sig: "rgba(10, 60, 40, .5)", label: "Mint" },
+		{ id: "graphite", css: "linear-gradient(135deg, #3a3a42 0%, #16161a 100%)", sig: "rgba(255, 255, 255, .7)", label: "Graphite" },
+		{ id: "blur", css: "#c9d4e6", sig: "rgba(20, 30, 50, .55)", label: "Blur", blur: true },
+		{ id: "none", css: "transparent", sig: "rgba(0, 0, 0, .45)", label: "Transparent" },
+	];
+	var studio = document.getElementById("studio");
+	var canvas = document.getElementById("canvas");
+	var frame = document.getElementById("frame");
+	var raw = document.getElementById("raw");
+	var stage = canvas.parentElement;
+	var state = { bg: "sunset", frame: "dark", ratio: "auto", pad: 7, radius: 14, shadow: 70, sig: true, on: true };
+	var swatches = document.getElementById("swatches");
+	BACKGROUNDS.forEach(function (bg) {
+		var button = document.createElement("button");
+		button.type = "button";
+		button.className = "swatch";
+		button.setAttribute("role", "radio");
+		button.setAttribute("aria-label", bg.label);
+		button.title = bg.label;
+		button.dataset.bg = bg.id;
+		if (bg.id === "none") button.style.background = "repeating-conic-gradient(#d9d9de 0 25%, #fff 0 50%) 0 0 / 10px 10px";
+		else if (bg.blur) button.style.background = "url(assets/raw.webp) center / cover";
+		else button.style.background = bg.css;
+		if (bg.blur) button.style.filter = "saturate(1.4)";
+		swatches.appendChild(button);
+	});
+	function setChecked(container, attr, value) {
+		container.querySelectorAll("[data-" + attr + "]").forEach(function (el) {
+			el.setAttribute("aria-checked", String(el.getAttribute("data-" + attr) === String(value)));
+		});
+	}
+	function shadowCss(strength) {
+		if (strength <= 0) return "none";
+		var s = strength / 100;
+		var w = canvas.clientWidth || 800;
+		var unit = w / 800;
+		return [
+			"0 " + (1 * unit).toFixed(1) + "px " + (2 * unit).toFixed(1) + "px rgba(0,0,0," + (0.10 * s).toFixed(3) + ")",
+			"0 " + (8 * unit).toFixed(1) + "px " + (18 * unit).toFixed(1) + "px rgba(0,0,0," + (0.16 * s).toFixed(3) + ")",
+			"0 " + (26 * unit).toFixed(1) + "px " + (60 * unit).toFixed(1) + "px rgba(0,0,0," + (0.28 * s).toFixed(3) + ")",
+		].join(", ");
+	}
+	function layout() {
+		var bg = BACKGROUNDS.filter(function (b) { return b.id === state.bg; })[0];
+		var stageStyle = getComputedStyle(stage);
+		var availW = stage.clientWidth - parseFloat(stageStyle.paddingLeft) - parseFloat(stageStyle.paddingRight);
+		var W = Math.max(200, availW);
+		var unit = W / 800;
+		var plain = !state.on;
+		var pad = plain ? 0 : (state.pad / 100) * W;
+		var tb = state.frame === "light" || state.frame === "dark" ? Math.max(14, 26 * unit) : 0;
+		var glass = state.frame === "glass" ? Math.max(5, 11 * unit) : 0;
+		var imgAspect = 1800 / 1125;
+		var maxH = Math.min(window.innerHeight * 0.68, 620);
+		var ratio = state.ratio === "auto" || plain ? null : Number(state.ratio);
+		var H;
+		var frameW;
+		var extraH = plain ? 0 : tb + glass * 2;
+		var extraW = plain ? 0 : glass * 2;
+		if (ratio) {
+			H = W / ratio;
+			if (H > maxH) { H = maxH; W = H * ratio; }
+			var innerW = W - pad * 2;
+			var innerH = H - pad * 2;
+			frameW = Math.min(innerW, (innerH - extraH) * imgAspect + extraW);
+		} else {
+			frameW = W - pad * 2;
+			var frameH = (frameW - extraW) / imgAspect + extraH;
+			H = frameH + pad * 2;
+			if (H > maxH) {
+				var scale = (maxH - pad * 2) / frameH;
+				frameW *= scale;
+				W = frameW + pad * 2;
+				H = maxH;
+			}
+		}
+		canvas.style.width = Math.round(W) + "px";
+		canvas.style.height = Math.round(H) + "px";
+		canvas.style.background = plain ? "transparent" : bg.css;
+		canvas.classList.toggle("bg-blur", !!bg.blur && !plain);
+		frame.style.width = Math.round(frameW) + "px";
+		var radius = plain ? 0 : state.radius * unit;
+		frame.style.borderRadius = radius + "px";
+		canvas.style.setProperty("--tb", tb + "px");
+		canvas.style.setProperty("--glass", glass + "px");
+		canvas.style.setProperty("--inner-radius", Math.max(0, radius - glass * 0.6) + "px");
+		canvas.style.setProperty("--shadow", shadowCss(state.shadow));
+		canvas.style.setProperty("--sig", bg.sig);
+		canvas.style.setProperty("--sig-size", Math.max(12, 22 * unit) + "px");
+		canvas.style.borderRadius = state.bg === "none" ? "0" : Math.max(0, 6 * unit) + "px";
+		canvas.className = "canvas f-" + state.frame + (bg.blur && !plain ? " bg-blur" : "") + (state.sig ? "" : " no-sig");
+		studio.classList.toggle("plain", plain);
+		document.getElementById("pad-out").textContent = state.pad;
+		document.getElementById("radius-out").textContent = state.radius;
+		document.getElementById("shadow-out").textContent = state.shadow + "%";
+		["pad", "radius", "shadow"].forEach(function (id) {
+			var input = document.getElementById(id);
+			input.style.setProperty("--p", ((input.value - input.min) / (input.max - input.min)) * 100 + "%");
+		});
+		setChecked(swatches, "bg", state.bg);
+		setChecked(document.getElementById("frames"), "frame", state.frame);
+		setChecked(document.getElementById("ratios"), "ratio", state.ratio);
+		document.getElementById("beautify-toggle").setAttribute("aria-checked", String(state.on));
+		document.getElementById("sig-toggle").setAttribute("aria-checked", String(state.sig));
+	}
+	swatches.addEventListener("click", function (event) {
+		var b = event.target.closest("[data-bg]");
+		if (b) { state.bg = b.getAttribute("data-bg"); layout(); }
+	});
+	document.getElementById("frames").addEventListener("click", function (event) {
+		var b = event.target.closest("[data-frame]");
+		if (b) { state.frame = b.getAttribute("data-frame"); layout(); }
+	});
+	document.getElementById("ratios").addEventListener("click", function (event) {
+		var b = event.target.closest("[data-ratio]");
+		if (b) { state.ratio = b.getAttribute("data-ratio"); layout(); }
+	});
+	["pad", "radius", "shadow"].forEach(function (id) {
+		document.getElementById(id).addEventListener("input", function (event) { state[id] = Number(event.target.value); layout(); });
+	});
+	document.getElementById("beautify-toggle").addEventListener("click", function () { state.on = !state.on; layout(); });
+	document.getElementById("sig-toggle").addEventListener("click", function () { state.sig = !state.sig; layout(); });
+	if ("ResizeObserver" in window) new ResizeObserver(function () { layout(); }).observe(stage);
+	else window.addEventListener("resize", layout);
+	layout();
+})();
+</script>
+</body>
+</html>

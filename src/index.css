@@ -2,6 +2,78 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * One neutral palette per system appearance, with a single blue accent.
+ * Light is the default; dark follows macOS / Windows "dark mode".
+ */
+:root {
+	--qs-bg: #f5f5f7;
+	--qs-stage: #e8e8eb;
+	--qs-panel: #fafafb;
+	--qs-panel-raised: #ffffff;
+	--qs-float: rgba(255, 255, 255, 0.9);
+	--qs-field: rgba(0, 0, 0, 0.045);
+	/* --qs-field composited over --qs-bg, for rings that must read as a gap. */
+	--qs-field-solid: #eaeaec;
+	--qs-hover: rgba(0, 0, 0, 0.05);
+	--qs-active: rgba(0, 0, 0, 0.085);
+	--qs-border: rgba(0, 0, 0, 0.075);
+	--qs-border-strong: rgba(0, 0, 0, 0.12);
+	--qs-text: #1d1d1f;
+	--qs-text-2: rgba(29, 29, 31, 0.62);
+	--qs-text-3: rgba(29, 29, 31, 0.42);
+	--qs-accent: #007aff;
+	--qs-select: var(--qs-accent);
+	--qs-primary: #1d1d1f;
+	--qs-primary-hover: #000000;
+	--qs-primary-text: #ffffff;
+	--qs-danger: #ff3b30;
+	--qs-success: #34c759;
+	--qs-switch-off: rgba(120, 120, 128, 0.24);
+	--qs-range-fill: rgba(29, 29, 31, 0.78);
+	--qs-range-track: rgba(0, 0, 0, 0.1);
+	--qs-ring: #1d1d1f;
+	--qs-shadow-float: 0 10px 30px rgba(0, 0, 0, 0.1), 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+	--qs-checker-a: #f0f0f2;
+	--qs-checker-b: #dcdce0;
+	--qs-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+		"Hiragino Sans GB", "Segoe UI Variable Text", "Segoe UI",
+		"Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+	color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--qs-bg: #202022;
+		--qs-stage: #161618;
+		--qs-panel: #1c1c1e;
+		--qs-panel-raised: #2c2c2f;
+		--qs-float: rgba(44, 44, 47, 0.92);
+		--qs-field: rgba(255, 255, 255, 0.06);
+		--qs-field-solid: #2d2d2f;
+		--qs-hover: rgba(255, 255, 255, 0.07);
+		--qs-active: rgba(255, 255, 255, 0.12);
+		--qs-border: rgba(255, 255, 255, 0.075);
+		--qs-border-strong: rgba(255, 255, 255, 0.12);
+		--qs-text: rgba(255, 255, 255, 0.92);
+		--qs-text-2: rgba(255, 255, 255, 0.6);
+		--qs-text-3: rgba(255, 255, 255, 0.38);
+		--qs-accent: #0a84ff;
+		--qs-primary: #f5f5f7;
+		--qs-primary-hover: #ffffff;
+		--qs-primary-text: #1d1d1f;
+		--qs-danger: #ff453a;
+		--qs-success: #30d158;
+		--qs-switch-off: rgba(120, 120, 128, 0.36);
+		--qs-range-fill: rgba(255, 255, 255, 0.82);
+		--qs-range-track: rgba(255, 255, 255, 0.14);
+		--qs-ring: rgba(255, 255, 255, 0.92);
+		--qs-shadow-float: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+		--qs-checker-a: #2a2a2d;
+		--qs-checker-b: #38383c;
+	}
+}
+
 * {
 	margin: 0;
 	padding: 0;
@@ -13,4 +85,224 @@ body,
 #root {
 	width: 100%;
 	height: 100%;
+}
+
+body {
+	font-family: var(--qs-font);
+	color: var(--qs-text);
+	font-size: 13px;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	text-rendering: optimizeLegibility;
+}
+
+button {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: 0;
+	cursor: default;
+}
+
+input,
+textarea {
+	font: inherit;
+}
+
+.qs-drag {
+	-webkit-app-region: drag;
+}
+
+.qs-no-drag {
+	-webkit-app-region: no-drag;
+}
+
+/* ─── Tooltip ───────────────────────────────────────────────────────────── */
+
+.qs-tip-host {
+	position: relative;
+}
+
+.qs-tip {
+	pointer-events: none;
+	position: absolute;
+	left: 50%;
+	top: calc(100% + 8px);
+	z-index: 60;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 8px;
+	border-radius: 7px;
+	background: rgba(30, 30, 32, 0.94);
+	border: 0.5px solid rgba(255, 255, 255, 0.12);
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+	color: rgba(255, 255, 255, 0.94);
+	font-size: 11.5px;
+	font-weight: 500;
+	white-space: nowrap;
+	opacity: 0;
+	transform: translate(-50%, -2px);
+	transition:
+		opacity 120ms ease,
+		transform 120ms ease;
+	transition-delay: 0ms;
+}
+
+.qs-tip[data-side="top"] {
+	top: auto;
+	bottom: calc(100% + 8px);
+	transform: translate(-50%, 2px);
+}
+
+.qs-tip-host:hover > .qs-tip,
+.qs-tip-host:focus-visible > .qs-tip {
+	opacity: 1;
+	transform: translate(-50%, 0);
+	transition-delay: 380ms;
+}
+
+.qs-kbd {
+	display: inline-flex;
+	min-width: 16px;
+	height: 16px;
+	align-items: center;
+	justify-content: center;
+	padding: 0 4px;
+	border-radius: 4px;
+	background: rgba(255, 255, 255, 0.14);
+	color: rgba(255, 255, 255, 0.7);
+	font-size: 10.5px;
+	font-weight: 600;
+	font-family: var(--qs-font);
+	letter-spacing: 0.02em;
+}
+
+/* ─── Slider ────────────────────────────────────────────────────────────── */
+
+.qs-range {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 100%;
+	height: 18px;
+	background: transparent;
+	outline: none;
+}
+
+.qs-range::-webkit-slider-runnable-track {
+	height: 4px;
+	border-radius: 999px;
+	background: linear-gradient(
+		90deg,
+		var(--qs-range-fill) 0%,
+		var(--qs-range-fill) var(--qs-fill, 50%),
+		var(--qs-range-track) var(--qs-fill, 50%)
+	);
+}
+
+.qs-range::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 14px;
+	height: 14px;
+	margin-top: -5px;
+	border-radius: 50%;
+	background: #fff;
+	box-shadow:
+		0 1px 3px rgba(0, 0, 0, 0.3),
+		0 0 0 0.5px rgba(0, 0, 0, 0.18);
+	transition: transform 120ms ease;
+}
+
+.qs-range:hover::-webkit-slider-thumb {
+	transform: scale(1.1);
+}
+
+.qs-range:focus-visible::-webkit-slider-thumb {
+	box-shadow:
+		0 0 0 3px color-mix(in srgb, var(--qs-accent) 45%, transparent),
+		0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* ─── Scrollbars ────────────────────────────────────────────────────────── */
+
+.qs-scroll {
+	scrollbar-width: thin;
+	scrollbar-color: var(--qs-border-strong) transparent;
+}
+
+.qs-scroll::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+.qs-scroll::-webkit-scrollbar-thumb {
+	border-radius: 999px;
+	border: 2px solid transparent;
+	background: var(--qs-border-strong) padding-box;
+}
+
+.qs-scroll::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+/* ─── Stage ─────────────────────────────────────────────────────────────── */
+
+.qs-stage-bg {
+	background-color: var(--qs-stage);
+}
+
+.qs-checker {
+	background-color: var(--qs-checker-a);
+	background-image:
+		linear-gradient(45deg, var(--qs-checker-b) 25%, transparent 25%),
+		linear-gradient(-45deg, var(--qs-checker-b) 25%, transparent 25%),
+		linear-gradient(45deg, transparent 75%, var(--qs-checker-b) 75%),
+		linear-gradient(-45deg, transparent 75%, var(--qs-checker-b) 75%);
+	background-size: 16px 16px;
+	background-position:
+		0 0,
+		0 8px,
+		8px -8px,
+		-8px 0;
+}
+
+@keyframes qs-pop-in {
+	from {
+		opacity: 0;
+		transform: translate(-50%, 6px) scale(0.98);
+	}
+	to {
+		opacity: 1;
+		transform: translate(-50%, 0) scale(1);
+	}
+}
+
+@keyframes qs-slide-down {
+	from {
+		opacity: 0;
+		transform: translate(-50%, -4px);
+	}
+	to {
+		opacity: 1;
+		transform: translate(-50%, 0);
+	}
+}
+
+.qs-toast {
+	animation: qs-pop-in 180ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.qs-context-bar {
+	animation: qs-slide-down 140ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.qs-toast,
+	.qs-context-bar {
+		animation: none;
+	}
+	.qs-tip {
+		transition: none;
+	}
 }

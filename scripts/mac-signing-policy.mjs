@@ -3,13 +3,21 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 
+export async function readDesignatedRequirement(app, run = exec) {
+	const { stdout = "", stderr = "" } = await run("codesign", ["-d", "-r-", app]);
+	return `${stdout}\n${stderr}`.match(/^(?:#\s*)?designated => (.+)$/m)?.[1]?.trim() ?? null;
+}
+
+/** A requirement bound to a certificate survives rebuilds; a cdhash one does not. */
+export function isStableRequirement(requirement) {
+	return /certificate leaf\s*=\s*H"[0-9a-f]+"/i.test(requirement) || /\banchor apple\b/.test(requirement);
+}
+
 // Check identity continuity before stopping or moving the user's installed app.
 // A matching bundle name/version alone does not preserve the signing requirement.
 export async function verifyMacUpdateIdentity(source, target, run = exec) {
 	await run("codesign", ["--verify", "--deep", "--strict", target]);
-	const { stdout = "", stderr = "" } = await run("codesign", ["-d", "-r-", target]);
-	const requirement = `${stdout}\n${stderr}`
-		.match(/^(?:#\s*)?designated => (.+)$/m)?.[1]?.trim();
+	const requirement = await readDesignatedRequirement(target, run);
 	if (!requirement) {
 		throw new Error("无法读取已安装 QuickShot 的签名身份；应用保持原样。");
 	}
@@ -22,4 +30,42 @@ export async function verifyMacUpdateIdentity(source, target, run = exec) {
 		);
 	}
 	return requirement;
+}
+
+/**
+ * The one-time, explicitly requested move from an ad-hoc install (whose
+ * requirement is bound to one build's cdhash) to a stable signing identity.
+ * Screen Recording must be granted again once; later updates then pass
+ * verifyMacUpdateIdentity unchanged.
+ */
+export async function verifyMacSigningMigration(source, target, run = exec) {
+	await run("codesign", ["--verify", "--deep", "--strict", target]);
+	const installed = await readDesignatedRequirement(target, run);
+	if (!installed) {
+		throw new Error("无法读取已安装 QuickShot 的签名身份；应用保持原样。");
+	}
+	if (isStableRequirement(installed)) {
+		throw new Error("已安装的 QuickShot 已使用固定签名，请用常规安装，不需要迁移。");
+	}
+	const next = await readDesignatedRequirement(source, run);
+	if (!next || !isStableRequirement(next)) {
+		throw new Error("新包没有使用固定签名身份，迁移已停止；应用保持原样。");
+	}
+	await run("codesign", ["--verify", "--deep", "--strict", `-R=${next}`, source]);
+	return { from: installed, to: next };
+}
+
+/**
+ * Used only when the user has explicitly accepted granting Screen Recording
+ * again. Both apps must still carry valid, readable signatures.
+ */
+export async function verifyMacReauthorizedChange(source, target, run = exec) {
+	await run("codesign", ["--verify", "--deep", "--strict", target]);
+	const installed = await readDesignatedRequirement(target, run);
+	const next = await readDesignatedRequirement(source, run);
+	if (!installed || !next) {
+		throw new Error("无法读取签名身份；应用保持原样。");
+	}
+	await run("codesign", ["--verify", "--deep", "--strict", `-R=${next}`, source]);
+	return { from: installed, to: next, acceptedReauthorization: true };
 }

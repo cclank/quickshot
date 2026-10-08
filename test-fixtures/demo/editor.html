@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>QuickShot demo editor</title>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script>
+			// The real editor in a warm window, fed by the demo stage (test-fixtures/demo/stage.html).
+			const demo = window.parent.demo;
+			Object.defineProperty(window, "devicePixelRatio", { get: () => demo.pixelRatio });
+			const saved = (name) => ({ success: true, path: `/Users/demo/Downloads/${name}` });
+			window.close = () => demo.closeEditor();
+			window.electronAPI = {
+				platform: "darwin",
+				language: demo.lang,
+				getPreviewSession: async (sessionId) => demo.previewSession(sessionId),
+				getPendingPreviewSession: async () => ({ success: false }),
+				onPreviewSession: (listener) => demo.on("preview-session", listener),
+				previewSessionReady: async (sessionId) => demo.editorReady(sessionId),
+				captureForStitch: async () => demo.captureForStitch(),
+				onStitchPiece: (listener) => demo.on("stitch-piece", listener),
+				extractText: async () => demo.extractText(),
+				copyTextToClipboard: async () => ({ success: true }),
+				copyToClipboard: async () => ({ success: true }),
+				pinScreenshot: async (png) => demo.pin(png),
+				quickSaveScreenshotFinal: async () => saved("QuickShot 2026-10-08 09.41.png"),
+				saveScreenshotFinal: async () => saved("QuickShot 2026-10-08 09.41.png"),
+				minimizeWindow: async () => ({ success: true }),
+				readAssetDataUrl: async () => null,
+			};
+		</script>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>QuickShot Onboarding Fixture</title>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script>
+			// The welcome guide against a mocked main process. ?permission=granted
+			// starts allowed; otherwise "Open System Settings" grants it after 1.5 s.
+			const parameters = new URLSearchParams(window.location.search);
+			const state = {
+				platform: parameters.get("platform") || "darwin",
+				permission: parameters.get("permission") || "denied",
+				shortcut: (parameters.get("platform") || "darwin") === "darwin" ? "⌘⇧X" : "Ctrl+Shift+X",
+				launchAtLogin: false,
+			};
+			window.__quickshotOnboardingFixture = { finished: null, relaunched: false };
+			window.electronAPI = {
+				platform: state.platform,
+				language: parameters.get("lang") || undefined,
+				onboarding: {
+					getState: async () => ({ ...state }),
+					requestPermission: async () => {
+						setTimeout(() => (state.permission = "granted"), 1500);
+						return { success: true, permission: state.permission };
+					},
+					relaunch: async () => {
+						window.__quickshotOnboardingFixture.relaunched = true;
+						return { success: true };
+					},
+					setLaunchAtLogin: async (enabled) => {
+						state.launchAtLogin = enabled;
+						return { success: true, launchAtLogin: enabled };
+					},
+					finish: async (options) => {
+						window.__quickshotOnboardingFixture.finished = options;
+						return { success: true };
+					},
+					onStep: () => () => {},
+				},
+			};
+		</script>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

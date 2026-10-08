@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { verifyMacUpdateIdentity } from "./mac-signing-policy.mjs";
+import {
+	isStableRequirement,
+	verifyMacReauthorizedChange,
+	verifyMacSigningMigration,
+	verifyMacUpdateIdentity,
+} from "./mac-signing-policy.mjs";
 
 const source = "/build/QuickShot.app";
 const target = "/Applications/QuickShot.app";
@@ -47,5 +52,72 @@ describe("macOS in-place update signing identity", () => {
 		const run = vi.fn().mockRejectedValueOnce(new Error("invalid signature"));
 		await expect(verifyMacUpdateIdentity(source, target, run)).rejects.toThrow("invalid signature");
 		expect(run).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("one-time migration to a stable signing identity", () => {
+	const adHoc = 'cdhash H"0123456789abcdef0123456789abcdef01234567"';
+	const stable = 'identifier "com.quickshot.app" and certificate leaf = H"89abcdef0123456789abcdef0123456789abcdef"';
+
+	it("recognizes certificate-bound requirements as stable", () => {
+		expect(isStableRequirement(stable)).toBe(true);
+		expect(isStableRequirement('identifier "x" and anchor apple generic')).toBe(true);
+		expect(isStableRequirement(adHoc)).toBe(false);
+	});
+
+	it("allows moving an ad-hoc install to a certificate-signed build", async () => {
+		const run = vi.fn()
+			.mockResolvedValueOnce({})
+			.mockResolvedValueOnce({ stderr: `# designated => ${adHoc}` })
+			.mockResolvedValueOnce({ stderr: `# designated => ${stable}` })
+			.mockResolvedValueOnce({});
+		await expect(verifyMacSigningMigration(source, target, run)).resolves.toEqual({
+			from: adHoc,
+			to: stable,
+		});
+		expect(run).toHaveBeenLastCalledWith("codesign", [
+			"--verify", "--deep", "--strict", `-R=${stable}`, source,
+		]);
+	});
+
+	it("refuses to migrate to another ad-hoc build", async () => {
+		const run = vi.fn()
+			.mockResolvedValueOnce({})
+			.mockResolvedValueOnce({ stderr: `# designated => ${adHoc}` })
+			.mockResolvedValueOnce({ stderr: '# designated => cdhash H"fedcba"' });
+		await expect(verifyMacSigningMigration(source, target, run)).rejects.toThrow("没有使用固定签名");
+	});
+
+	it("refuses to migrate away from an already stable install", async () => {
+		const run = vi.fn()
+			.mockResolvedValueOnce({})
+			.mockResolvedValueOnce({ stderr: `# designated => ${stable}` });
+		await expect(verifyMacSigningMigration(source, target, run)).rejects.toThrow("已使用固定签名");
+	});
+});
+
+describe("user-accepted re-authorization", () => {
+	it("records both requirements and still validates the new build", async () => {
+		const run = vi.fn()
+			.mockResolvedValueOnce({})
+			.mockResolvedValueOnce({ stderr: '# designated => cdhash H"old"' })
+			.mockResolvedValueOnce({ stderr: '# designated => cdhash H"new"' })
+			.mockResolvedValueOnce({});
+		await expect(verifyMacReauthorizedChange(source, target, run)).resolves.toEqual({
+			from: 'cdhash H"old"',
+			to: 'cdhash H"new"',
+			acceptedReauthorization: true,
+		});
+		expect(run).toHaveBeenLastCalledWith("codesign", [
+			"--verify", "--deep", "--strict", '-R=cdhash H"new"', source,
+		]);
+	});
+
+	it("stops when a requirement cannot be read", async () => {
+		const run = vi.fn()
+			.mockResolvedValueOnce({})
+			.mockResolvedValueOnce({ stderr: "" })
+			.mockResolvedValueOnce({ stderr: '# designated => cdhash H"new"' });
+		await expect(verifyMacReauthorizedChange(source, target, run)).rejects.toThrow("无法读取");
 	});
 });

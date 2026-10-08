@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#0d0d1a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#34B27B"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
+  <!-- Viewfinder frame -->
+  <path d="M140 170 L140 140 Q140 130 150 130 L190 130" stroke="url(#accent)" stroke-width="16" stroke-linecap="round" fill="none"/>
+  <path d="M322 130 L362 130 Q372 130 372 140 L372 170" stroke="url(#accent)" stroke-width="16" stroke-linecap="round" fill="none"/>
+  <path d="M372 342 L372 372 Q372 382 362 382 L322 382" stroke="url(#accent)" stroke-width="16" stroke-linecap="round" fill="none"/>
+  <path d="M190 382 L150 382 Q140 382 140 372 L140 342" stroke="url(#accent)" stroke-width="16" stroke-linecap="round" fill="none"/>
+  <!-- Center crosshair -->
+  <circle cx="256" cy="256" r="36" stroke="url(#accent)" stroke-width="8" fill="none" opacity="0.7"/>
+  <line x1="256" y1="210" x2="256" y2="236" stroke="url(#accent)" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
+  <line x1="256" y1="276" x2="256" y2="302" stroke="url(#accent)" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
+  <line x1="210" y1="256" x2="236" y2="256" stroke="url(#accent)" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
+  <line x1="276" y1="256" x2="302" y2="256" stroke="url(#accent)" stroke-width="6" stroke-linecap="round" opacity="0.7"/>
+  <!-- Flash accent -->
+  <path d="M380 100 L395 130 L378 130 L393 160" stroke="#FFCC00" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

@@ -1,0 +1,46 @@
+name: Bug report
+description: Something does not work as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Press Cmd/Ctrl+Shift+X
+        2. Select an area
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: QuickShot version
+      placeholder: "1.0.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows 11
+        - Windows 10
+        - Linux
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Tray menu → Show Diagnostics opens quickshot.log. Paste the relevant lines; the log never contains screenshot pixels.
+      render: text

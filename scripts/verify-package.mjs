@@ -175,6 +175,30 @@ if (isMacPackage) {
 		bytes: ocrHelperStat.size,
 		maxBytes: MAX_OCR_HELPER_BYTES,
 	};
+
+	const windowListHelperPath = path.join(
+		resourcesDirectory,
+		"window-list",
+		"quickshot-window-list",
+	);
+	await access(windowListHelperPath, constants.X_OK);
+	const windowListStat = await stat(windowListHelperPath);
+	assert(
+		windowListStat.isFile() && windowListStat.size > 0 && windowListStat.size <= MAX_OCR_HELPER_BYTES,
+		`Window list helper is missing or invalid: ${windowListHelperPath}`,
+	);
+
+	const captureAgentPath = path.join(
+		resourcesDirectory,
+		"capture-agent",
+		"quickshot-capture-agent",
+	);
+	await access(captureAgentPath, constants.X_OK);
+	const captureAgentStat = await stat(captureAgentPath);
+	assert(
+		captureAgentStat.isFile() && captureAgentStat.size > 0 && captureAgentStat.size <= MAX_OCR_HELPER_BYTES,
+		`Capture agent is missing or invalid: ${captureAgentPath}`,
+	);
 } else {
 	const unpackedAppRoot = path.resolve(resourcesDirectory, "..");
 	const localeDirectory = path.join(unpackedAppRoot, "locales");

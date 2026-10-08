@@ -15,6 +15,19 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { t } from "@/lib/i18n";
+
+const surface: CSSProperties = { background: "var(--qs-panel)" };
+const group: CSSProperties = {
+	background: "var(--qs-field)",
+	boxShadow: "inset 0 0 0 1px var(--qs-border)",
+};
+const primaryButton: CSSProperties = {
+	background: "var(--qs-primary)",
+	color: "var(--qs-primary-text)",
+	boxShadow: "0 1px 2px rgba(0,0,0,0.16)",
+};
+const accent = "var(--qs-accent)";
 
 export type TextExtractionResult = {
 	text: string;
@@ -26,10 +39,6 @@ export type TextExtractionPanelProps = {
 	onClose: () => void;
 	onExtract: () => Promise<TextExtractionResult>;
 	onCopyText: (text: string) => Promise<void>;
-	surface: CSSProperties;
-	group: CSSProperties;
-	primaryButton: CSSProperties;
-	accent: string;
 };
 
 type ExtractionStatus =
@@ -53,10 +62,6 @@ export function TextExtractionPanel({
 	onClose,
 	onExtract,
 	onCopyText,
-	surface,
-	group,
-	primaryButton,
-	accent,
 }: TextExtractionPanelProps) {
 	const [status, setStatus] = useState<ExtractionStatus>("idle");
 	const [draftText, setDraftText] = useState("");
@@ -111,7 +116,7 @@ export function TextExtractionPanel({
 				return;
 			}
 
-			setExtractError(errorMessage(error, "文字提取失败，请稍后重试。"));
+			setExtractError(errorMessage(error, t("ocr.failedFallback")));
 			setStatus("error");
 		}
 	}, [clearCopyResetTimer, onExtract]);
@@ -210,12 +215,12 @@ export function TextExtractionPanel({
 
 	const copyLabel =
 		copyStatus === "copying"
-			? "复制中…"
+			? t("ocr.copying")
 			: copyStatus === "success"
-				? "已复制"
+				? t("ocr.copied")
 				: copyStatus === "error"
-					? "重试复制"
-					: "复制文字";
+					? t("ocr.copyRetry")
+					: t("ocr.copy");
 
 	return (
 		<aside
@@ -224,11 +229,11 @@ export function TextExtractionPanel({
 			aria-labelledby="text-extraction-title"
 			aria-describedby="text-extraction-description"
 			aria-busy={status === "loading" || copyStatus === "copying"}
-			className="relative z-20 my-2 mr-2.5 flex min-w-[250px] shrink-0 flex-col overflow-hidden rounded-[22px] border border-white/10 text-white"
+			className="relative z-20 flex min-w-[250px] shrink-0 flex-col overflow-hidden border-l border-[var(--qs-border)] text-[var(--qs-text)]"
 			style={
 				{
 					...surface,
-					width: "clamp(250px, 34vw, 340px)",
+					width: "clamp(260px, 28vw, 320px)",
 					WebkitAppRegion: "no-drag",
 				} as CSSProperties
 			}
@@ -239,7 +244,7 @@ export function TextExtractionPanel({
 				}
 			}}
 		>
-			<header className="flex shrink-0 items-start gap-3 border-b border-white/10 px-4 py-4">
+			<header className="flex shrink-0 items-start gap-3 border-b border-[var(--qs-border)] px-4 py-3.5">
 				<div
 					className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
 					style={{ ...group, color: accent }}
@@ -251,23 +256,23 @@ export function TextExtractionPanel({
 						id="text-extraction-title"
 						className="text-sm font-semibold tracking-[0.02em]"
 					>
-						文本提取
+						{t("ocr.title")}
 					</h2>
 					<p
 						id="text-extraction-description"
-						className="mt-1 text-[11px] leading-5 text-white/52"
+						className="mt-1 text-[11px] leading-5 text-[var(--qs-text-3)]"
 					>
-						识别原始截图，不含标注、背景和签名
+						{t("ocr.description")}
 					</p>
 				</div>
 				<button
 					ref={closeButtonRef}
 					type="button"
 					onClick={onClose}
-					className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white/58 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+					className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[var(--qs-text-2)] transition-colors hover:text-[var(--qs-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--qs-select)]"
 					style={group}
-					aria-label="关闭文本提取"
-					title="关闭"
+					aria-label={t("ocr.close")}
+					title={t("action.close")}
 				>
 					<X size={15} aria-hidden="true" />
 				</button>
@@ -278,22 +283,22 @@ export function TextExtractionPanel({
 					<div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
 						<FileText
 							size={30}
-							className="text-white/42"
+							className="text-[var(--qs-text-3)]"
 							aria-hidden="true"
 						/>
 						<div>
-							<p className="text-sm font-medium">准备提取文字</p>
-							<p className="mt-1 text-xs text-white/48">
-								识别在本机完成
+							<p className="text-sm font-medium">{t("ocr.ready")}</p>
+							<p className="mt-1 text-xs text-[var(--qs-text-3)]">
+								{t("ocr.local")}
 							</p>
 						</div>
 						<button
 							type="button"
 							onClick={() => void runExtraction()}
-							className="rounded-xl px-4 py-2 text-xs font-semibold text-white transition-[filter,box-shadow] duration-150 ease-out hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 motion-reduce:transition-none"
+							className="rounded-xl px-4 py-2 text-xs font-semibold transition-[filter,box-shadow] duration-150 ease-out hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--qs-select)] motion-reduce:transition-none"
 							style={primaryButton}
 						>
-							开始提取
+							{t("ocr.start")}
 						</button>
 					</div>
 				)}
@@ -311,9 +316,9 @@ export function TextExtractionPanel({
 							aria-hidden="true"
 						/>
 						<div>
-							<p className="text-sm font-medium">正在识别文字…</p>
-							<p className="mt-1 text-xs text-white/48">
-								较大的截图可能需要几秒
+							<p className="text-sm font-medium">{t("ocr.loading")}</p>
+							<p className="mt-1 text-xs text-[var(--qs-text-3)]">
+								{t("ocr.loadingDetail")}
 							</p>
 						</div>
 					</div>
@@ -324,12 +329,12 @@ export function TextExtractionPanel({
 						<div className="mb-2 flex shrink-0 items-center justify-between gap-3">
 							<label
 								htmlFor="text-extraction-result"
-								className="text-xs font-semibold text-white/78"
+								className="text-xs font-semibold text-[var(--qs-text-2)]"
 							>
-								识别结果
+								{t("ocr.result")}
 							</label>
-							<span className="text-[11px] text-white/42">
-								{lineCount} 行 · 可编辑
+							<span className="text-[11px] text-[var(--qs-text-3)]">
+								{t("ocr.lines", { count: lineCount })}
 							</span>
 						</div>
 						<textarea
@@ -338,7 +343,7 @@ export function TextExtractionPanel({
 							value={draftText}
 							onChange={handleTextChange}
 							spellCheck={false}
-							className="min-h-[140px] flex-1 resize-none rounded-2xl p-3 text-[13px] leading-6 text-white outline-none select-text placeholder:text-white/30 focus:ring-1 focus:ring-white/25"
+							className="min-h-[140px] flex-1 resize-none rounded-2xl p-3 text-[13px] leading-6 text-[var(--qs-text)] outline-none select-text placeholder:text-[var(--qs-text-3)] focus:ring-1 focus:ring-[var(--qs-border-strong)]"
 							style={{
 								...group,
 								caretColor: accent,
@@ -349,18 +354,18 @@ export function TextExtractionPanel({
 							<button
 								type="button"
 								onClick={() => void runExtraction()}
-								className="flex h-10 items-center justify-center gap-2 rounded-xl px-3 text-xs font-medium text-white/72 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+								className="flex h-10 items-center justify-center gap-2 rounded-xl px-3 text-xs font-medium text-[var(--qs-text-2)] transition-colors hover:text-[var(--qs-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--qs-select)]"
 								style={group}
-								title="重新识别原始截图"
+								title={t("ocr.again")}
 							>
 								<RefreshCw size={14} aria-hidden="true" />
-								重新提取
+								{t("ocr.again")}
 							</button>
 							<button
 								type="button"
 								onClick={() => void handleCopy()}
 								disabled={draftText.length === 0 || copyStatus === "copying"}
-								className="flex h-10 flex-1 items-center justify-center gap-2 rounded-xl px-4 text-xs font-semibold text-white transition-[filter,box-shadow] duration-150 ease-out hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 motion-reduce:transition-none"
+								className="flex h-10 flex-1 items-center justify-center gap-2 rounded-xl px-4 text-xs font-semibold transition-[filter,box-shadow] duration-150 ease-out hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--qs-select)] motion-reduce:transition-none"
 								style={primaryButton}
 							>
 								{copyStatus === "copying" ? (
@@ -388,25 +393,25 @@ export function TextExtractionPanel({
 					>
 						<FileText
 							size={30}
-							className="text-white/38"
+							className="text-[var(--qs-text-3)]"
 							aria-hidden="true"
 						/>
 						<div>
 							<p className="text-sm font-medium">
-								没有识别到文字
+								{t("ocr.empty")}
 							</p>
-							<p className="mt-1 max-w-[250px] text-xs leading-5 text-white/48">
-								可以尝试包含更清晰、更大字号文字的截图
+							<p className="mt-1 max-w-[250px] text-xs leading-5 text-[var(--qs-text-3)]">
+								{t("ocr.emptyDetail")}
 							</p>
 						</div>
 						<button
 							type="button"
 							onClick={() => void runExtraction()}
-							className="flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold text-white transition-[filter,box-shadow] duration-150 ease-out hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 motion-reduce:transition-none"
+							className="flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-[filter,box-shadow] duration-150 ease-out hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--qs-select)] motion-reduce:transition-none"
 							style={primaryButton}
 						>
 							<RefreshCw size={14} aria-hidden="true" />
-							重新提取
+							{t("ocr.again")}
 						</button>
 					</div>
 				)}
@@ -423,13 +428,13 @@ export function TextExtractionPanel({
 							aria-hidden="true"
 						/>
 						<div>
-							<p className="text-sm font-medium">文字提取失败</p>
-							<p className="mt-1 max-w-[270px] text-xs leading-5 text-white/52">
+							<p className="text-sm font-medium">{t("ocr.failed")}</p>
+							<p className="mt-1 max-w-[270px] text-xs leading-5 text-[var(--qs-text-3)]">
 								{extractError}
 							</p>
 							{draftText.trim().length > 0 && (
-								<p className="mt-2 text-[11px] text-white/42">
-									上次编辑的结果已保留
+								<p className="mt-2 text-[11px] text-[var(--qs-text-3)]">
+									{t("ocr.keptDraft")}
 								</p>
 							)}
 						</div>
@@ -438,20 +443,20 @@ export function TextExtractionPanel({
 								<button
 									type="button"
 									onClick={() => setStatus("success")}
-									className="rounded-xl px-4 py-2 text-xs font-medium text-white/72 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+									className="rounded-xl px-4 py-2 text-xs font-medium text-[var(--qs-text-2)] transition-colors hover:text-[var(--qs-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--qs-select)]"
 									style={group}
 								>
-									返回上次结果
+									{t("ocr.backToDraft")}
 								</button>
 							)}
 							<button
 								type="button"
 								onClick={() => void runExtraction()}
-								className="flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold text-white transition-[filter,box-shadow] duration-150 ease-out hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 motion-reduce:transition-none"
+								className="flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-semibold transition-[filter,box-shadow] duration-150 ease-out hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--qs-select)] motion-reduce:transition-none"
 								style={primaryButton}
 							>
 								<RefreshCw size={14} aria-hidden="true" />
-								重试
+								{t("ocr.retry")}
 							</button>
 						</div>
 					</div>
@@ -460,9 +465,9 @@ export function TextExtractionPanel({
 
 			<div className="sr-only" aria-live="polite" aria-atomic="true">
 				{copyStatus === "success"
-					? "文字已复制到剪贴板"
+					? t("ocr.copiedLive")
 					: copyStatus === "error"
-						? "复制失败，请重试"
+						? t("ocr.copyFailedLive")
 						: ""}
 			</div>
 		</aside>

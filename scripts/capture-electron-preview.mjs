@@ -186,7 +186,7 @@ async function captureQuickSaveExport(filePath) {
 		)) || 0;
 	const clicked = await evaluate(`(() => {
 		const button = document.querySelector(
-			'button[aria-label="快速保存到下载目录"]',
+			'button[data-quickshot-action="quick-save"]',
 		);
 		if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
 		button.click();
@@ -281,18 +281,13 @@ try {
 	while (Date.now() < readyDeadline) {
 		const evaluation = await page.send("Runtime.evaluate", {
 			expression: `(() => {
-				const image = document.querySelector('img');
+				const composition = document.querySelector('[data-quickshot-composition]');
 				const canvas = document.querySelector(
 					'[data-quickshot-composition-canvas]',
 				);
 				return document.documentElement.dataset.previewFixtureReady === 'true'
-					&& Boolean(image?.complete && image.naturalWidth > 0)
-					&& Boolean(
-						canvas &&
-						canvas.width > 0 &&
-						canvas.height > 0 &&
-						getComputedStyle(canvas).opacity === '1'
-					);
+					&& Number(composition?.dataset.sourceWidth || 0) > 0
+					&& Boolean(canvas && canvas.width > 0 && canvas.height > 0);
 			})()`,
 			returnByValue: true,
 		});
@@ -320,12 +315,11 @@ try {
 		const metadata = await evaluate(`(() => {
 			const composition = document.querySelector('[data-quickshot-composition]');
 			const canvas = document.querySelector('[data-quickshot-composition-canvas]');
-			const image = document.querySelector('img');
 			const rect = composition?.getBoundingClientRect();
 			return {
 				devicePixelRatio: window.devicePixelRatio,
-				sourceWidth: image?.naturalWidth || 0,
-				sourceHeight: image?.naturalHeight || 0,
+				sourceWidth: Number(composition?.dataset.sourceWidth || 0),
+				sourceHeight: Number(composition?.dataset.sourceHeight || 0),
 				previewWidth: rect?.width || 0,
 				previewHeight: rect?.height || 0,
 				canvasWidth: canvas instanceof HTMLCanvasElement ? canvas.width : 0,

@@ -5,7 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import asar from "@electron/asar";
-import { verifyMacUpdateIdentity } from "./mac-signing-policy.mjs";
+import {
+	verifyMacReauthorizedChange,
+	verifyMacSigningMigration,
+	verifyMacUpdateIdentity,
+} from "./mac-signing-policy.mjs";
 import { registerOnlyInstalledQuickShot } from "./mac-app-registration.mjs";
 
 const exec = promisify(execFile);
@@ -13,12 +17,27 @@ const root = path.resolve(import.meta.dirname, "..");
 const projectManifest = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const arguments_ = process.argv.slice(2);
 const checkOnly = arguments_.includes("--check");
-const sourceArguments = arguments_.filter((argument) => argument !== "--check");
-if (sourceArguments.length > 1 || sourceArguments.some((argument) => argument.startsWith("--"))) {
-	throw new Error("Usage: node scripts/install-electron-mac.mjs [built-QuickShot.app] [--check]");
+// Explicit, one-time move from the ad-hoc install to a stable signing identity.
+const migrateSigning = arguments_.includes("--migrate-signing");
+// Only after the user has confirmed they will grant Screen Recording again.
+const acceptReauthorization = arguments_.includes("--accept-reauthorization");
+const flags = new Set(["--check", "--migrate-signing", "--accept-reauthorization"]);
+const sourceArguments = arguments_.filter((argument) => !flags.has(argument));
+if (
+	sourceArguments.length > 1 ||
+	sourceArguments.some((argument) => argument.startsWith("--")) ||
+	(migrateSigning && acceptReauthorization)
+) {
+	throw new Error(
+		"Usage: node scripts/install-electron-mac.mjs [built-QuickShot.app] [--check] [--migrate-signing | --accept-reauthorization]",
+	);
 }
 const source = path.resolve(sourceArguments[0] || path.join(root, "release", projectManifest.version, "mac-arm64", "QuickShot.app"));
-const target = path.join(os.homedir(), "Applications", "QuickShot.app");
+// The system Applications folder, where the DMG installs it too.
+const target = path.join("/Applications", "QuickShot.app");
+// Earlier local installs lived in ~/Applications; a second copy there would
+// compete for the single-instance lock and the Screen Recording entry.
+const legacyTarget = path.join(os.homedir(), "Applications", "QuickShot.app");
 const identifier = "com.quickshot.app";
 const launchServices = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 const executableSuffix = "/Contents/MacOS/QuickShot";
@@ -55,14 +74,23 @@ for (const file of checkedFiles) {
 }
 const archiveHash = sha256(await readFile(archive));
 let signingRequirement = null;
+let signingMigration = null;
 if (await exists(target)) {
 	if (await plist(target, "CFBundleIdentifier") !== identifier) {
 		throw new Error("The existing QuickShot.app has an unexpected application identifier; it was left intact");
 	}
-	signingRequirement = await verifyMacUpdateIdentity(source, target);
+	if (migrateSigning) {
+		signingMigration = await verifyMacSigningMigration(source, target);
+		signingRequirement = signingMigration.to;
+	} else if (acceptReauthorization) {
+		signingMigration = await verifyMacReauthorizedChange(source, target);
+		signingRequirement = signingMigration.to;
+	} else {
+		signingRequirement = await verifyMacUpdateIdentity(source, target);
+	}
 }
 if (checkOnly) {
-	console.log(JSON.stringify({ source, target, signingRequirement, archiveSha256: archiveHash, checkOnly }, null, 2));
+	console.log(JSON.stringify({ source, target, signingRequirement, signingMigration, archiveSha256: archiveHash, checkOnly }, null, 2));
 	process.exit(0);
 }
 
@@ -102,15 +130,28 @@ while ((await runningQuickShots()).length > 0) {
 	await delay(150);
 }
 
+const backupRoot = path.join(os.homedir(), "Library", "Application Support", "quickshot", "app-backups.noindex");
+async function moveToBackup(appPath, prefix) {
+	await mkdir(backupRoot, { recursive: true });
+	const backupDirectory = await mkdtemp(path.join(backupRoot, prefix));
+	const destination = path.join(backupDirectory, "QuickShot.app");
+	await rename(appPath, destination);
+	return destination;
+}
+
 let backup = null;
+let legacyBackup = null;
 let installed = false;
 try {
 	if (await exists(target)) {
-		const backupRoot = path.join(os.homedir(), "Library", "Application Support", "quickshot", "app-backups.noindex");
-		await mkdir(backupRoot, { recursive: true });
-		const backupDirectory = await mkdtemp(path.join(backupRoot, "previous-"));
-		backup = path.join(backupDirectory, "QuickShot.app");
-		await rename(target, backup);
+		backup = await moveToBackup(target, "previous-");
+	}
+	if (legacyTarget !== target && (await exists(legacyTarget))) {
+		if (await plist(legacyTarget, "CFBundleIdentifier") === identifier) {
+			legacyBackup = await moveToBackup(legacyTarget, "legacy-home-");
+			await exec(launchServices, ["-u", legacyBackup]).catch(() => {});
+			await exec(launchServices, ["-u", legacyTarget]).catch(() => {});
+		}
 	}
 	await rename(stagedApp, target);
 	installed = true;
@@ -140,8 +181,10 @@ try {
 		archiveSha256: archiveHash,
 		hashes,
 		signingRequirement,
+		signingMigration,
 		registration,
 		backup,
+		legacyBackup,
 		previousProcesses,
 	};
 	const receiptPath = path.join(root, "release", "last-local-install.json");
@@ -157,9 +200,14 @@ try {
 		}
 		await rename(target, path.join(stageDirectory, "QuickShot-failed.app"));
 	}
+	if (legacyBackup) {
+		await rename(legacyBackup, legacyTarget).catch(() => {});
+	}
 	if (backup) {
 		await rename(backup, target);
 		await exec("open", ["-n", target]);
+	} else if (legacyBackup) {
+		await exec("open", ["-n", legacyTarget]).catch(() => {});
 	}
 	throw error;
 }

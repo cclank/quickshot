@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-	clampSelectionPoint,
-	getClampedSelectionRect,
-} from "./selectionGeometry";
+import { clampSelectionPoint, findWindowAt, getClampedSelectionRect } from "./selectionGeometry";
 
 const SOURCE_SIZE = { width: 1920, height: 1080 };
 
@@ -31,5 +28,15 @@ describe("selection geometry", () => {
 				SOURCE_SIZE,
 			),
 		).toEqual({ x: 0, y: 0, width: 100, height: 50 });
+	});
+
+	it("picks the front-most window under the pointer", () => {
+		const windows = [
+			{ x: 100, y: 100, width: 200, height: 150, id: "front" },
+			{ x: 0, y: 0, width: 1920, height: 1080, id: "back" },
+		];
+		expect(findWindowAt(windows, { x: 150, y: 120 })?.id).toBe("front");
+		expect(findWindowAt(windows, { x: 10, y: 10 })?.id).toBe("back");
+		expect(findWindowAt(windows, { x: 5000, y: 10 })).toBeNull();
 	});
 });

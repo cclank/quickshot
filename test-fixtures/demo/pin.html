@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>QuickShot demo pin</title>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script>
+			// A real pinned screenshot, fed by the demo stage (test-fixtures/demo/stage.html).
+			const demo = window.parent.demo;
+			Object.defineProperty(window, "devicePixelRatio", { get: () => demo.pixelRatio });
+			const pinId = Number(new URLSearchParams(location.search).get("pinId"));
+			window.close = () => demo.closePin(pinId);
+			window.electronAPI = {
+				platform: "darwin",
+				language: demo.lang,
+				getPinnedScreenshot: async () => ({ success: true, imageBytes: demo.pinBytes(pinId) }),
+				pinnedScreenshotReady: async () => ({ success: true }),
+				setPinnedScreenshotClickThrough: async () => ({ success: true, recoveryShortcutRegistered: true }),
+				resizePinnedScreenshot: async (width) => demo.resizePin(pinId, width),
+				closePinnedScreenshot: async () => demo.closePin(pinId),
+				onPinnedInteractionRestored: () => () => {},
+			};
+		</script>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

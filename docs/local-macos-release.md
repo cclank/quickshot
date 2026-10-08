@@ -1,6 +1,6 @@
 # 本机 Electron 更新流程
 
-本机使用的应用固定为 `~/Applications/QuickShot.app`，名称保持 `QuickShot`，不附加版本号、不创建带版本号的第二个应用。维护分支为 `main`，Electron 实现位于 `src/` 和 `electron/`，本地 OCR 工具位于 `native/quickshot-ocr/`。独立 Swift 实验版本已移入可恢复归档，详见 [源码维护入口](source-of-truth.md)。
+本机使用的应用固定为 `/Applications/QuickShot.app`（与 DMG 拖入的位置一致），名称保持 `QuickShot`，不附加版本号、不创建带版本号的第二个应用。维护分支为 `main`，Electron 实现位于 `src/` 和 `electron/`，本地 OCR 工具位于 `native/quickshot-ocr/`。独立 Swift 实验版本已移入可恢复归档，详见 [源码维护入口](source-of-truth.md)。
 
 更新步骤：
 
@@ -19,7 +19,9 @@
 
 `release/last-local-install.json` 记录安装时间、实际路径、版本、进程号和文件哈希，可用于确认“源码已改，应用是否已更新”。
 
-自动化截图入口：`open -n "$HOME/Applications/QuickShot.app" --args --capture-region`。这会调用正常的系统选区流程；按 Esc 取消。
+早期安装在 `~/Applications/QuickShot.app` 的副本，会在下次运行安装脚本时移到 `app-backups.noindex/legacy-home-*` 并取消注册，避免两份应用争用单实例锁和录屏授权。
+
+自动化截图入口：`open -n "/Applications/QuickShot.app" --args --capture-region`。这会调用正常的系统选区流程；按 Esc 取消。
 
 本机签名以打包时实际可用的身份为准。当前没有可用的代码签名身份，旧包与新包均使用 ad-hoc 签名，其 designated requirement 绑定构建哈希；构建变化时无法仅靠固定名称和原位替换保证授权延续。遇到签名不兼容应停止安装，向用户说明并确认固定签名迁移方案；首次迁移仍可能需要重新授权，不能承诺绝不弹窗。
 

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<!--
+  The DMG window background, 660 × 440 points. Finder draws the icons on top:
+  QuickShot.app at (170, 175), Applications at (490, 175) and 安装说明.txt at
+  (110, 335), as set in electron-builder.json5. Render with
+  `node scripts/render-dmg-background.mjs`.
+-->
+<style>
+	html, body { margin: 0; width: 660px; height: 440px; overflow: hidden; }
+	body {
+		position: relative;
+		font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+		color: #1d1d1f;
+		background:
+			radial-gradient(420px 220px at 170px 175px, rgba(255, 159, 67, 0.10), transparent 70%),
+			radial-gradient(420px 220px at 490px 175px, rgba(77, 171, 247, 0.10), transparent 70%),
+			linear-gradient(180deg, #fbfbfd 0%, #f1f1f4 100%);
+	}
+	.brand {
+		position: absolute; top: 22px; left: 0; right: 0; text-align: center;
+		font-size: 11.5px; letter-spacing: 0.02em; color: rgba(29, 29, 31, 0.45);
+	}
+	.brand b { color: rgba(29, 29, 31, 0.72); font-weight: 600; }
+	/* Soft wells under the two icons. */
+	.well { position: absolute; top: 109px; width: 132px; height: 150px; border-radius: 28px;
+		background: rgba(255, 255, 255, 0.55); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04); }
+	.arrow { position: absolute; left: 252px; top: 168px; width: 156px; height: 14px; }
+	.hint { position: absolute; left: 0; right: 0; text-align: center; }
+	.hint.zh { top: 132px; font-size: 13px; font-weight: 600; color: rgba(29, 29, 31, 0.78); }
+	.hint.en { top: 196px; font-size: 10.5px; color: rgba(29, 29, 31, 0.42); }
+	.card {
+		position: absolute; left: 180px; top: 282px; width: 456px; height: 124px; box-sizing: border-box;
+		padding: 13px 16px; border-radius: 14px; background: rgba(255, 255, 255, 0.72);
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+	}
+	.card .title { font-size: 12px; font-weight: 600; color: rgba(29, 29, 31, 0.82); }
+	.card .subtitle { margin-top: 1px; font-size: 10.5px; color: rgba(29, 29, 31, 0.45); }
+	.code {
+		margin-top: 8px; padding: 7px 10px; border-radius: 8px; background: #1d1d1f; color: #f5f5f7;
+		font: 500 10.4px/1.35 "SF Mono", Menlo, monospace; white-space: nowrap;
+	}
+	.code em { font-style: normal; color: #ffb36b; }
+	.foot { margin-top: 8px; font-size: 10.5px; color: rgba(29, 29, 31, 0.55); }
+	.foot kbd { font: 600 10px -apple-system, sans-serif; padding: 1px 4px; border-radius: 4px;
+		background: rgba(0, 0, 0, 0.06); color: rgba(29, 29, 31, 0.8); }
+</style>
+</head>
+<body>
+	<div class="brand"><b>QuickShot</b> · 轻巧的截图与标注工具 · Screenshots, beautifully simple</div>
+	<div class="well" style="left: 104px"></div>
+	<div class="well" style="left: 424px"></div>
+	<div class="hint zh">拖到“应用程序”完成安装</div>
+	<svg class="arrow" viewBox="0 0 156 14" aria-hidden="true">
+		<defs>
+			<linearGradient id="spectrum" x1="2" y1="0" x2="148" y2="0" gradientUnits="userSpaceOnUse">
+				<stop offset="0" stop-color="#FF5A7A" />
+				<stop offset="0.25" stop-color="#FF9F43" />
+				<stop offset="0.5" stop-color="#38D9A9" />
+				<stop offset="0.75" stop-color="#4DABF7" />
+				<stop offset="1" stop-color="#9775FA" />
+			</linearGradient>
+		</defs>
+		<path d="M2 7 H146" stroke="url(#spectrum)" stroke-width="3" stroke-linecap="round" />
+		<path d="M140 1.5 L148 7 L140 12.5" fill="none" stroke="#9775FA" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+	</svg>
+	<div class="hint en">Drag QuickShot to Applications</div>
+	<div class="card">
+		<div class="title">首次打开被系统拦截？在“终端”运行下面这行</div>
+		<div class="subtitle">Blocked on first launch? Run this in Terminal</div>
+		<div class="code">sudo xattr -rd com.apple.quarantine <em>/Applications/QuickShot.app</em></div>
+		<div class="foot">然后重新打开 QuickShot，按 <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>X</kbd> 开始截图 · 详见 安装说明.txt</div>
+	</div>
+</body>
+</html>

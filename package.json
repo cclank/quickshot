@@ -1,22 +1,40 @@
 {
 	"name": "quickshot",
 	"private": true,
-	"version": "1.0.1",
+	"version": "1.1.0",
 	"type": "module",
-	"description": "Lightweight screenshot tool with annotations and beautiful backgrounds",
-	"author": "QuickShot Contributors",
+	"description": "Fast, local-first screenshot tool for macOS and Windows with polished annotations and presentation-ready backgrounds",
+	"author": "岚叔 (https://github.com/cclank)",
+	"license": "GPL-3.0-or-later",
+	"homepage": "https://quickshot.lanshuagent.com",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/cclank/quickshot.git"
+	},
+	"bugs": {
+		"url": "https://github.com/cclank/quickshot/issues"
+	},
+	"keywords": [
+		"screenshot",
+		"annotation",
+		"electron",
+		"macos",
+		"windows"
+	],
 	"scripts": {
-		"build:ocr-helper": "node scripts/build-ocr-helper.mjs",
-		"build:ocr-helper:universal": "node scripts/build-ocr-helper.mjs --universal",
+		"build:ocr-helper": "node scripts/build-native-helpers.mjs",
+		"build:ocr-helper:universal": "node scripts/build-native-helpers.mjs --universal",
 		"test:ocr-helper": "npm run build:ocr-helper && node scripts/smoke-ocr-helper.mjs",
 		"dev": "npm run build:ocr-helper && vite",
+		"dev:ui": "vite --config vite.ui.config.ts",
 		"typecheck": "tsc --noEmit --incremental false",
 		"test": "vitest run --exclude \"release/**\"",
 		"build": "tsc && vite build",
 		"check:build": "node scripts/verify-build.mjs",
 		"verify": "npm run test && npm run build && npm run check:build",
 		"pack:mac:dir": "npm run build:ocr-helper:universal && tsc && vite build && electron-builder --mac --dir --arm64",
-		"install:mac:local": "npm run pack:mac:dir && node scripts/install-electron-mac.mjs",
+		"sign:mac:local": "node scripts/sign-mac-local.mjs",
+		"install:mac:local": "npm run pack:mac:dir && node scripts/sign-mac-local.mjs && node scripts/install-electron-mac.mjs",
 		"build:mac": "npm run build:ocr-helper:universal && tsc && vite build && electron-builder --mac --arm64 --x64",
 		"build:mac:arm64": "npm run build:ocr-helper:universal && tsc && vite build && electron-builder --mac --arm64",
 		"build:mac:x64": "npm run build:ocr-helper:universal && tsc && vite build && electron-builder --mac --x64",

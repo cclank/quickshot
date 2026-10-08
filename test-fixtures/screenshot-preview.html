@@ -61,6 +61,16 @@
 			}
 
 			const fixtureParameters = new URLSearchParams(window.location.search);
+			if (fixtureParameters.get("persist") !== "1") {
+				for (const key of Object.keys(window.localStorage)) {
+					if (key.startsWith("quickshot.")) window.localStorage.removeItem(key);
+				}
+			}
+			const fixtureStyle = fixtureParameters.get("style");
+			if (fixtureStyle) {
+				window.localStorage.setItem("quickshot.style.v2", fixtureStyle);
+			}
+			const fixtureScaleFactor = Number(fixtureParameters.get("scaleFactor") || 1);
 			const fixtureSource =
 				fixtureParameters.get("fixtureSource") ||
 				"/wallpapers/thumbnails/wallpaper3.jpg";
@@ -119,14 +129,14 @@
 			async function getScreenshotBytes() {
 				if (!screenshotBytesPromise) {
 					screenshotBytesPromise = (async () => {
-						const response = await fetch(fixtureSource);
-						const source = await createImageBitmap(await response.blob());
+						const source = new Image();
+						source.src = fixtureSource;
+						await source.decode();
 						const canvas = document.createElement("canvas");
-						canvas.width = source.width;
-						canvas.height = source.height;
+						canvas.width = source.naturalWidth;
+						canvas.height = source.naturalHeight;
 						const context = canvas.getContext("2d");
-						context.drawImage(source, 0, 0);
-						source.close();
+						context.drawImage(source, 0, 0, canvas.width, canvas.height);
 						const png = await new Promise((resolve, reject) => {
 							canvas.toBlob(
 								(blob) =>
@@ -142,10 +152,44 @@
 				return screenshotBytesPromise;
 			}
 
+			// Stitch captures: each call returns a different crop of the fixture.
+			const stitchListeners = new Set();
+			let stitchCount = 0;
+			async function getStitchPieceBytes() {
+				const source = new Image();
+				source.src = fixtureSource;
+				await source.decode();
+				stitchCount += 1;
+				const width = Math.round(source.naturalWidth * (stitchCount % 2 ? 0.62 : 0.4));
+				const height = Math.round(source.naturalHeight * (stitchCount % 2 ? 0.34 : 0.5));
+				const x = Math.round((source.naturalWidth - width) * (stitchCount % 2 ? 0.8 : 0.1));
+				const y = Math.round((source.naturalHeight - height) * 0.5);
+				const canvas = document.createElement("canvas");
+				canvas.width = width;
+				canvas.height = height;
+				canvas.getContext("2d").drawImage(source, x, y, width, height, 0, 0, width, height);
+				const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+				return new Uint8Array(await blob.arrayBuffer());
+			}
+
 			window.electronAPI = {
+				platform: fixtureParameters.get("platform") || undefined,
+				captureForStitch: async () => {
+					const imageBytes = await getStitchPieceBytes();
+					setTimeout(() => {
+						for (const listener of stitchListeners) listener({ imageBytes, scaleFactor: fixtureScaleFactor });
+					}, 50);
+					return { success: true };
+				},
+				onStitchPiece: (listener) => {
+					stitchListeners.add(listener);
+					return () => stitchListeners.delete(listener);
+				},
+				language: fixtureParameters.get("lang") || undefined,
 				getPreviewSession: async () => ({
 					success: true,
 					imageBytes: await getScreenshotBytes(),
+					scaleFactor: fixtureScaleFactor,
 				}),
 				previewSessionReady: async () => ({ success: true }),
 				extractText: async () => ({
@@ -179,7 +223,6 @@
 					};
 				},
 				readAssetDataUrl: async () => null,
-				getAssetBasePath: async () => null,
 			};
 		</script>
 		<script type="module" src="/src/main.tsx"></script>

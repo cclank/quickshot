@@ -44,3 +44,21 @@ export function getClampedSelectionRect(
 		),
 	};
 }
+
+/** The front-most window under the point; `windows` is ordered front to back. */
+export function findWindowAt<T extends { x: number; y: number; width: number; height: number }>(
+	windows: readonly T[],
+	point: SelectionPoint,
+): T | null {
+	for (const window of windows) {
+		if (
+			point.x >= window.x &&
+			point.x < window.x + window.width &&
+			point.y >= window.y &&
+			point.y < window.y + window.height
+		) {
+			return window;
+		}
+	}
+	return null;
+}

@@ -14,7 +14,7 @@
 
 ## 已安装应用与源码更新
 
-本机日常使用入口固定为 `/Users/lank/Applications/QuickShot.app`。
+本机日常使用入口固定为 `/Applications/QuickShot.app`。
 
 2026-09-25 整理时，该包的 `app.asar` SHA-256 为：
 

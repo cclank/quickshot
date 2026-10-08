@@ -29,3 +29,13 @@ export function createPngBlob(
 			: Uint8Array.from(bytes);
 	return new Blob([blobBytes], { type: "image/png" });
 }
+
+/** An object URL for a frozen frame: a PNG, or the agent's JPEG preview on macOS. */
+export function createFrameObjectUrl(value: ArrayBuffer | Uint8Array, mimeType?: string): string {
+	if (mimeType !== "image/jpeg") return createPngObjectUrl(value);
+	const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+	if (bytes.byteLength < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+		throw new Error("Invalid JPEG image bytes");
+	}
+	return URL.createObjectURL(new Blob([bytes.slice()], { type: "image/jpeg" }));
+}

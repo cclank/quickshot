@@ -15,6 +15,7 @@ import {
 	useState,
 } from "react";
 import { createPngObjectUrl } from "@/lib/pngBytes";
+import { t } from "@/lib/i18n";
 import { resolvePinnedResizeScale } from "@/lib/pinnedResize";
 
 const MIN_OPACITY_PERCENT = 35;
@@ -40,7 +41,7 @@ export function PinnedScreenshot() {
 	const [hovered, setHovered] = useState(false);
 	const [focusWithin, setFocusWithin] = useState(false);
 	const [liveMessage, setLiveMessage] = useState(
-		"悬浮截图已置顶，可拖动和缩放。",
+		t("pin.intro"),
 	);
 	const readySentRef = useRef(false);
 	const resizeGestureRef = useRef<ResizeGesture | null>(null);
@@ -86,7 +87,7 @@ export function PinnedScreenshot() {
 		const unsubscribe = window.electronAPI.onPinnedInteractionRestored(() => {
 			setClickThrough(false);
 			setIntroControlsVisible(true);
-			setLiveMessage("鼠标穿透已关闭，可以继续操作悬浮截图。");
+			setLiveMessage(t("pin.restored"));
 		});
 		return unsubscribe;
 	}, []);
@@ -144,7 +145,7 @@ export function PinnedScreenshot() {
 				nextClickThrough,
 			);
 		if (!result.success) {
-			setLiveMessage("鼠标穿透切换失败，请重试。");
+			setLiveMessage(t("pin.toggleFailed"));
 			return;
 		}
 		setClickThrough(nextClickThrough);
@@ -153,9 +154,9 @@ export function PinnedScreenshot() {
 		setLiveMessage(
 			nextClickThrough
 				? result.recoveryShortcutRegistered
-					? `鼠标穿透已开启，按 ${RECOVERY_SHORTCUT_TEXT} 或使用菜单栏恢复。`
-					: "鼠标穿透已开启，可使用菜单栏恢复操作。"
-				: "鼠标穿透已关闭。",
+					? t("pin.clickThroughOnShortcut", { shortcut: RECOVERY_SHORTCUT_TEXT })
+					: t("pin.clickThroughOn")
+				: t("pin.clickThroughOff"),
 		);
 	}, [clickThrough]);
 
@@ -231,7 +232,7 @@ export function PinnedScreenshot() {
 
 	return (
 		<main
-			aria-label="悬浮截图"
+			aria-label={t("pin.label")}
 			className="group relative h-screen w-screen overflow-hidden p-1.5 text-white select-none"
 			style={{ WebkitAppRegion: "drag" } as CSSProperties}
 			onMouseEnter={() => setHovered(true)}
@@ -242,7 +243,7 @@ export function PinnedScreenshot() {
 			{imageSrc && (
 				<img
 					src={imageSrc}
-					alt="悬浮截图"
+					alt={t("pin.label")}
 					draggable={false}
 					onLoad={handleImageLoad}
 					onError={handleImageError}
@@ -258,7 +259,7 @@ export function PinnedScreenshot() {
 
 			<div
 				role="toolbar"
-				aria-label="悬浮截图控制"
+				aria-label={t("pin.controls")}
 				className={`absolute right-3 top-3 flex items-center gap-1 rounded-[13px] border border-white/12 bg-[rgba(10,14,22,0.84)] p-1 shadow-[0_12px_32px_rgba(0,0,0,0.3)] backdrop-blur-xl transition-[opacity,transform] duration-150 ease-out focus-within:opacity-100 motion-reduce:transition-none ${
 					controlsVisible
 						? "translate-y-0 opacity-100"
@@ -274,7 +275,7 @@ export function PinnedScreenshot() {
 				/>
 				<label
 					className="flex h-8 items-center gap-1 px-1"
-					title={`透明度 ${opacityPercent}%`}
+					title={t("pin.opacity", { value: opacityPercent })}
 				>
 					<SunMedium
 						size={13}
@@ -291,7 +292,7 @@ export function PinnedScreenshot() {
 							setOpacityPercent(Number(event.target.value))
 						}
 						className="h-1 w-14 cursor-pointer accent-white"
-						aria-label="悬浮截图透明度"
+						aria-label={t("pin.opacityLabel")}
 						aria-valuetext={`${opacityPercent}%`}
 					/>
 				</label>
@@ -299,9 +300,9 @@ export function PinnedScreenshot() {
 					type="button"
 					onClick={() => void handleClickThroughToggle()}
 					className="flex h-8 w-8 items-center justify-center rounded-[9px] text-white/72 transition-colors hover:bg-white/12 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-					aria-label={`开启鼠标穿透，可用 ${RECOVERY_SHORTCUT_TEXT} 或菜单栏恢复`}
+					aria-label={t("pin.clickThroughAria", { shortcut: RECOVERY_SHORTCUT_TEXT })}
 					aria-pressed={clickThrough}
-					title={`鼠标穿透（${RECOVERY_SHORTCUT_HINT} 恢复）`}
+					title={t("pin.clickThroughTitle", { shortcut: RECOVERY_SHORTCUT_HINT })}
 				>
 					<MousePointer2
 						size={14}
@@ -313,8 +314,8 @@ export function PinnedScreenshot() {
 					type="button"
 					onClick={closeWindow}
 					className="flex h-8 w-8 items-center justify-center rounded-[9px] text-white/72 transition-colors hover:bg-white/12 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-					aria-label="关闭悬浮截图"
-					title="关闭"
+					aria-label={t("pin.close")}
+					title={t("action.close")}
 				>
 					<X size={14} strokeWidth={1.8} aria-hidden="true" />
 				</button>
@@ -322,8 +323,8 @@ export function PinnedScreenshot() {
 
 			<button
 				type="button"
-				aria-label="调整悬浮截图大小"
-				title="拖动调整大小"
+				aria-label={t("pin.resize")}
+				title={t("pin.resizeTitle")}
 				onPointerDown={handleResizeStart}
 				onPointerMove={handleResizeMove}
 				onPointerUp={handleResizeEnd}

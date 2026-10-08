@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>QuickShot demo overlay</title>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script>
+			// The real capture overlay, fed by the demo stage (test-fixtures/demo/stage.html).
+			const demo = window.parent.demo;
+			Object.defineProperty(window, "devicePixelRatio", { get: () => demo.pixelRatio });
+			window.electronAPI = {
+				platform: "darwin",
+				language: demo.lang,
+				getRegionCaptureSession: async () => ({ success: false }),
+				onCaptureSession: (listener) => demo.on("capture-session", listener),
+				onCaptureWindows: (listener) => demo.on("capture-windows", listener),
+				regionSelectorReady: async (sessionId) => demo.overlayReady(sessionId),
+				getCaptureWindows: async () => ({ success: true, windows: demo.windowList() }),
+				cancelCaptureSession: async (sessionId) => demo.cancelCapture(sessionId),
+				screenshotRegionSelected: async (payload) => demo.regionSelected(payload),
+			};
+		</script>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

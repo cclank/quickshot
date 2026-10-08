@@ -2,6 +2,7 @@
 	"$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
 	"appId": "com.quickshot.app",
 	"productName": "QuickShot",
+	"copyright": "Copyright © 2026 岚叔",
 	"directories": {
 		"output": "release/${version}"
 	},
@@ -22,19 +23,52 @@
 			{
 				"from": "build/ocr/quickshot-ocr",
 				"to": "ocr/quickshot-ocr"
+			},
+			{
+				"from": "build/window-list/quickshot-window-list",
+				"to": "window-list/quickshot-window-list"
+			},
+			{
+				"from": "build/capture-agent/quickshot-capture-agent",
+				"to": "capture-agent/quickshot-capture-agent"
 			}
 		],
 		"extendInfo": {
 			"LSUIElement": true
 		}
 	},
+	"dmg": {
+		"title": "QuickShot",
+		// Rendered from installer/dmg-background.html by scripts/render-dmg-background.mjs.
+		"background": "installer/dmg-background.tiff",
+		"iconSize": 96,
+		"iconTextSize": 12,
+		"window": { "width": 660, "height": 440 },
+		"contents": [
+			{ "x": 170, "y": 175 },
+			{ "x": 490, "y": 175, "type": "link", "path": "/Applications" },
+			{ "x": 100, "y": 345, "type": "file", "path": "installer/安装说明.txt" }
+		]
+	},
 	"win": {
 		"target": ["nsis"],
+		"icon": "public/icon.png",
 		"electronLanguages": ["en-US", "zh-CN", "zh-TW"],
 		"artifactName": "${productName}-Win-${arch}-${version}-Setup.${ext}"
 	},
+	"nsis": {
+		"oneClick": false,
+		"perMachine": false,
+		"allowToChangeInstallationDirectory": true,
+		"createDesktopShortcut": true,
+		"createStartMenuShortcut": true,
+		"shortcutName": "QuickShot",
+		"runAfterFinish": true
+	},
 	"linux": {
 		"target": ["AppImage"],
+		"icon": "public/icon.png",
+		"category": "Graphics",
 		"electronLanguages": ["en-US", "zh-CN", "zh-TW"],
 		"artifactName": "${productName}-Linux-${arch}-${version}.${ext}"
 	}

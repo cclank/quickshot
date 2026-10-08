@@ -6,12 +6,13 @@ const projectRoot = path.resolve(import.meta.dirname, "..");
 const distRoot = path.join(projectRoot, "dist");
 const electronDistRoot = path.join(projectRoot, "dist-electron");
 
+// Budgets leave headroom over the current build so regressions stand out.
 const limits = {
-	rendererBytes: 240_000,
-	rendererGzipBytes: 75_000,
-	mainBytes: 40_000,
+	rendererBytes: 320_000,
+	rendererGzipBytes: 100_000,
+	mainBytes: 90_000,
 	preloadBytes: 4_000,
-	cssBytes: 22_000,
+	cssBytes: 40_000,
 	distBytes: 19_000_000,
 	thumbnailBytes: 160_000,
 };

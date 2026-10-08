@@ -1,26 +1,11 @@
-import path from "node:path";
-import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
+import { defineConfig, mergeConfig } from "vite";
 import electron from "vite-plugin-electron/simple";
+import { rendererConfig } from "./vite.renderer.config";
 
-export default defineConfig({
-	plugins: [
-		react(),
-		electron({
-			main: {
-				entry: "electron/main.ts",
-			},
-			preload: {
-				input: path.join(__dirname, "electron/preload.ts"),
-			},
-		}),
-	],
-	resolve: {
-		alias: {
-			"@": path.resolve(__dirname, "src"),
-		},
-	},
-	build: {
-		target: "esnext",
-	},
-});
+export default defineConfig((environment) => mergeConfig(rendererConfig(environment), {
+	plugins: [electron({
+		main: { entry: fileURLToPath(new URL("./electron/main.ts", import.meta.url)) },
+		preload: { input: fileURLToPath(new URL("./electron/preload.ts", import.meta.url)) },
+	})],
+}));

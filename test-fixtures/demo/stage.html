@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1440, initial-scale=1" />
+<title>QuickShot demo stage</title>
+<!--
+	Plays the part of macOS and the main process for the site's demo recordings
+	(scripts/record-site-demos.mjs): a still of the demo desktop, the real
+	capture overlay, a warm editor window and pinned screenshots, plus a drawn
+	pointer and a keystroke badge. The recorder loads the desktop images with
+	demo.load() and drives everything with real input events. ?lang=zh|en&zoom=
+-->
+<style>
+	* { box-sizing: border-box; }
+	html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+	/* The 1440 × 900 screen, scaled up as a whole so the recording is sharp. */
+	#screen { position: relative; width: 1440px; height: 900px; overflow: hidden; transform-origin: 0 0; font: 13px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+	#desktop { position: absolute; inset: 0; width: 1440px; height: 900px; display: block; }
+	iframe { border: 0; display: block; background: transparent; }
+	.hidden { visibility: hidden; pointer-events: none !important; }
+
+	#editor-win {
+		position: absolute; border-radius: 11px; overflow: hidden; z-index: 10;
+		box-shadow: 0 0 0 .5px rgba(0, 0, 0, .28), 0 28px 80px -10px rgba(20, 12, 50, .45), 0 10px 30px -10px rgba(20, 12, 50, .3);
+		transform-origin: 50% 40%;
+	}
+	#editor-win.opening { animation: open .24s cubic-bezier(.2, .8, .2, 1); }
+	#editor-win.closing { animation: close .2s ease-in forwards; }
+	@keyframes open { from { opacity: 0; transform: scale(.965); } }
+	@keyframes close { to { opacity: 0; transform: scale(.97); } }
+	#editor-win iframe { width: 100%; height: 100%; }
+	.lights { position: absolute; left: 18px; top: 18px; display: flex; gap: 8px; pointer-events: none; }
+	.lights i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; box-shadow: inset 0 0 0 .5px rgba(0, 0, 0, .14); }
+	.lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+
+	.pin { position: absolute; z-index: 20; animation: open .24s cubic-bezier(.2, .8, .2, 1); }
+	.pin iframe { width: 100%; height: 100%; }
+
+	#overlay { position: absolute; inset: 0; width: 1440px; height: 900px; z-index: 30; }
+
+	#hud {
+		position: absolute; left: 50%; bottom: 112px; z-index: 60; transform: translate(-50%, 12px);
+		display: flex; align-items: center; gap: 10px; padding: 10px 18px 10px 12px; border-radius: 16px;
+		background: rgba(22, 22, 26, .78); color: #fff; backdrop-filter: blur(20px) saturate(1.4);
+		box-shadow: 0 18px 40px -16px rgba(0, 0, 0, .6), inset 0 0 0 .5px rgba(255, 255, 255, .14);
+		opacity: 0; transition: opacity .2s, transform .28s cubic-bezier(.2, .8, .2, 1);
+		font-size: 15px; font-weight: 600; white-space: nowrap;
+	}
+	#hud.on { opacity: 1; transform: translate(-50%, 0); }
+	#hud kbd {
+		min-width: 34px; height: 34px; padding: 0 9px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center;
+		background: linear-gradient(#4a4a52, #3a3a41); box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .35), inset 0 0 0 .5px rgba(255, 255, 255, .14);
+		font: 600 16px -apple-system, BlinkMacSystemFont, sans-serif; color: #fff;
+	}
+	#hud span { margin-left: 6px; opacity: .85; font-weight: 500; }
+
+	#cursor { position: absolute; left: 0; top: 0; z-index: 80; pointer-events: none; will-change: transform; }
+	#cursor svg { position: absolute; display: none; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .35)); }
+	#cursor[data-kind="arrow"] .arrow, #cursor[data-kind="cross"] .cross, #cursor[data-kind="hand"] .hand { display: block; }
+	#cursor .arrow { left: -3px; top: -2px; width: 22px; height: 30px; }
+	#cursor .cross { left: -11px; top: -11px; width: 22px; height: 22px; }
+	#cursor .hand { left: -8px; top: -2px; width: 22px; height: 26px; }
+	#cursor.down .arrow, #cursor.down .hand { transform: scale(.9); transform-origin: 15% 8%; }
+	.ripple {
+		position: absolute; z-index: 79; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; pointer-events: none;
+		background: radial-gradient(circle, rgba(255, 255, 255, .55), rgba(255, 255, 255, 0) 70%);
+		box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .7), 0 0 0 3px rgba(77, 171, 247, .35);
+		animation: ripple .5s ease-out forwards;
+	}
+	@keyframes ripple { from { transform: scale(.4); opacity: 1; } to { transform: scale(1.3); opacity: 0; } }
+</style>
+</head>
+<body>
+<div id="screen">
+	<img id="desktop" alt="" />
+	<div id="editor-win" class="hidden"><iframe id="editor" title="editor"></iframe><div class="lights"><i></i><i></i><i></i></div></div>
+	<div id="pins"></div>
+	<iframe id="overlay" class="hidden" title="overlay"></iframe>
+	<div id="hud"></div>
+	<div id="cursor" data-kind="arrow">
+		<svg class="arrow" viewBox="0 0 22 30"><path d="M3.5 2.5v21.2l5.1-4.9 3.4 7.9 3.6-1.5-3.4-7.8h7.1z" fill="#000" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
+		<svg class="cross" viewBox="0 0 22 22"><path d="M11 1v20M1 11h20" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/><path d="M11 1.8v18.4M1.8 11h18.4" stroke="#000" stroke-width="1.3"/></svg>
+		<svg class="hand" viewBox="0 0 22 26"><path d="M7.5 13V4a1.8 1.8 0 0 1 3.6 0v6.5-1.6a1.8 1.8 0 0 1 3.6 0v1.6a1.8 1.8 0 0 1 3.6 0v1.4a1.7 1.7 0 0 1 3.2.8V17c0 4.3-3 7.5-7.4 7.5-3.2 0-5-1.4-6.6-3.6L3.4 16a1.9 1.9 0 0 1 3-2.2z" fill="#fff" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/></svg>
+	</div>
+</div>
+<script>
+(() => {
+	const params = new URLSearchParams(location.search);
+	const lang = params.get("lang") === "en" ? "en" : "zh";
+	const zoom = Number(params.get("zoom")) || 1;
+	document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+	document.getElementById("screen").style.transform = `scale(${zoom})`;
+	const SCALE = 2;
+	// The screen minus the menu bar and the Dock, as the main process sees it.
+	const WORK_AREA = { x: 0, y: 26, width: 1440, height: 800 };
+	const $ = (id) => document.getElementById(id);
+	const listeners = new Map();
+	const emit = (name, payload) => (listeners.get(name) || new Set()).forEach((fn) => fn(payload));
+	const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+	const b64ToBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+	const pngSize = (bytes) => {
+		const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+		return { width: view.getUint32(16), height: view.getUint32(20) };
+	};
+
+	let desktopBytes = null;
+	let desktopImage = null;
+	let windows = [];
+	const windowImages = new Map();
+	let sessionId = 0;
+	let captureMode = "edit";
+	let pendingPreview = null;
+	let editorSession = 0;
+	let resolveEditorShown = null;
+	const pins = new Map();
+	let pinCount = 0;
+
+	const editorWin = $("editor-win");
+	const overlay = $("overlay");
+
+	function previewBounds(width, height) {
+		// Mirrors electron/previewWindowLayout.ts for a 1440 × 900 screen.
+		const imageW = width / SCALE;
+		const imageH = height / SCALE;
+		const w = Math.min(Math.floor(WORK_AREA.width * 0.9), Math.max(1220, Math.round(imageW * 1.14 + 452)));
+		const h = Math.min(Math.floor(WORK_AREA.height * 0.9), Math.max(640, Math.round(imageH * 1.14 + 242)));
+		return { x: WORK_AREA.x + Math.round((WORK_AREA.width - w) / 2), y: WORK_AREA.y + Math.round((WORK_AREA.height - h) / 2), width: w, height: h };
+	}
+
+	async function cropDesktop(rect) {
+		const canvas = document.createElement("canvas");
+		canvas.width = rect.width;
+		canvas.height = rect.height;
+		canvas.getContext("2d").drawImage(desktopImage, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+		const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+		return new Uint8Array(await blob.arrayBuffer());
+	}
+
+	function showOverlay(on) {
+		overlay.classList.toggle("hidden", !on);
+	}
+
+	const demo = (window.demo = {
+		lang,
+		zoom,
+		/** The windows draw their canvases for the scaled-up screen. */
+		pixelRatio: zoom,
+		on(name, fn) {
+			if (!listeners.has(name)) listeners.set(name, new Set());
+			listeners.get(name).add(fn);
+			return () => listeners.get(name).delete(fn);
+		},
+		listening: (name) => (listeners.get(name)?.size || 0) > 0,
+
+		/** Desktop still and single-window captures, as base64 PNGs at 2×. */
+		async load({ desktop, windowList, images }) {
+			desktopBytes = b64ToBytes(desktop);
+			const url = URL.createObjectURL(new Blob([desktopBytes], { type: "image/png" }));
+			$("desktop").src = url;
+			desktopImage = new Image();
+			desktopImage.src = url;
+			await Promise.all([$("desktop").decode(), desktopImage.decode()]);
+			windows = windowList;
+			for (const [id, b64] of Object.entries(images)) windowImages.set(Number(id), b64ToBytes(b64));
+			overlay.src = `/test-fixtures/demo/overlay.html?windowType=screenshot-region&lang=${lang}`;
+			$("editor").src = `/test-fixtures/demo/editor.html?windowType=screenshot-preview&lang=${lang}`;
+			for (let i = 0; i < 200 && !(demo.listening("capture-session") && demo.listening("preview-session")); i++) await sleep(50);
+			await sleep(300);
+			return true;
+		},
+		windowList: () => windows,
+
+		// ── Capture (the global shortcut) ─────────────────────────────────
+		async trigger(mode = "edit") {
+			captureMode = mode;
+			sessionId += 1;
+			emit("capture-session", { sessionId, imageBytes: desktopBytes, mimeType: "image/png" });
+			for (let i = 0; i < 100 && overlay.classList.contains("hidden"); i++) await sleep(20);
+			await sleep(60);
+		},
+		async overlayReady() {
+			showOverlay(true);
+			return { success: true };
+		},
+		async cancelCapture() {
+			showOverlay(false);
+			if (captureMode === "stitch") {
+				editorWin.classList.remove("hidden");
+				$("editor").contentWindow.focus();
+			}
+			return { success: true };
+		},
+		async regionSelected(payload) {
+			const bytes = payload.bytes
+				?? (payload.windowId && windowImages.has(payload.windowId) ? windowImages.get(payload.windowId) : await cropDesktop(payload.rect));
+			if (captureMode === "stitch") {
+				showOverlay(false);
+				editorWin.classList.remove("hidden");
+				$("editor").contentWindow.focus();
+				emit("stitch-piece", { imageBytes: bytes, scaleFactor: SCALE });
+				return { success: true };
+			}
+			const size = pngSize(bytes);
+			const bounds = previewBounds(size.width, size.height);
+			Object.assign(editorWin.style, { left: `${bounds.x}px`, top: `${bounds.y}px`, width: `${bounds.width}px`, height: `${bounds.height}px` });
+			editorSession += 1;
+			pendingPreview = { sessionId: editorSession, bytes };
+			emit("preview-session", editorSession);
+			return { success: true };
+		},
+
+		/** Opens the editor on part of a window, as if that area had been selected. */
+		async openCapture(windowId, trimTop = 0) {
+			const source = new Image();
+			source.src = URL.createObjectURL(new Blob([windowImages.get(windowId)], { type: "image/png" }));
+			await source.decode();
+			const canvas = document.createElement("canvas");
+			canvas.width = source.naturalWidth;
+			canvas.height = source.naturalHeight - trimTop * SCALE;
+			canvas.getContext("2d").drawImage(source, 0, -trimTop * SCALE);
+			const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+			captureMode = "edit";
+			const shown = demo.editorShown();
+			await demo.regionSelected({ bytes: new Uint8Array(await blob.arrayBuffer()) });
+			await shown;
+		},
+
+		// ── Editor window ─────────────────────────────────────────────────
+		async previewSession(id) {
+			if (!pendingPreview || pendingPreview.sessionId !== id) return { success: false };
+			return { success: true, imageBytes: pendingPreview.bytes, scaleFactor: SCALE };
+		},
+		async editorReady() {
+			editorWin.classList.remove("hidden", "closing");
+			editorWin.classList.add("opening");
+			setTimeout(() => editorWin.classList.remove("opening"), 300);
+			// The overlay stays up until the editor is on screen.
+			setTimeout(() => showOverlay(false), 40);
+			$("editor").contentWindow.focus();
+			resolveEditorShown?.();
+			return { success: true };
+		},
+		editorShown: () => new Promise((resolve) => (resolveEditorShown = resolve)),
+		closeEditor() {
+			editorWin.classList.add("closing");
+			setTimeout(() => editorWin.classList.add("hidden"), 200);
+		},
+		async captureForStitch() {
+			editorWin.classList.add("hidden");
+			setTimeout(() => demo.trigger("stitch"), 120);
+			return { success: true };
+		},
+		async extractText() {
+			const text = lang === "zh"
+				? "季度概览\nRevenue and order health for Q3, updated 5 minutes ago\n总收入 Revenue\n¥ 1,284,920\n▲ 12.4% vs last quarter\n订单数 Orders\n8,419\n转化率 Conversion\n4.82%\n每周收入 Weekly revenue\n待处理 Pending\n退款审核 · 12 条\n支付失败 · 3 笔"
+				: "Quarterly overview\nRevenue and order health for Q3, updated 5 minutes ago\nRevenue\n¥ 1,284,920\n▲ 12.4% vs last quarter\nOrders\n8,419\nConversion\n4.82%\nWeekly revenue\nPending\nRefund reviews · 12\nFailed payments · 3";
+			await sleep(450);
+			return { success: true, text, lineCount: text.split("\n").length };
+		},
+
+		// ── Pinned screenshots ────────────────────────────────────────────
+		async pin(png) {
+			const bytes = new Uint8Array(png);
+			const size = pngSize(bytes);
+			const aspect = size.width / size.height;
+			let width = Math.min(520, size.width);
+			let height = width / aspect;
+			if (height > 416) { height = 416; width = height * aspect; }
+			pinCount += 1;
+			const id = pinCount;
+			const offset = (pins.size) * 24;
+			const box = document.createElement("div");
+			box.className = "pin";
+			Object.assign(box.style, { left: `${1440 - width - 24 - offset}px`, top: `${WORK_AREA.y + 24 + offset}px`, width: `${width}px`, height: `${height}px` });
+			const frame = document.createElement("iframe");
+			frame.src = `/test-fixtures/demo/pin.html?windowType=screenshot-pin&lang=${lang}&pinId=${id}`;
+			box.appendChild(frame);
+			pins.set(id, { bytes, box, aspect });
+			$("pins").appendChild(box);
+			return { success: true };
+		},
+		pinBytes: (id) => pins.get(id)?.bytes,
+		async resizePin(id, width) {
+			const pin = pins.get(id);
+			if (pin) Object.assign(pin.box.style, { width: `${width}px`, height: `${width / pin.aspect}px` });
+			return { success: true };
+		},
+		async closePin(id) {
+			pins.get(id)?.box.remove();
+			pins.delete(id);
+			return { success: true };
+		},
+
+		// ── Presentation ──────────────────────────────────────────────────
+		cursor(x, y, kind) {
+			const cursor = $("cursor");
+			cursor.style.transform = `translate(${x}px, ${y}px)`;
+			if (kind) cursor.dataset.kind = kind;
+		},
+		press(down) {
+			$("cursor").classList.toggle("down", down);
+		},
+		ripple(x, y) {
+			const dot = document.createElement("div");
+			dot.className = "ripple";
+			dot.style.left = `${x}px`;
+			dot.style.top = `${y}px`;
+			$("screen").appendChild(dot);
+			setTimeout(() => dot.remove(), 600);
+		},
+		hud(keys, label, ms = 1300) {
+			const hud = $("hud");
+			hud.innerHTML = "";
+			for (const key of keys) {
+				const kbd = document.createElement("kbd");
+				kbd.textContent = key;
+				hud.appendChild(kbd);
+			}
+			if (label) {
+				const span = document.createElement("span");
+				span.textContent = label;
+				hud.appendChild(span);
+			}
+			hud.classList.add("on");
+			clearTimeout(demo._hudTimer);
+			demo._hudTimer = setTimeout(() => hud.classList.remove("on"), ms);
+		},
+		/** Bounding box of a selector inside the editor, in stage coordinates. */
+		editorRect(selector, index = 0) {
+			const frame = $("editor");
+			const el = frame.contentDocument.querySelectorAll(selector)[index];
+			if (!el) return null;
+			const r = el.getBoundingClientRect();
+			const f = frame.getBoundingClientRect();
+			return { x: r.x + f.x / zoom, y: r.y + f.y / zoom, width: r.width, height: r.height };
+		},
+		/** Like editorRect, but finds a button by its visible text or label; inside `scope`, a trailing match is enough. */
+		editorButton(text, scope) {
+			const frame = $("editor");
+			const doc = frame.contentDocument;
+			const root = scope ? doc.querySelector(scope) : doc.body;
+			if (!root) return null;
+			const el = [...root.querySelectorAll("button, [role=radio], [role=tab]")].find(
+				(b) =>
+					b.textContent.trim() === text ||
+					b.getAttribute("aria-label") === text ||
+					b.title === text ||
+					(scope && b.textContent.trim().endsWith(text)),
+			);
+			if (!el) return null;
+			const r = el.getBoundingClientRect();
+			const f = frame.getBoundingClientRect();
+			return { x: r.x + f.x / zoom, y: r.y + f.y / zoom, width: r.width, height: r.height };
+		},
+		focusEditor() {
+			$("editor").contentWindow.focus();
+		},
+		/** Takes focus out of a text field, as a click elsewhere would. */
+		blurEditor() {
+			$("editor").contentDocument.activeElement?.blur();
+			$("editor").contentWindow.focus();
+		},
+		editorOpen: () => !editorWin.classList.contains("hidden"),
+	});
+})();
+</script>
+</body>
+</html>
