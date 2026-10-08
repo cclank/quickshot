@@ -17,6 +17,7 @@
   <a href="https://github.com/cclank/quickshot/actions/workflows/release.yml"><img alt="发布构建" src="https://img.shields.io/github/actions/workflow/status/cclank/quickshot/release.yml?style=flat-square&label=release%20build" /></a>
   <a href="LICENSE"><img alt="许可证：GPL-3.0" src="https://img.shields.io/github/license/cclank/quickshot?style=flat-square&color=f59e0b" /></a>
   <a href="https://github.com/cclank/quickshot/stargazers"><img alt="Star 数" src="https://img.shields.io/github/stars/cclank/quickshot?style=flat-square&color=eab308" /></a>
+  <a href="https://x.com/LufzzLiz"><img alt="Follow @LufzzLiz on X" src="https://img.shields.io/badge/follow-%40LufzzLiz-000000?style=flat-square&logo=x&logoColor=white" /></a>
 </p>
 
 <p align="center">
@@ -201,7 +202,7 @@ QuickShot 的早期实现由 OpenScreen 的截图相关工作发展而来。当�
 
 ## 作者
 
-QuickShot 由 **岚叔**（[@cclank](https://github.com/cclank)）开发。
+QuickShot 由 **岚叔** 开发（GitHub：[@cclank](https://github.com/cclank)，X：[@LufzzLiz](https://x.com/LufzzLiz)）。
 
 ## 许可证
 

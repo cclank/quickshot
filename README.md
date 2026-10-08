@@ -17,6 +17,7 @@
   <a href="https://github.com/cclank/quickshot/actions/workflows/release.yml"><img alt="Release build" src="https://img.shields.io/github/actions/workflow/status/cclank/quickshot/release.yml?style=flat-square&label=release%20build" /></a>
   <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/github/license/cclank/quickshot?style=flat-square&color=f59e0b" /></a>
   <a href="https://github.com/cclank/quickshot/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/cclank/quickshot?style=flat-square&color=eab308" /></a>
+  <a href="https://x.com/LufzzLiz"><img alt="Follow @LufzzLiz on X" src="https://img.shields.io/badge/follow-%40LufzzLiz-000000?style=flat-square&logo=x&logoColor=white" /></a>
 </p>
 
 <p align="center">
@@ -229,7 +230,7 @@ The bundled `public/wallpapers/wallpaper1.jpg` through `wallpaper12.jpg`, togeth
 
 ## Author
 
-QuickShot is built by **岚叔** ([@cclank](https://github.com/cclank)).
+QuickShot is built by **岚叔** ([@cclank](https://github.com/cclank) on GitHub, [@LufzzLiz](https://x.com/LufzzLiz) on X).
 
 ## License
 
