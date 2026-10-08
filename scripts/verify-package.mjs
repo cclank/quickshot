@@ -62,7 +62,8 @@ assert(
 	`app.asar ${asarBytes} B exceeds ${MAX_ASAR_BYTES} B`,
 );
 
-const entries = asar.listPackage(asarPath);
+// asar lists entries with the platform separator; compare them as POSIX paths.
+const entries = asar.listPackage(asarPath).map((entry) => entry.replaceAll("\\", "/"));
 const entrySet = new Set(entries);
 const forbiddenRoots = ["/public", "/node_modules"];
 
