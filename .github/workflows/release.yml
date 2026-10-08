@@ -16,10 +16,10 @@ jobs:
         include:
           - os: macos-14
             script: build:mac
-            artifacts: release/**/*.dmg
+            artifacts: release/*/*.dmg
           - os: windows-latest
             script: build:win
-            artifacts: release/**/*.exe
+            artifacts: release/*/*-Setup.exe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
 
