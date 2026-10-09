@@ -1211,6 +1211,7 @@ function toIpcRegionCaptureSession(sessionData: RegionCaptureSession) {
 		mimeType: sessionData.mimeType,
 		scroll: sessionData.scroll,
 		scrollAvailable: isScrollCaptureAvailable(),
+		doubleClickCopy: appSettings.overlayDoubleClickCopy,
 	};
 }
 
@@ -2448,6 +2449,13 @@ async function setMacCaptureMode(mode: MacCaptureMode) {
 	}
 }
 
+async function setOverlayDoubleClickCopy(enabled: boolean) {
+	if (appSettings.overlayDoubleClickCopy === enabled) return;
+	appSettings = { ...appSettings, overlayDoubleClickCopy: enabled };
+	writeDiagnostic("overlay-double-click-copy-changed", { enabled });
+	await persistAppSettings();
+}
+
 /**
  * macOS remembers a hidden menu bar item in the app's own defaults (the
  * "Allow in the Menu Bar" switch in System Settings, or ⌘-dragging the item
@@ -2701,6 +2709,7 @@ function settingsState() {
 		},
 		language: appSettings.language,
 		macCaptureMode: appSettings.macCaptureMode,
+		overlayDoubleClickCopy: appSettings.overlayDoubleClickCopy,
 		launchAtLogin: app.getLoginItemSettings().openAtLogin,
 		launchAtLoginAvailable: app.isPackaged && process.platform !== "linux",
 		update: {
@@ -4050,6 +4059,12 @@ function registerIpcHandlers() {
 		return { success: true, state: settingsState() };
 	});
 
+	ipcMain.handle("settings-set-overlay-double-click-copy", async (event, enabled: unknown) => {
+		if (!isTrustedWindowSender(event, settingsWindow) || typeof enabled !== "boolean") return { success: false };
+		await setOverlayDoubleClickCopy(enabled);
+		return { success: true, state: settingsState() };
+	});
+
 	ipcMain.handle("settings-check-update", async (event) => {
 		if (!isTrustedWindowSender(event, settingsWindow) || !updater) return { success: false };
 		await updater.check(true);
@@ -4236,6 +4251,9 @@ function registerIpcHandlers() {
 			}
 			if (action === "edit") {
 				if (deliverStitchPiece(croppedImageBuffer)) return { success: true };
+				// Opening the editor also hands the capture to the clipboard: most
+				// captures are pasted straight away. Stitch pieces stay out of it.
+				clipboard.writeImage(nativeImage.createFromBuffer(croppedImageBuffer));
 				if (!openPreviewForImage(croppedImageBuffer)) {
 					return { success: false, error: "preview unavailable" };
 				}

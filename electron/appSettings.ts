@@ -27,6 +27,8 @@ export type AppSettings = {
 	onboardingVersion: number;
 	/** Anonymous launch statistics (see usageStats.ts); off only when set to false in settings.json. */
 	usageStats: boolean;
+	/** When true, double-clicking a released selection only copies it; by default it opens the editor. */
+	overlayDoubleClickCopy: boolean;
 	/** Random UUID v4 created on the first report; identifies an installation, not a person. */
 	installationId: string | null;
 	shortcuts: ShortcutSettings;
@@ -44,6 +46,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 	language: "auto",
 	onboardingVersion: 0,
 	usageStats: true,
+	// Most captures are pasted straight away; the editor stays an explicit choice.
+	overlayDoubleClickCopy: false,
 	installationId: null,
 	shortcuts: {
 		capture: DEFAULT_CAPTURE_ACCELERATOR,
@@ -95,6 +99,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
 				? input.onboardingVersion
 				: DEFAULT_APP_SETTINGS.onboardingVersion,
 		usageStats: typeof input.usageStats === "boolean" ? input.usageStats : DEFAULT_APP_SETTINGS.usageStats,
+		overlayDoubleClickCopy:
+			typeof input.overlayDoubleClickCopy === "boolean"
+				? input.overlayDoubleClickCopy
+				: DEFAULT_APP_SETTINGS.overlayDoubleClickCopy,
 		installationId: isInstallationId(input.installationId)
 			? input.installationId.toLowerCase()
 			: DEFAULT_APP_SETTINGS.installationId,

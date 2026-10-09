@@ -36,6 +36,7 @@
 						imageBytes: await screenBytes(),
 						scroll: parameters.get("scroll") === "on",
 						scrollAvailable: parameters.has("scroll"),
+						doubleClickCopy: parameters.has("doubleClickCopy"),
 					},
 				}),
 				onCaptureSession: () => () => {},
