@@ -10,8 +10,9 @@ export const WINDOWS_OCR_TOO_LARGE_EXIT_CODE = 7;
 /**
  * Written to a temporary .ps1 file and run with -File, so the image path is
  * passed as a real argument instead of being spliced into the script text.
+ * With -Words it lists every word with its box, for smart redaction.
  */
-export const WINDOWS_OCR_SCRIPT = String.raw`param([Parameter(Mandatory = $true)][string]$ImagePath)
+export const WINDOWS_OCR_SCRIPT = String.raw`param([Parameter(Mandatory = $true)][string]$ImagePath, [switch]$Words)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -40,8 +41,21 @@ try {
 } finally {
   $stream.Dispose()
 }
-$lines = @($result.Lines | ForEach-Object { $_.Text })
-$payload = @{ text = ($lines -join "${"`"}n"); lineCount = $lines.Count } | ConvertTo-Json -Compress
+if ($Words) {
+  $items = New-Object System.Collections.ArrayList
+  $index = 0
+  foreach ($line in $result.Lines) {
+    foreach ($word in $line.Words) {
+      $box = $word.BoundingRect
+      $null = $items.Add(@{ text = $word.Text; line = $index; x = [int]$box.X; y = [int]$box.Y; w = [int]$box.Width; h = [int]$box.Height })
+    }
+    $index++
+  }
+  $payload = @{ width = [int]$decoder.PixelWidth; height = [int]$decoder.PixelHeight; words = $items.ToArray() } | ConvertTo-Json -Compress -Depth 4
+} else {
+  $lines = @($result.Lines | ForEach-Object { $_.Text })
+  $payload = @{ text = ($lines -join "${"`"}n"); lineCount = $lines.Count } | ConvertTo-Json -Compress
+}
 [Console]::Out.Write($payload)
 `;
 
@@ -51,7 +65,7 @@ export function getWindowsPowerShellPath(systemRoot = process.env["SystemRoot"])
 	return `${root.replace(/\\+$/, "")}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
 }
 
-export function getWindowsOcrArguments(scriptPath: string, imagePath: string) {
+export function getWindowsOcrArguments(scriptPath: string, imagePath: string, words = false) {
 	return [
 		"-NoProfile",
 		"-NonInteractive",
@@ -61,6 +75,7 @@ export function getWindowsOcrArguments(scriptPath: string, imagePath: string) {
 		scriptPath,
 		"-ImagePath",
 		imagePath,
+		...(words ? ["-Words"] : []),
 	];
 }
 

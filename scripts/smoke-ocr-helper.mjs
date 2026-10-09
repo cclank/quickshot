@@ -55,6 +55,28 @@ try {
 			2,
 		),
 	);
+
+	// Smart redaction reads every word with its box.
+	const { stdout: wordsOutput } = await execFileAsync(
+		helperPath,
+		["--words", path.join(projectRoot, "test-fixtures", "terminal.png")],
+		{ encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
+	);
+	const words = JSON.parse(wordsOutput);
+	// Recognition sometimes joins the prompt's "~" to it, so match the start.
+	const prompts = words.words.filter((word) => word.text.startsWith("alex@Alexs-MacBook-Pro"));
+	const first = prompts.sort((a, b) => a.y - b.y)[0];
+	if (
+		words.width !== 1520 ||
+		words.height !== 760 ||
+		prompts.length < 9 ||
+		Math.abs(first.x - 22) > 8 ||
+		Math.abs(first.y - 57) > 8 ||
+		first.w < 300
+	) {
+		throw new Error(`Unexpected OCR words: ${JSON.stringify({ prompts: prompts.length, first })}`);
+	}
+	console.log(JSON.stringify({ words: words.words.length, prompts: prompts.length, first }));
 } finally {
 	await rm(temporaryDirectory, { force: true, recursive: true });
 }

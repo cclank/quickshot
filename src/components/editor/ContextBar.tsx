@@ -1,4 +1,4 @@
-import { ChevronDown, Copy as DuplicateIcon, Trash2 } from "lucide-react";
+import { ChevronDown, Copy as DuplicateIcon, LoaderCircle, Sparkles, Trash2 } from "lucide-react";
 import { type CSSProperties, memo, type ReactNode, useEffect, useRef, useState } from "react";
 import {
 	ANNOTATION_COLORS,
@@ -34,6 +34,9 @@ type ContextBarProps = {
 	compactColors?: boolean;
 	/** Renders an invisible copy that only exists to be measured. */
 	measureOnly?: boolean;
+	/** Smart redaction, offered with the redact tool where text recognition is available. */
+	onSmartRedact?: () => void;
+	smartRedactBusy?: boolean;
 };
 
 const COLORLESS: AnnotationKind[] = ["redact"];
@@ -220,8 +223,11 @@ export const ContextBar = memo(function ContextBar({
 	variant = "floating",
 	compactColors = false,
 	measureOnly = false,
+	onSmartRedact,
+	smartRedactBusy = false,
 }: ContextBarProps) {
-	const duplicateKeys = useKeymap().duplicate;
+	const keymap = useKeymap();
+	const duplicateKeys = keymap.duplicate;
 	const showColor = !COLORLESS.includes(kind);
 	const showSize = SIZED.includes(kind);
 	const sizeLabels = [t("style.size.s"), t("style.size.m"), t("style.size.l")];
@@ -294,6 +300,31 @@ export const ContextBar = memo(function ContextBar({
 							</ChoiceButton>
 						))}
 					</Group>
+				</>
+			)}
+
+			{kind === "redact" && onSmartRedact && (
+				<>
+					<Divider />
+					<button
+						type="button"
+						onClick={onSmartRedact}
+						disabled={smartRedactBusy}
+						aria-busy={smartRedactBusy || undefined}
+						aria-label={smartRedactBusy ? t("redact.working") : undefined}
+						className="qs-tip-host flex h-7 items-center gap-1.5 whitespace-nowrap rounded-[7px] px-2 text-[12px] font-medium text-[var(--qs-text-2)] transition-colors duration-100 hover:bg-[var(--qs-hover)] hover:text-[var(--qs-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--qs-select)] disabled:cursor-default disabled:hover:bg-transparent"
+					>
+						{smartRedactBusy ? (
+							<LoaderCircle size={14} strokeWidth={1.75} className="animate-spin" />
+						) : (
+							<Sparkles size={14} strokeWidth={1.75} />
+						)}
+						<span>{t("action.smartRedact")}</span>
+						<Tooltip
+							label={t("redact.smartHint")}
+							shortcut={keymap.smartRedact ? bindingLabel(keymap.smartRedact) : undefined}
+						/>
+					</button>
 				</>
 			)}
 

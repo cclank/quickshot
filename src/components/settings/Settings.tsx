@@ -38,6 +38,7 @@ const COMMAND_LABELS: Record<KeymapCommand, MessageKey> = {
 	saveAs: "action.saveAs",
 	stitch: "action.stitch",
 	ocr: "action.ocr",
+	smartRedact: "action.smartRedact",
 	pin: "action.pin",
 	duplicate: "action.duplicate",
 	toggleInspector: "settings.toggleInspector",

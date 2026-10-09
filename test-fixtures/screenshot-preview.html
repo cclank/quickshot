@@ -197,6 +197,15 @@
 					text: "QuickShot 本地文本提取\nPreview fixture",
 					lineCount: 2,
 				}),
+				// Smart redaction recorded on terminal.png (?fixtureSource=/test-fixtures/terminal.png).
+				findSensitiveRegions: async () => {
+					await new Promise((resolve) => setTimeout(resolve, 900));
+					if (!fixtureSource.endsWith("terminal.png")) {
+						return { success: true, regions: [], kinds: [] };
+					}
+					const recorded = await fetch("/test-fixtures/terminal-regions.json").then((response) => response.json());
+					return { success: true, ...recorded };
+				},
 				copyTextToClipboard: async () => ({ success: true }),
 				copyToClipboard: async () => ({ success: true }),
 				pinScreenshot: async (pngData) => {

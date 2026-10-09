@@ -55,6 +55,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.invoke("close-pinned-screenshot"),
 	extractText: (pngData: ArrayBuffer | Uint8Array) =>
 		ipcRenderer.invoke("extract-text", pngData),
+	findSensitiveRegions: (pngData: ArrayBuffer | Uint8Array) =>
+		ipcRenderer.invoke("find-sensitive-regions", pngData),
 	copyTextToClipboard: (text: string) =>
 		ipcRenderer.invoke("copy-text-to-clipboard", text),
 	readAssetDataUrl: (relativePath: string) =>

@@ -192,6 +192,27 @@ interface Window {
 					error: string;
 			  }
 		>;
+		/** Smart redaction: where the image shows user and host names, emails, IPs or keys. */
+		findSensitiveRegions: (
+			pngData: ArrayBuffer | Uint8Array,
+		) => Promise<
+			| {
+					success: true;
+					regions: { x: number; y: number; w: number; h: number }[];
+					kinds: ("user" | "host" | "email" | "ip" | "secret")[];
+			  }
+			| {
+					success: false;
+					code:
+						| "unsupported-platform"
+						| "invalid-image"
+						| "busy"
+						| "helper-unavailable"
+						| "timeout"
+						| "recognition-failed";
+					error: string;
+			  }
+		>;
 		copyTextToClipboard: (
 			text: string,
 		) => Promise<{ success: boolean; error?: string }>;

@@ -34,10 +34,12 @@ import {
 } from "@/editor/persistence";
 import {
 	DEFAULT_TOOL_STYLE,
+	REDACT_STRENGTHS,
 	type SizeIndex,
 	TOOL_ORDER,
 	type ToolStyle,
 } from "@/editor/presets";
+import { smartRedactions } from "@/editor/smartRedact";
 import { type AnnotationRenderEnv, drawAnnotations } from "@/editor/renderAnnotations";
 import { drawBackground, renderComposition } from "@/editor/renderComposition";
 import { applyStyleToAnnotation, styleFromAnnotation } from "@/editor/styleMapping";
@@ -57,7 +59,7 @@ import {
 import { measureTextAnnotation } from "@/editor/textLayout";
 import { calculateCanvasBackingSize } from "@/lib/canvasBacking";
 import { decodeImageData } from "@/lib/decodeImage";
-import { t } from "@/lib/i18n";
+import { type MessageKey, t } from "@/lib/i18n";
 import { type KeymapCommand, commandFor, useKeymap } from "@/lib/keymap";
 import { SUPPORTS_OCR, isModKey } from "@/lib/platform";
 import { createPngBlob } from "@/lib/pngBytes";
@@ -206,6 +208,10 @@ export function Editor() {
 	const annotationsRef = useRef(annotations);
 	annotationsRef.current = annotations;
 	const exportBusyRef = useRef(false);
+	const imageRef = useRef(image);
+	imageRef.current = image;
+	const [smartRedacting, setSmartRedacting] = useState(false);
+	const smartRedactingRef = useRef(false);
 	const toastTimerRef = useRef<number | null>(null);
 	const wallpaperCacheRef = useRef(new Map<string, Promise<HTMLImageElement>>());
 	const wallpaperRequestRef = useRef<Promise<HTMLImageElement | null>>(Promise.resolve(null));
@@ -692,6 +698,46 @@ export function Editor() {
 		if (!result.success) throw new Error(result.error || t("ocr.copyFailedLive"));
 	}, []);
 
+	// ── Smart redaction ───────────────────────────────────────────────────────
+	/** Recognizes the capture's text and covers names, addresses and keys in it. */
+	const smartRedact = useCallback(async () => {
+		const source = image;
+		if (!SUPPORTS_OCR || !source || smartRedactingRef.current) return;
+		smartRedactingRef.current = true;
+		setSmartRedacting(true);
+		// The redact tool's style bar shows the progress.
+		if (tool !== "redact" && selected?.kind !== "redact") setTool("redact");
+		try {
+			const blob = await sourceToPngBlob(source, sourceBlobRef.current);
+			if (!blob) throw new Error(t("ocr.notReady"));
+			const result = await window.electronAPI.findSensitiveRegions(await blob.arrayBuffer());
+			// A stitch changed the picture meanwhile, so the regions no longer line up.
+			if (imageRef.current !== source) return;
+			if (!result.success) {
+				showToast("error", t("redact.failed"), result.error);
+				return;
+			}
+			const strength = REDACT_STRENGTHS[toolStyle.redactMode][toolStyle.strokeSize] * unit;
+			const added = smartRedactions(result.regions, annotationsRef.current, toolStyle.redactMode, strength);
+			if (added.length === 0) {
+				if (result.regions.length) showToast("success", t("redact.covered"));
+				else showToast("success", t("redact.none"), t("redact.noneDetail"));
+				return;
+			}
+			commit([...annotationsRef.current, ...added]);
+			showToast(
+				"success",
+				t("redact.done", { count: added.length }),
+				result.kinds.map((kind) => t(`redact.kind.${kind}` as MessageKey)).join(t("redact.kindSeparator")),
+			);
+		} catch (error) {
+			showToast("error", t("redact.failed"), error instanceof Error ? error.message : undefined);
+		} finally {
+			smartRedactingRef.current = false;
+			setSmartRedacting(false);
+		}
+	}, [commit, image, selected, setTool, showToast, tool, toolStyle, unit]);
+
 	const toggleOcr = useCallback(() => setOcrOpen((open) => !open), []);
 	const closeOcr = useCallback(() => setOcrOpen(false), []);
 	const toggleInspector = useCallback(() => setInspectorOpen((open) => !open), []);
@@ -931,6 +977,9 @@ export function Editor() {
 				case "ocr":
 					if (SUPPORTS_OCR) toggleOcr();
 					break;
+				case "smartRedact":
+					void smartRedact();
+					break;
 				case "pin":
 					void pin();
 					break;
@@ -962,6 +1011,7 @@ export function Editor() {
 		selected,
 		selectedId,
 		setTool,
+		smartRedact,
 		toggleInspector,
 		toggleOcr,
 		undo,
@@ -985,6 +1035,8 @@ export function Editor() {
 				onDuplicate={duplicateSelected}
 				variant={styleBarFloats ? "floating" : "inline"}
 				compactColors={styleBarMode === "compact"}
+				onSmartRedact={SUPPORTS_OCR ? () => void smartRedact() : undefined}
+				smartRedactBusy={smartRedacting}
 			/>
 		) : null;
 

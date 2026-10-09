@@ -54,7 +54,7 @@
 | **Ten annotation tools, one key each** | Boxes, arrows, numbered steps, text, highlighter and blur, all still editable after you draw them. |
 | **Presentation-ready in one click** | Gradients, window frames, rounded corners, soft shadows, aspect ratios and your own signature. Set a style as the default and every new capture starts that way. |
 | **Stitch several captures** | Add another capture with `Mod+Shift+A`, or paste and drop images, then lay them out vertically, horizontally or in a grid. |
-| **Pin and read** | Float a capture above everything, or pull out its text with on-device OCR. |
+| **Pin and read** | Float a capture above everything, or pull out its text with on-device OCR. Smart Redact covers user and host names, emails, IPs and keys in one step. |
 | **Private by design** | Screenshots never leave your computer. No account, no cloud, just an anonymous launch count. |
 
 ## Download
@@ -85,6 +85,7 @@ Get them from the [latest release](https://github.com/cclank/quickshot/releases/
 Ten tools, each on a single key: **select, rectangle, ellipse, arrow, line, pen, highlighter, text, numbered steps, and redaction** (pixelate or blur).
 
 - Every annotation stays editable. Select it to move, resize, recolor, restyle, duplicate or delete it.
+- **Smart Redact** (`Mod+Shift+M`, or the button in the redact tool's bar) reads the capture's text on-device and covers, in one step, this computer's user and host names (in `user@host` prompts and `ls -l` owners), the user folder in paths like `/Users/name`, emails, IP and MAC addresses, and common keys such as `sk-…`, `ghp_…` and `AKIA…` or the value in `KEY=value`. One undo removes it all. It is an aid, so check the result before you share.
 - Hold `Shift` for squares, circles and 45° lines. Drawing tools pick up existing marks of the same kind, so an arrow can still start on the edge of a box.
 - Text supports plain, background and outline styles, multiple lines, and Chinese/Japanese input methods.
 - Sizes follow the capture's pixel density, so annotations look the same on Retina and standard displays.
@@ -134,6 +135,7 @@ Screenshots, and any text in them, never leave your computer. There is no accoun
 | Editor | `Mod+Enter` | Copy and close |
 | Editor | `Mod+S` / `Mod+Shift+S` | Save to Downloads / Save As |
 | Editor | `Mod+Shift+P` / `Mod+Shift+T` | Pin / extract text |
+| Editor | `Mod+Shift+M` | Smart Redact |
 | Editor | `Mod+Shift+A`, `Mod+V` | Stitch another capture / a copied image |
 | Editor | `Mod+D`, `Delete`, arrow keys | Duplicate, delete, nudge the selected annotation |
 | Editor | `[` / `]` | Thinner / thicker |

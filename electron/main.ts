@@ -10,7 +10,8 @@ import {
 	writePngWithoutOverwrite,
 } from "./screenshotFiles";
 import { shouldRegisterCaptureShortcut } from "./captureShortcutPolicy";
-import { parseOcrHelperOutput } from "./ocrResult";
+import { parseOcrHelperOutput, parseOcrWordsOutput } from "./ocrResult";
+import { type MachineIdentity, findSensitiveRegions } from "./sensitiveText";
 import {
 	type AppSettings,
 	DEFAULT_APP_SETTINGS,
@@ -120,6 +121,8 @@ const CAPTURE_RESTART_DELAY_MS = 75;
 const SHORTCUT_HEALTH_INTERVAL_MS = 60_000;
 const INPUT_SOURCE_CHECK_DELAY_MS = 400;
 const OCR_TIMEOUT_MS = 45_000;
+/** Smart redaction reads a long capture in tiles, which takes longer. */
+const OCR_WORDS_TIMEOUT_MS = 90_000;
 const MAX_OCR_TEXT_BYTES = 2 * 1024 * 1024;
 const MAX_OCR_PROCESS_OUTPUT_BYTES = MAX_OCR_TEXT_BYTES * 6 + 64 * 1024;
 const OCR_TIMEOUT_REASON = "ocr-timeout";
@@ -977,6 +980,7 @@ function executeOcrHelper(
 	task: ActiveOcrTask,
 	imagePath: string,
 	windowsScriptPath: string | null,
+	words: boolean,
 ): Promise<string> {
 	if (task.abortController.signal.aborted) {
 		return Promise.reject(new Error("OCR task was cancelled"));
@@ -985,9 +989,9 @@ function executeOcrHelper(
 	const command = windowsScriptPath
 		? {
 				file: getWindowsPowerShellPath(),
-				args: getWindowsOcrArguments(windowsScriptPath, imagePath),
+				args: getWindowsOcrArguments(windowsScriptPath, imagePath, words),
 			}
-		: { file: getOcrHelperPath(), args: [imagePath] };
+		: { file: getOcrHelperPath(), args: words ? ["--words", imagePath] : [imagePath] };
 
 	return new Promise((resolve, reject) => {
 		let child: ChildProcess;
@@ -1028,7 +1032,11 @@ function isOcrSupported() {
 	return process.platform === "darwin" || process.platform === "win32";
 }
 
-async function extractTextFromPng(pngBuffer: Buffer) {
+/**
+ * Runs the OCR helper on a PNG, one task at a time, and returns what it wrote.
+ * `words` asks for every word with its box instead of the text.
+ */
+async function runOcr(pngBuffer: Buffer, words: boolean) {
 	if (!isOcrSupported()) {
 		return ocrFailure("unsupported-platform", mt("ocr.unsupported"));
 	}
@@ -1047,7 +1055,7 @@ async function extractTextFromPng(pngBuffer: Buffer) {
 	let temporaryDirectory: string | null = null;
 	const timeout = setTimeout(() => {
 		terminateOcrTask(task, OCR_TIMEOUT_REASON);
-	}, OCR_TIMEOUT_MS);
+	}, words ? OCR_WORDS_TIMEOUT_MS : OCR_TIMEOUT_MS);
 	timeout.unref();
 
 	try {
@@ -1069,19 +1077,8 @@ async function extractTextFromPng(pngBuffer: Buffer) {
 			});
 		}
 
-		const stdout = await executeOcrHelper(task, imagePath, windowsScriptPath);
-		const result = parseOcrHelperOutput(
-			stripByteOrderMark(stdout.trim()),
-			MAX_OCR_TEXT_BYTES,
-		);
-		return {
-			success: true as const,
-			text:
-				process.platform === "win32"
-					? normalizeCjkSpacing(result.text)
-					: result.text,
-			lineCount: result.lineCount,
-		};
+		const stdout = await executeOcrHelper(task, imagePath, windowsScriptPath, words);
+		return { success: true as const, stdout: stripByteOrderMark(stdout.trim()) };
 	} catch (error) {
 		let code: OcrErrorCode = "recognition-failed";
 		let message = mt("ocr.failed");
@@ -1118,6 +1115,73 @@ async function extractTextFromPng(pngBuffer: Buffer) {
 		if (activeOcrTask === task) {
 			activeOcrTask = null;
 		}
+	}
+}
+
+async function extractTextFromPng(pngBuffer: Buffer) {
+	const output = await runOcr(pngBuffer, false);
+	if (!output.success) return output;
+	try {
+		const result = parseOcrHelperOutput(output.stdout, MAX_OCR_TEXT_BYTES);
+		return {
+			success: true as const,
+			text:
+				process.platform === "win32"
+					? normalizeCjkSpacing(result.text)
+					: result.text,
+			lineCount: result.lineCount,
+		};
+	} catch {
+		writeDiagnostic("ocr-failed", { code: "recognition-failed" });
+		return ocrFailure("recognition-failed", mt("ocr.failed"));
+	}
+}
+
+let machineIdentity: Promise<MachineIdentity> | null = null;
+
+/** The names smart redaction looks for: this user's, and this computer's. */
+function getMachineIdentity() {
+	machineIdentity ??= (async () => {
+		const users = [process.env["USER"], process.env["USERNAME"], path.basename(os.homedir())];
+		try {
+			users.push(os.userInfo().username);
+		} catch {
+			// No account record: the environment and home folder still name the user.
+		}
+		const hostname = os.hostname();
+		const hosts = [hostname, hostname.split(".")[0]];
+		if (process.platform === "darwin") {
+			for (const key of ["ComputerName", "LocalHostName"]) {
+				try {
+					const { stdout } = await execFileAsync("/usr/sbin/scutil", ["--get", key], { timeout: 2000 });
+					hosts.push(stdout.trim());
+				} catch {
+					// Not set; the host name is enough.
+				}
+			}
+		}
+		const named = (values: (string | undefined)[]) => values.filter((value): value is string => Boolean(value));
+		return { users: named(users), hosts: named(hosts) };
+	})();
+	return machineIdentity;
+}
+
+/** Smart redaction: the regions of a PNG that show private details, in its pixels. */
+async function findSensitiveRegionsInPng(pngBuffer: Buffer) {
+	const output = await runOcr(pngBuffer, true);
+	if (!output.success) return output;
+	try {
+		const result = parseOcrWordsOutput(output.stdout, MAX_OCR_TEXT_BYTES);
+		const { regions, kinds } = findSensitiveRegions(result.lines, await getMachineIdentity(), result);
+		writeDiagnostic("smart-redact", { regions: regions.length, kinds });
+		return {
+			success: true as const,
+			regions: regions.map(({ x, y, w, h }) => ({ x, y, w, h })),
+			kinds,
+		};
+	} catch {
+		writeDiagnostic("ocr-failed", { code: "recognition-failed", words: true });
+		return ocrFailure("recognition-failed", mt("ocr.failed"));
 	}
 }
 
@@ -4532,6 +4596,22 @@ function registerIpcHandlers() {
 				return ocrFailure("invalid-image", mt("ocr.invalidImage"));
 			}
 			return extractTextFromPng(pngBuffer);
+		},
+	);
+
+	ipcMain.handle(
+		"find-sensitive-regions",
+		async (event, pngData: ArrayBuffer | Uint8Array) => {
+			if (!isTrustedWindowSender(event, screenshotPreviewWindow)) {
+				return ocrFailure("invalid-image", mt("ocr.unreadable"));
+			}
+			let pngBuffer: Buffer;
+			try {
+				pngBuffer = validateCapturePngPayload(pngData);
+			} catch {
+				return ocrFailure("invalid-image", mt("ocr.invalidImage"));
+			}
+			return findSensitiveRegionsInPng(pngBuffer);
 		},
 	);
 

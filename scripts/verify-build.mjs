@@ -10,9 +10,9 @@ const electronDistRoot = path.join(projectRoot, "dist-electron");
 const limits = {
 	rendererBytes: 360_000,
 	rendererGzipBytes: 108_000,
-	mainBytes: 130_000,
+	mainBytes: 140_000,
 	preloadBytes: 5_000,
-	cssBytes: 40_000,
+	cssBytes: 42_000,
 	distBytes: 19_000_000,
 	thumbnailBytes: 160_000,
 };

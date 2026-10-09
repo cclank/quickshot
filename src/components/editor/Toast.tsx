@@ -28,10 +28,10 @@ export function Toast({ toast }: { toast: ToastState }) {
 					<AlertCircle size={12} strokeWidth={2.5} className="text-white" />
 				)}
 			</span>
-			<span className="min-w-0">
-				<span className="text-[12.5px] font-semibold text-[var(--qs-text)]">{toast.title}</span>
+			<span className="flex min-w-0 items-baseline">
+				<span className="shrink-0 whitespace-nowrap text-[12.5px] font-semibold text-[var(--qs-text)]">{toast.title}</span>
 				{toast.detail && (
-					<span className="ml-2 truncate text-[12px] text-[var(--qs-text-2)]">{toast.detail}</span>
+					<span className="ml-2 min-w-0 truncate text-[12px] text-[var(--qs-text-2)]">{toast.detail}</span>
 				)}
 			</span>
 		</div>
