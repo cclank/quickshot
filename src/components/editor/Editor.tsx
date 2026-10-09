@@ -36,7 +36,6 @@ import {
 	DEFAULT_TOOL_STYLE,
 	type SizeIndex,
 	TOOL_ORDER,
-	TOOL_SHORTCUTS,
 	type ToolStyle,
 } from "@/editor/presets";
 import { type AnnotationRenderEnv, drawAnnotations } from "@/editor/renderAnnotations";
@@ -59,6 +58,7 @@ import { measureTextAnnotation } from "@/editor/textLayout";
 import { calculateCanvasBackingSize } from "@/lib/canvasBacking";
 import { decodeImageData } from "@/lib/decodeImage";
 import { t } from "@/lib/i18n";
+import { type KeymapCommand, commandFor, useKeymap } from "@/lib/keymap";
 import { SUPPORTS_OCR, isModKey } from "@/lib/platform";
 import { createPngBlob } from "@/lib/pngBytes";
 import { TextExtractionPanel } from "../screenshot/TextExtractionPanel";
@@ -71,6 +71,13 @@ import { type StyleBarMode, Toolbar } from "./Toolbar";
 
 const MAX_PIN_DIMENSION = 3072;
 const MAX_PIN_PIXELS = 6_000_000;
+/**
+ * Chromium will not draw a canvas past 32,767 pixels a side or about 268
+ * million pixels, and a canvas that large takes over a gigabyte. A bigger
+ * export, e.g. a long scrolling capture at 1:1, is scaled down to fit.
+ */
+const MAX_EXPORT_DIMENSION = 32_000;
+const MAX_EXPORT_PIXELS = 120_000_000;
 const TOAST_DURATION_MS = 2000;
 
 const noop = () => {};
@@ -174,6 +181,7 @@ export function Editor() {
 	const [savedDefault, setSavedDefault] = useState<StyleSettings | null>(loadSavedDefaultStyle);
 	const [toolStyle, setToolStyle] = useState<ToolStyle>(loadToolStyle);
 	const [tool, setToolState] = useState<Tool>(loadTool);
+	const keymap = useKeymap();
 	const [inspectorOpen, setInspectorOpen] = useState(loadInspectorOpen);
 	const [history, setHistory] = useState<History<EditorDoc>>(() => createHistory(createDoc()));
 	const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -202,6 +210,8 @@ export function Editor() {
 	const wallpaperCacheRef = useRef(new Map<string, Promise<HTMLImageElement>>());
 	const wallpaperRequestRef = useRef<Promise<HTMLImageElement | null>>(Promise.resolve(null));
 	const exportScratchRef = useRef<HTMLCanvasElement | null>(null);
+	/** The scale of the last export; below 1 when it had to be shrunk to fit. */
+	const exportScaleRef = useRef(1);
 
 	// ── Session ───────────────────────────────────────────────────────────────
 	useEffect(() => {
@@ -536,6 +546,14 @@ export function Editor() {
 					MAX_PIN_PIXELS,
 				);
 				if (backing) scale = backing.width / layout.width;
+			} else {
+				scale = Math.min(
+					1,
+					MAX_EXPORT_DIMENSION / layout.width,
+					MAX_EXPORT_DIMENSION / layout.height,
+					Math.sqrt(MAX_EXPORT_PIXELS / (layout.width * layout.height)),
+				);
+				exportScaleRef.current = scale;
 			}
 			const canvas = document.createElement("canvas");
 			canvas.width = Math.max(1, Math.round(layout.width * scale));
@@ -570,6 +588,15 @@ export function Editor() {
 		[finishText, image, layout, settings],
 	);
 
+	/** Says how far an export was shrunk, if it was. */
+	const scaledNote = useCallback(
+		() =>
+			exportScaleRef.current < 1
+				? t("toast.scaledDown", { percent: Math.max(1, Math.floor(exportScaleRef.current * 100)) })
+				: null,
+		[],
+	);
+
 	const runExport = useCallback(
 		async (task: () => Promise<void>) => {
 			if (exportBusyRef.current || !image) return;
@@ -602,9 +629,9 @@ export function Editor() {
 					window.close();
 					return;
 				}
-				showToast("success", t("toast.copied"), t("toast.copiedDetail"));
+				showToast("success", t("toast.copied"), scaledNote() ?? t("toast.copiedDetail"));
 			}),
-		[renderPng, runExport, showToast],
+		[renderPng, runExport, scaledNote, showToast],
 	);
 
 	const quickSave = useCallback(
@@ -616,10 +643,10 @@ export function Editor() {
 					return;
 				}
 				const result = await window.electronAPI.quickSaveScreenshotFinal(png);
-				if (result.success) showToast("success", t("toast.saved"), fileName(result.path));
+				if (result.success) showToast("success", t("toast.saved"), scaledNote() ?? fileName(result.path));
 				else showToast("error", t("toast.saveFailed"), result.error || t("toast.retry"));
 			}),
-		[renderPng, runExport, showToast],
+		[renderPng, runExport, scaledNote, showToast],
 	);
 
 	const saveAs = useCallback(
@@ -631,10 +658,10 @@ export function Editor() {
 					return;
 				}
 				const result = await window.electronAPI.saveScreenshotFinal(png);
-				if (result.success) showToast("success", t("toast.saved"), fileName(result.path));
+				if (result.success) showToast("success", t("toast.saved"), scaledNote() ?? fileName(result.path));
 				else if (!result.canceled) showToast("error", t("toast.saveFailed"), result.error || t("toast.retry"));
 			}),
-		[renderPng, runExport, showToast],
+		[renderPng, runExport, scaledNote, showToast],
 	);
 
 	const pin = useCallback(
@@ -824,6 +851,16 @@ export function Editor() {
 			}
 			if (isEditableTarget(event.target)) return;
 
+			// Commands whose shortcuts can be changed in Settings.
+			const command = commandFor(keymap, event, "editor");
+			if (command) {
+				// Copying selected text (in the text panel) stays the system's.
+				if (command === "copy" && window.getSelection()?.toString()) return;
+				event.preventDefault();
+				runCommand(command);
+				return;
+			}
+
 			if (mod) {
 				if (key === "z") {
 					event.preventDefault();
@@ -832,31 +869,6 @@ export function Editor() {
 				} else if (key === "y") {
 					event.preventDefault();
 					redo();
-				} else if (key === "c" && !event.shiftKey) {
-					if (window.getSelection()?.toString()) return;
-					event.preventDefault();
-					void copyImage();
-				} else if (event.key === "Enter") {
-					event.preventDefault();
-					void copyImage(true);
-				} else if (key === "s") {
-					event.preventDefault();
-					void (event.shiftKey ? saveAs() : quickSave());
-				} else if (key === "p" && event.shiftKey) {
-					event.preventDefault();
-					void pin();
-				} else if (key === "t" && event.shiftKey && SUPPORTS_OCR) {
-					event.preventDefault();
-					toggleOcr();
-				} else if (key === "a" && event.shiftKey) {
-					event.preventDefault();
-					void captureForStitch();
-				} else if (key === "d") {
-					event.preventDefault();
-					duplicateSelected();
-				} else if (key === ".") {
-					event.preventDefault();
-					toggleInspector();
 				} else if (key === "w") {
 					event.preventDefault();
 					window.close();
@@ -893,12 +905,41 @@ export function Editor() {
 				applyStyle({ strokeSize: next });
 				return;
 			}
-			const shortcutTool = TOOL_ORDER.find(
-				(candidate) => `Key${TOOL_SHORTCUTS[candidate]}` === event.code,
-			);
-			if (shortcutTool && !event.shiftKey) {
-				event.preventDefault();
-				setTool(shortcutTool);
+		};
+		const runCommand = (command: KeymapCommand) => {
+			if (command.startsWith("tool.")) {
+				const tool = command.slice("tool.".length) as Tool;
+				if (TOOL_ORDER.includes(tool)) setTool(tool);
+				return;
+			}
+			switch (command) {
+				case "copy":
+					void copyImage();
+					break;
+				case "copyAndClose":
+					void copyImage(true);
+					break;
+				case "quickSave":
+					void quickSave();
+					break;
+				case "saveAs":
+					void saveAs();
+					break;
+				case "stitch":
+					void captureForStitch();
+					break;
+				case "ocr":
+					if (SUPPORTS_OCR) toggleOcr();
+					break;
+				case "pin":
+					void pin();
+					break;
+				case "duplicate":
+					duplicateSelected();
+					break;
+				case "toggleInspector":
+					toggleInspector();
+					break;
 			}
 		};
 		window.addEventListener("keydown", handleKeyDown);
@@ -912,6 +953,7 @@ export function Editor() {
 		deleteSelected,
 		duplicateSelected,
 		effectiveStyle.strokeSize,
+		keymap,
 		ocrOpen,
 		pin,
 		quickSave,

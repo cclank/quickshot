@@ -68,10 +68,24 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - uses: actions/download-artifact@v4
         with:
           path: installers
           merge-multiple: true
+
+      # The update feed QuickShot reads from the release when it cannot reach
+      # dl.lanshuagent.com (scripts/publish-update-feed.mjs mirrors it there).
+      - name: Write update feed
+        run: >-
+          node scripts/write-update-feed.mjs installers "$GITHUB_REF_NAME"
+          "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          installers/latest.json
 
       - uses: softprops/action-gh-release@v2
         with:

@@ -21,9 +21,11 @@
 
 早期安装在 `~/Applications/QuickShot.app` 的副本，会在下次运行安装脚本时移到 `app-backups.noindex/legacy-home-*` 并取消注册，避免两份应用争用单实例锁和录屏授权。
 
-自动化截图入口：`open -n "/Applications/QuickShot.app" --args --capture-region`。这会调用正常的系统选区流程；按 Esc 取消。
+自动化截图入口：`open -n "/Applications/QuickShot.app" --args --capture-region`。这会调用正常的系统选区流程；按 Esc 取消。`--capture-scroll` 直接进入滚动截图（macOS 14 起），框选后滚动页面，回车完成、Esc 取消。`--settings` 打开设置窗口（快捷键、语言、选区方式、登录时启动）。
 
-本机签名以打包时实际可用的身份为准。当前没有可用的代码签名身份，旧包与新包均使用 ad-hoc 签名，其 designated requirement 绑定构建哈希；构建变化时无法仅靠固定名称和原位替换保证授权延续。遇到签名不兼容应停止安装，向用户说明并确认固定签名迁移方案；首次迁移仍可能需要重新授权，不能承诺绝不弹窗。
+本机签名以打包时实际可用的身份为准。ad-hoc 签名的 designated requirement 绑定构建哈希，每次构建都会变化，系统会把新包当作另一个应用而要求重新授权。因此本机使用登录钥匙串中的自签名代码签名证书 `QuickShot Local Signing`（2026-10-09 创建并完成迁移），designated requirement 为 `identifier "com.quickshot.app" and certificate leaf = …`，跨构建保持不变；日常更新直接运行 `npm run install:mac:local`，签名校验通过即可原位替换，无需重新授权。
+
+在没有这张证书的机器上：签名脚本会报错停止。可以在「钥匙串访问 → 证书助理 → 创建证书」中创建同名的自签名根证书（类型选“代码签名”），再运行一次 `node scripts/install-electron-mac.mjs --migrate-signing`；这次迁移需要用户重新授权一次。只有用户明确接受每次重新授权时，才使用 `--accept-reauthorization` 安装 ad-hoc 包。遇到签名不兼容应停止安装并向用户说明，不能承诺绝不弹窗。
 
 安装脚本不会重置录屏授权、修改 TCC 数据库、放宽签名验证或自动安装信任证书。签名身份核验通过也不能代替用户实际截图的权限验收。
 

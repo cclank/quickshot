@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>QuickShot Scrolling Capture Fixture</title>
+		<style>
+			/* The real panel is a 260×420 transparent window over whatever is on screen. */
+			html { background: linear-gradient(135deg, #e9ecf5, #cfd6e6); }
+		</style>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script>
+			// The scrolling-capture panel against a mocked main process. Open with
+			// ?windowType=scroll-capture. ?status=<status> holds one state;
+			// otherwise it plays waiting → capturing (with a lost moment) → full.
+			const parameters = new URLSearchParams(window.location.search);
+			const held = parameters.get("status");
+			const frameHeight = 1800;
+			const width = 1600;
+			window.__quickshotScrollFixture = { finished: 0, cancelled: 0 };
+
+			// A fake article, drawn at the agent's preview width.
+			const page = document.createElement("canvas");
+			page.width = 432;
+			page.height = 4000;
+			{
+				const context = page.getContext("2d");
+				context.fillStyle = "#ffffff";
+				context.fillRect(0, 0, page.width, page.height);
+				context.fillStyle = "#2b3a67";
+				context.fillRect(0, 0, page.width, 34);
+				let y = 50;
+				let seed = 7;
+				const random = (bound) => ((seed = (seed * 1103515245 + 12345) % 2147483648) % bound);
+				while (y < page.height - 20) {
+					if (random(9) === 0) {
+						context.fillStyle = `hsl(${random(360)} 55% 70%)`;
+						context.fillRect(14, y, 240, 90);
+						y += 104;
+						continue;
+					}
+					context.fillStyle = "#3c3c46";
+					let x = 14;
+					const end = page.width - 20 - random(140);
+					while (x < end) {
+						const word = 6 + random(36);
+						context.fillRect(x, y, word, 6);
+						x += word + 5;
+					}
+					y += 14;
+				}
+			}
+
+			async function previewBytes(height) {
+				const rows = Math.min(page.height, Math.round((height * 432) / width));
+				const visible = Math.min(rows, 640);
+				const canvas = document.createElement("canvas");
+				canvas.width = 432;
+				canvas.height = visible;
+				canvas.getContext("2d").drawImage(page, 0, rows - visible, 432, visible, 0, 0, 432, visible);
+				const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
+				return new Uint8Array(await blob.arrayBuffer());
+			}
+
+			let listener = () => {};
+			let state = { status: held || "waiting", height: held && held !== "waiting" ? 7240 : frameHeight, width, frameHeight, preview: 1 };
+			window.electronAPI = {
+				platform: "darwin",
+				language: parameters.get("lang") || undefined,
+				scrollCapture: {
+					getState: async () => ({ success: true, progress: state, previewBytes: await previewBytes(state.height) }),
+					finish: async () => {
+						window.__quickshotScrollFixture.finished += 1;
+						state = { ...state, status: "finishing" };
+						listener(state);
+						return { success: true };
+					},
+					cancel: async () => {
+						window.__quickshotScrollFixture.cancelled += 1;
+						return { success: true };
+					},
+					onProgress: (callback) => {
+						listener = callback;
+						return () => {};
+					},
+				},
+			};
+
+			if (!held) {
+				let tick = 0;
+				const timer = setInterval(async () => {
+					tick += 1;
+					if (state.status === "finishing") return clearInterval(timer);
+					let status = tick < 8 ? "waiting" : "capturing";
+					if (tick >= 30 && tick < 38) status = "lost";
+					let height = status === "capturing" ? Math.min(14_000, state.height + 260) : state.height;
+					if (height >= 14_000) status = "full";
+					state = { ...state, status, height, preview: state.preview + 1 };
+					listener({ ...state, previewBytes: await previewBytes(height) });
+					if (status === "full") clearInterval(timer);
+				}, 160);
+			}
+		</script>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

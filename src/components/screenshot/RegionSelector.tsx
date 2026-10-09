@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t } from "@/lib/i18n";
+import { bindingLabel, commandFor, useKeymap } from "@/lib/keymap";
 import { createFrameObjectUrl } from "@/lib/pngBytes";
 import {
 	type SelectionPoint as Point,
@@ -13,6 +14,9 @@ import {
  * dimming: hovering outlines the window under the pointer, a click captures
  * that window, a drag captures an area, and either goes straight to the
  * editor. Esc or a right-click cancels.
+ *
+ * In scrolling mode (S, or the tray's Scrolling Capture on macOS) the
+ * selection starts a scrolling capture of that area instead.
  */
 
 type Drag = { anchor: Point; current: Point; moved: boolean };
@@ -186,6 +190,16 @@ export function RegionSelector() {
 	const [view, setView] = useState<OverlayState>(IDLE_STATE);
 	const [notice, setNotice] = useState<string | null>(null);
 	const noticeTimerRef = useRef<number | null>(null);
+	const keymap = useKeymap();
+	const keymapRef = useRef(keymap);
+	keymapRef.current = keymap;
+	const scrollAvailableRef = useRef(false);
+	const scrollModeRef = useRef(false);
+	const [scrollMode, setScrollModeState] = useState(false);
+	const setScrollMode = useCallback((enabled: boolean) => {
+		scrollModeRef.current = enabled;
+		setScrollModeState(enabled);
+	}, []);
 
 	useEffect(
 		() => () => {
@@ -248,6 +262,9 @@ export function RegionSelector() {
 		}
 		stateRef.current = { ...IDLE_STATE };
 		setView(stateRef.current);
+		scrollAvailableRef.current = false;
+		scrollModeRef.current = false;
+		setScrollModeState(false);
 		if (clearActiveSession) activeSessionIdRef.current = null;
 		windowsRef.current = [];
 		windowsReadyRef.current = false;
@@ -284,6 +301,8 @@ export function RegionSelector() {
 			sessionId: number;
 			imageBytes: Uint8Array;
 			mimeType?: string;
+			scroll?: boolean;
+			scrollAvailable?: boolean;
 		}) => {
 			if (
 				disposed ||
@@ -297,6 +316,8 @@ export function RegionSelector() {
 			loadingSessionIdRef.current = payload.sessionId;
 			clearRegionSession(false);
 			activeSessionIdRef.current = payload.sessionId;
+			scrollAvailableRef.current = Boolean(payload.scrollAvailable);
+			setScrollMode(Boolean(payload.scroll && payload.scrollAvailable));
 			let imageLoadCancel: (() => void) | null = null;
 
 			try {
@@ -354,7 +375,7 @@ export function RegionSelector() {
 			unsubscribeWindows?.();
 			clearRegionSession();
 		};
-	}, [applyWindows, clearRegionSession, sizeOverlayCanvas]);
+	}, [applyWindows, clearRegionSession, setScrollMode, sizeOverlayCanvas]);
 
 	const cancel = useCallback(async () => {
 		const sessionId = activeSessionIdRef.current;
@@ -402,18 +423,31 @@ export function RegionSelector() {
 	useEffect(() => {
 		if (!imageReady) return;
 		const handleKeyDown = (event: KeyboardEvent) => {
-			if (event.key !== "Escape") return;
-			event.preventDefault();
-			void cancel();
+			if (event.key === "Escape") {
+				event.preventDefault();
+				void cancel();
+				return;
+			}
+			// S (or whatever Settings says) switches between a regular and a scrolling capture.
+			if (
+				!event.repeat &&
+				scrollAvailableRef.current &&
+				!stateRef.current.submitting &&
+				commandFor(keymapRef.current, event, "overlay") === "overlay.scroll"
+			) {
+				event.preventDefault();
+				setScrollMode(!scrollModeRef.current);
+			}
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [cancel, imageReady]);
+	}, [cancel, imageReady, setScrollMode]);
 
 	// ── Completion ────────────────────────────────────────────────────────────
 	/**
 	 * Opens the editor with `rect` (CSS pixels). The main process does the
 	 * cropping from the lossless frame, or captures a clicked window on its own.
+	 * In scrolling mode it starts a scrolling capture of `rect` instead.
 	 */
 	const submit = useCallback(
 		async (rect: SelectionRect, target: DetectedWindow | null) => {
@@ -432,15 +466,16 @@ export function RegionSelector() {
 				height: Math.min(image.naturalHeight - y, Math.round(rect.height * scaleY)),
 			};
 			if (pixels.width < MIN_SELECTION || pixels.height < MIN_SELECTION) return;
+			const scroll = scrollModeRef.current;
 			state.submitting = true;
 			scheduleRender();
 
 			try {
 				const result = await window.electronAPI.screenshotRegionSelected({
 					sessionId,
-					action: "edit",
+					action: scroll ? "scroll" : "edit",
 					rect: pixels,
-					windowId: target?.id,
+					windowId: scroll ? undefined : target?.id,
 				});
 				if (activeSessionIdRef.current !== sessionId || result.success) return;
 				if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
@@ -561,10 +596,30 @@ export function RegionSelector() {
 				</div>
 			)}
 
+			{scrollMode && imageReady && !view.submitting && (
+				<div
+					role="status"
+					className="pointer-events-none absolute left-1/2 top-6 flex -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-[rgba(30,30,32,0.92)] py-2 pl-3 pr-2 text-[12.5px] text-white shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur-xl"
+				>
+					<span
+						aria-hidden="true"
+						className="h-2.5 w-2.5 shrink-0 rounded-full"
+						style={{ background: `conic-gradient(${SPECTRUM.join(", ")})` }}
+					/>
+					<span className="font-semibold">{t("region.scrollTitle")}</span>
+					<span className="text-white/70">{t("region.scrollHint")}</span>
+					{keymap["overlay.scroll"] && (
+						<span className="rounded-full bg-white/10 px-2.5 py-0.5 text-[11.5px] text-white/70">
+							{t("region.scrollToggle", { key: bindingLabel(keymap["overlay.scroll"]) })}
+						</span>
+					)}
+				</div>
+			)}
+
 			{notice && (
 				<div
 					role="alert"
-					className="pointer-events-none absolute left-1/2 top-6 -translate-x-1/2 rounded-full bg-[rgba(30,30,32,0.92)] px-4 py-2 text-[12.5px] font-medium text-white shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur-xl"
+					className={`pointer-events-none absolute left-1/2 ${scrollMode ? "top-[72px]" : "top-6"} -translate-x-1/2 rounded-full bg-[rgba(30,30,32,0.92)] px-4 py-2 text-[12.5px] font-medium text-white shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur-xl`}
 				>
 					{notice}
 				</div>

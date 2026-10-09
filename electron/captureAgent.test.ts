@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { CaptureAgent, parseAgentLine, splitLines } from "./captureAgent";
+import { type AgentEvent, CaptureAgent, parseAgentEvent, parseAgentLine, splitLines } from "./captureAgent";
 
 // A stand-in for the Swift agent: echoes requests, ignores "slow", dies on "crash".
 const FAKE_AGENT = `
@@ -9,6 +9,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 	const request = JSON.parse(line);
 	if (request.cmd === "slow") return;
 	if (request.cmd === "crash") process.exit(3);
+	if (request.cmd === "tick") process.stdout.write(JSON.stringify({ event: "scroll", status: "capturing", height: 900 }) + "\\n");
 	process.stdout.write(JSON.stringify({ id: request.id, ok: true, echo: request.cmd }) + "\\n");
 });
 `;
@@ -33,6 +34,18 @@ describe("agent protocol parsing", () => {
 		expect(parseAgentLine('{"id":"3","ok":true}')).toBeNull();
 		expect(parseAgentLine('{"id":3}')).toBeNull();
 		expect(parseAgentLine("not json")).toBeNull();
+	});
+
+	it("tells the agent's own events apart from responses", () => {
+		expect(parseAgentEvent('{"event":"scroll","status":"lost","height":1200}')).toEqual({
+			event: "scroll",
+			status: "lost",
+			height: 1200,
+		});
+		expect(parseAgentEvent('{"id":3,"ok":true}')).toBeNull();
+		expect(parseAgentEvent('{"id":3,"event":"scroll"}')).toBeNull();
+		expect(parseAgentEvent('{"event":""}')).toBeNull();
+		expect(parseAgentEvent("[1]")).toBeNull();
 	});
 
 	it("keeps a partial line until the rest arrives", () => {
@@ -67,5 +80,15 @@ describe("CaptureAgent", () => {
 		expect(await agent.request({ cmd: "crash" }, 5000)).toBeNull();
 		expect(events).toContain("capture-agent-stopped");
 		expect(await agent.request({ cmd: "windows" }, 5000)).toMatchObject({ ok: true });
+	});
+
+	it("passes on the agent's events and says when it stops", async () => {
+		const agent = createAgent();
+		const received: AgentEvent[] = [];
+		agent.onEvent((event) => received.push(event));
+		expect(await agent.request({ cmd: "tick" }, 5000)).toMatchObject({ ok: true });
+		expect(received).toEqual([{ event: "scroll", status: "capturing", height: 900 }]);
+		expect(await agent.request({ cmd: "crash" }, 5000)).toBeNull();
+		expect(received.at(-1)).toEqual({ event: "stopped" });
 	});
 });

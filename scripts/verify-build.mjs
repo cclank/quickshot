@@ -8,10 +8,10 @@ const electronDistRoot = path.join(projectRoot, "dist-electron");
 
 // Budgets leave headroom over the current build so regressions stand out.
 const limits = {
-	rendererBytes: 320_000,
-	rendererGzipBytes: 100_000,
-	mainBytes: 90_000,
-	preloadBytes: 4_000,
+	rendererBytes: 360_000,
+	rendererGzipBytes: 108_000,
+	mainBytes: 130_000,
+	preloadBytes: 5_000,
 	cssBytes: 40_000,
 	distBytes: 19_000_000,
 	thumbnailBytes: 160_000,

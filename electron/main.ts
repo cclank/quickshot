@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { rmSync, statSync } from "node:fs";
+import { existsSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -22,10 +22,29 @@ import {
 	writeAppSettings,
 } from "./appSettings";
 import { getMainLanguage, mt, setMainLanguage } from "./i18n";
-import { type AgentResponse, CaptureAgent } from "./captureAgent";
+import {
+	DEFAULT_CAPTURE_ACCELERATOR,
+	DEFAULT_RESTORE_PINS_ACCELERATOR,
+	type ShortcutPlatform,
+	acceleratorLabel,
+	normalizeAccelerator,
+} from "../src/lib/accelerator";
+import { type AgentEvent, type AgentResponse, CaptureAgent } from "./captureAgent";
 import { type BundleStamp, bundleFromExecutable, shouldHandOver } from "./handOver";
 import { findOpaqueBounds, getWindowCaptureArguments } from "./windowCapture";
+import {
+	type Rect as ScrollRect,
+	SCROLL_PANEL_SIZE,
+	type ScrollProgress,
+	parseScrollProgress,
+	placeScrollPanel,
+	scrollMaxHeight,
+	scrollRegionFromSelection,
+	scrollRingLayout,
+} from "./scrollCapture";
 import { buildUsageHeartbeat, isInstallationId, sendUsageHeartbeat, USAGE_STATS_ENDPOINT } from "./usageStats";
+import { type UpdateState, Updater } from "./updater";
+import { updateTarget } from "./updates";
 import {
 	PREVIEW_MIN_WIDTH,
 	PREVIEW_MIN_WIDTH_WINDOWS,
@@ -73,6 +92,7 @@ import {
 	nativeImage,
 	nativeTheme,
 	net,
+	Notification,
 	powerMonitor,
 	screen,
 	session,
@@ -90,9 +110,6 @@ const APP_ROOT = path.join(__dirname, "..");
 const RENDERER_DIST = path.join(APP_ROOT, "dist");
 const execFileAsync = promisify(execFile);
 const ALLOWED_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
-const CAPTURE_SHORTCUT = "CmdOrCtrl+Shift+X";
-const CAPTURE_SHORTCUT_LABEL =
-	process.platform === "darwin" ? "⌘⇧X" : "Ctrl+Shift+X";
 const ENABLE_CAPTURE_SHORTCUT = shouldRegisterCaptureShortcut(
 	app.isPackaged,
 	process.env["QUICKSHOT_ENABLE_DEV_SHORTCUT"],
@@ -111,9 +128,6 @@ const OCR_TEMP_STALE_AGE_MS = 10 * 60 * 1000;
 const OCR_TEMP_CLEANUP_LIMIT = 32;
 const OCR_TEMP_SCAN_LIMIT = 512;
 const PINNED_SCREENSHOT_READY_TIMEOUT_MS = 10_000;
-const PINNED_SCREENSHOT_RECOVERY_SHORTCUT = "CmdOrCtrl+Shift+L";
-const PINNED_SCREENSHOT_RECOVERY_SHORTCUT_LABEL =
-	process.platform === "darwin" ? "⌘⇧L" : "Ctrl+Shift+L";
 const DIAGNOSTIC_LOG_MAX_BYTES = 512 * 1024;
 const LEGACY_DIAGNOSTIC_LOG_PATTERN = /^quickshot-\d{13}\.log$/;
 const LEGACY_DIAGNOSTIC_LOG_CLEANUP_MARKER =
@@ -156,11 +170,29 @@ const DEV_SETTINGS_BUNDLE = app.isPackaged
 	? undefined
 	: process.env["QUICKSHOT_DEV_SETTINGS_BUNDLE"];
 /**
+ * Development only: a tall PNG that a scrolling capture "scrolls" through
+ * instead of the screen, so that flow also runs without permissions.
+ */
+const DEV_SCROLL_FIXTURE = app.isPackaged
+	? undefined
+	: process.env["QUICKSHOT_DEV_SCROLL_FIXTURE"];
+/**
  * Development only: send anonymous usage statistics from a dev build (they are
  * off there by default), optionally to another endpoint such as a local
  * `wrangler dev`.
  */
 const DEV_USAGE_STATS = !app.isPackaged && process.env["QUICKSHOT_DEV_USAGE_STATS"] === "1";
+/**
+ * Development only: pretend to be this version, so update checks find the
+ * latest release. A development build never installs an update.
+ */
+const DEV_UPDATE_VERSION = app.isPackaged ? undefined : process.env["QUICKSHOT_DEV_UPDATE_VERSION"];
+/**
+ * Builds installed with `npm run install:mac:local` carry this marker. Like
+ * Tokei's, they skip automatic update checks: a public release would replace
+ * an unreleased fix and the local signing identity.
+ */
+const LOCAL_BUILD = app.isPackaged && existsSync(path.join(process.resourcesPath, "local-build"));
 const USAGE_ENDPOINT = (!app.isPackaged && process.env["QUICKSHOT_DEV_USAGE_STATS_ENDPOINT"]) || USAGE_STATS_ENDPOINT;
 if (!app.isPackaged && process.env["QUICKSHOT_USER_DATA_DIR"]) {
 	app.setPath("userData", path.resolve(process.env["QUICKSHOT_USER_DATA_DIR"]));
@@ -183,6 +215,7 @@ type CapturePhase =
 	| "idle"
 	| "preparing-region"
 	| "selecting-region"
+	| "scrolling"
 	| "opening-preview";
 
 type CaptureProcessState = {
@@ -199,6 +232,8 @@ type RegionCaptureSession = {
 	sessionId: number;
 	imageBuffer: Buffer;
 	mimeType: FrameMimeType;
+	/** Opens the overlay in scrolling-capture mode. */
+	scroll: boolean;
 };
 
 type FrameMimeType = "image/png" | "image/jpeg";
@@ -764,6 +799,17 @@ const captureAgent =
 		? new CaptureAgent(getCaptureAgentPath(), (event, details) => writeDiagnostic(event, details))
 		: null;
 
+/**
+ * Scrolling captures stream through the agent. A development scroll fixture
+ * starts one even when the screen itself is a fixture.
+ */
+const scrollAgent =
+	captureAgent ??
+	(process.platform === "darwin" && DEV_SCROLL_FIXTURE
+		? new CaptureAgent(getCaptureAgentPath(), (event, details) => writeDiagnostic(event, details))
+		: null);
+scrollAgent?.onEvent((event) => handleScrollAgentEvent(event));
+
 function temporaryCapturePath(prefix: string, extension: "png" | "jpg" = "png") {
 	return path.join(
 		app.getPath("temp"),
@@ -845,18 +891,35 @@ function ensureWindowListScript(): Promise<string> {
  * Lists the windows visible on `display`, front to back, in the overlay's
  * coordinate space. Failures only disable window snapping.
  */
+/** A window's macOS window number (CGWindowID), or null. */
+function windowNumber(win: BrowserWindow | null): number | null {
+	if (!win || win.isDestroyed()) return null;
+	const match = /^window:(\d+):/.exec(win.getMediaSourceId());
+	return match ? Number(match[1]) : null;
+}
+
+/**
+ * QuickShot's own windows (the editor, pins, settings) can be captured like
+ * any other. Only the bubble under the menu bar icon is left out; the overlay
+ * is never on screen yet when the list is taken.
+ */
+function excludedCaptureWindows(): number[] {
+	return [windowNumber(trayHintWindow)].filter((id): id is number => id !== null);
+}
+
 async function listScreenWindows(display: Display): Promise<ScreenWindow[]> {
 	const startedAt = Date.now();
 	try {
 		if (process.platform === "darwin") {
-			const response = await captureAgent?.request({ cmd: "windows", exclude: process.pid }, 800);
+			const excluded = excludedCaptureWindows();
+			const response = await captureAgent?.request({ cmd: "windows", exclude: -1, excludeWindows: excluded }, 800);
 			let listed: ScreenWindow[];
 			if (response?.ok) {
 				listed = normalizeWindowList(response.windows);
 			} else {
 				const { stdout } = await execFileAsync(
 					getWindowListHelperPath(),
-					[String(process.pid)],
+					["-1", ...excluded.map(String)],
 					{ encoding: "utf8", timeout: 1_500, maxBuffer: 1024 * 1024 },
 				);
 				listed = parseWindowList(stdout);
@@ -1082,6 +1145,8 @@ function toIpcRegionCaptureSession(sessionData: RegionCaptureSession) {
 		sessionId: sessionData.sessionId,
 		imageBytes: toIpcPngBytes(sessionData.imageBuffer),
 		mimeType: sessionData.mimeType,
+		scroll: sessionData.scroll,
+		scrollAvailable: isScrollCaptureAvailable(),
 	};
 }
 
@@ -1180,15 +1245,22 @@ function ensurePinnedScreenshotRecoveryShortcut(): boolean {
 		(record) => record.clickThrough,
 	);
 	if (!hasClickThroughPin) return false;
-	if (globalShortcut.isRegistered(PINNED_SCREENSHOT_RECOVERY_SHORTCUT)) {
+	const accelerator = appSettings.shortcuts.restorePins;
+	if (registeredRestoreShortcut && registeredRestoreShortcut !== accelerator) {
+		globalShortcut.unregister(registeredRestoreShortcut);
+		registeredRestoreShortcut = null;
+	}
+	if (globalShortcut.isRegistered(accelerator)) {
 		return true;
 	}
 
 	const registered = globalShortcut.register(
-		PINNED_SCREENSHOT_RECOVERY_SHORTCUT,
+		accelerator,
 		() => restorePinnedScreenshotInteraction("shortcut"),
 	);
-	if (!registered) {
+	if (registered) {
+		registeredRestoreShortcut = accelerator;
+	} else {
 		writeDiagnostic("pinned-recovery-shortcut-registration-failed");
 	}
 	return registered;
@@ -1198,11 +1270,9 @@ function releasePinnedScreenshotRecoveryShortcutIfIdle() {
 	const hasClickThroughPin = [...pinnedScreenshots.values()].some(
 		(record) => record.clickThrough,
 	);
-	if (
-		!hasClickThroughPin &&
-		globalShortcut.isRegistered(PINNED_SCREENSHOT_RECOVERY_SHORTCUT)
-	) {
-		globalShortcut.unregister(PINNED_SCREENSHOT_RECOVERY_SHORTCUT);
+	if (!hasClickThroughPin && registeredRestoreShortcut) {
+		globalShortcut.unregister(registeredRestoreShortcut);
+		registeredRestoreShortcut = null;
 	}
 }
 
@@ -2077,7 +2147,11 @@ function openPreviewForImage(imageBuffer: Buffer): boolean {
 	screenshotCroppedScaleFactor = scaleFactor;
 	capturePhase = "opening-preview";
 	pendingPreviewSessionId = sessionId;
+	const replacedEditor = screenshotPreviewWindow;
 	screenshotPreviewWindow = previewWindow;
+	// The editor stays open during a capture, so it can be captured too; the
+	// new one takes its place now.
+	if (replacedEditor && replacedEditor !== previewWindow && !replacedEditor.isDestroyed()) replacedEditor.close();
 	clearPreviewReadyTimer();
 	previewReadyTimer = setTimeout(() => {
 		if (pendingPreviewSessionId === sessionId && !previewWindow.isDestroyed()) {
@@ -2103,13 +2177,25 @@ function refreshTrayMenu() {
 	const hasClickThroughPin = [...pinnedScreenshots.values()].some(
 		(record) => record.clickThrough,
 	);
+	const updateItems = updateTrayItems();
 	const template: MenuItemConstructorOptions[] = [
+		...(updateItems.length ? [...updateItems, { type: "separator" as const }] : []),
 		{
 			label: mt("tray.capture"),
-			accelerator: CAPTURE_SHORTCUT,
+			accelerator: captureShortcut(),
 			registerAccelerator: false,
 			click: () => requestCaptureFromUser("tray-menu"),
 		},
+		...(isScrollCaptureAvailable()
+			? [
+					{
+						label: mt("tray.scrollCapture"),
+						accelerator: appSettings.shortcuts.scrollCapture ?? undefined,
+						registerAccelerator: false,
+						click: () => requestCaptureFromUser("tray-scroll", { scroll: true }),
+					},
+				]
+			: []),
 		{ type: "separator" },
 	];
 
@@ -2155,12 +2241,6 @@ function refreshTrayMenu() {
 			},
 		});
 	}
-	template.push({
-		label: mt("tray.usageStats"),
-		type: "checkbox",
-		checked: appSettings.usageStats,
-		click: (item) => void setUsageStats(item.checked),
-	});
 
 	if (pinnedCount > 0) {
 		template.push(
@@ -2174,7 +2254,7 @@ function refreshTrayMenu() {
 			},
 			{
 				label: mt("tray.restorePinned", {
-					shortcut: PINNED_SCREENSHOT_RECOVERY_SHORTCUT_LABEL,
+					shortcut: shortcutLabel(appSettings.shortcuts.restorePins),
 				}),
 				enabled: hasClickThroughPin,
 				click: () => restorePinnedScreenshotInteraction("tray-menu"),
@@ -2188,6 +2268,21 @@ function refreshTrayMenu() {
 
 	template.push(
 		{ type: "separator" },
+		{
+			label: mt("tray.settings"),
+			click: () => openSettings("tray-menu"),
+		},
+		...(updateTarget(process.platform, process.arch)
+			? [
+					{
+						label: mt("tray.checkUpdates"),
+						click: () => {
+							openSettings("tray-check-updates");
+							void updater?.check(true);
+						},
+					},
+				]
+			: []),
 		{
 			label: mt("tray.guide"),
 			click: () => openOnboarding("welcome", "tray-menu"),
@@ -2207,6 +2302,7 @@ function refreshTrayMenu() {
 		{ label: mt("tray.quit"), click: () => app.quit() },
 	);
 	tray.setContextMenu(Menu.buildFromTemplate(template));
+	notifySettingsWindow();
 }
 
 function usesOverlaySelection() {
@@ -2247,14 +2343,6 @@ async function setLanguagePreference(language: LanguagePreference) {
 		staleSelector.destroy();
 		if (usesOverlaySelection()) void ensureRegionSelector();
 	}
-}
-
-async function setUsageStats(enabled: boolean) {
-	if (appSettings.usageStats === enabled) return;
-	appSettings = { ...appSettings, usageStats: enabled };
-	refreshTrayMenu();
-	writeDiagnostic("usage-stats-changed", { enabled });
-	await persistAppSettings();
 }
 
 /**
@@ -2329,7 +2417,7 @@ function createTray() {
 	}
 
 	tray = new Tray(icon);
-	tray.setToolTip(`QuickShot · ${CAPTURE_SHORTCUT_LABEL}`);
+	tray.setToolTip(`QuickShot · ${shortcutLabel(captureShortcut())}`);
 	refreshTrayMenu();
 	tray.on("click", () => requestCaptureFromUser("tray"));
 	// The menu bar hides items that do not fit; record where ours ended up.
@@ -2397,7 +2485,7 @@ kbd{font:inherit;color:#fff;background:rgba(255,255,255,.14);border-radius:4px;p
 		mt("trayHint.title"),
 	)}</div><div class="detail">${escapeHtml(mt("trayHint.detail")).replace(
 		"{shortcut}",
-		`<kbd>${escapeHtml(CAPTURE_SHORTCUT_LABEL)}</kbd>`,
+		`<kbd>${escapeHtml(shortcutLabel(captureShortcut()))}</kbd>`,
 	)}</div></div></body></html>`;
 
 	const hint = new BrowserWindow({
@@ -2443,6 +2531,191 @@ kbd{font:inherit;color:#fff;background:rgba(255,255,255,.14);border-radius:4px;p
 		});
 	hint.on("closed", () => {
 		if (trayHintWindow === hint) trayHintWindow = null;
+	});
+}
+
+// ── Updates ─────────────────────────────────────────────────────────────────
+
+let updater: Updater | null = null;
+let lastTrayUpdateKey = "";
+
+function updateTrayKey(state: UpdateState) {
+	return state.kind === "downloading" ? `downloading:${Math.floor(state.progress * 20)}` : state.kind;
+}
+
+function handleUpdateState(state: UpdateState, found?: "automatic") {
+	// Download progress would rebuild the menu many times a second.
+	const key = updateTrayKey(state);
+	if (key !== lastTrayUpdateKey) {
+		lastTrayUpdateKey = key;
+		refreshTrayMenu();
+	} else {
+		notifySettingsWindow();
+	}
+	// Only a check nobody asked for announces itself; a manual one shows in Settings.
+	if (found === "automatic" && state.kind === "available" && appSettings.updateNotifiedVersion !== state.version) {
+		appSettings = { ...appSettings, updateNotifiedVersion: state.version };
+		void persistAppSettings();
+		if (Notification.isSupported()) {
+			const notice = new Notification({
+				title: mt("update.notifyTitle", { version: state.version }),
+				body: mt("update.notifyBody"),
+				silent: true,
+			});
+			notice.on("click", () => void updater?.install());
+			notice.show();
+		}
+	}
+}
+
+/** Asked only when quitting would close something the user has open. */
+async function confirmUpdateInstall(version: string): Promise<boolean> {
+	const editorOpen = Boolean(screenshotPreviewWindow && !screenshotPreviewWindow.isDestroyed());
+	if (!editorOpen && pinnedScreenshots.size === 0 && capturePhase === "idle") return true;
+	if (process.platform === "darwin") app.focus({ steal: true });
+	const { response } = await dialog.showMessageBox({
+		type: "question",
+		buttons: [mt("update.install"), mt("update.later")],
+		defaultId: 0,
+		cancelId: 1,
+		message: mt("update.confirmTitle", { version }),
+		detail: mt("update.confirmDetail"),
+	});
+	return response === 0;
+}
+
+function createUpdater() {
+	updater = new Updater({
+		currentVersion: DEV_UPDATE_VERSION ?? app.getVersion(),
+		target: updateTarget(process.platform, process.arch),
+		fetch: (url, init) => net.fetch(url, init),
+		tempDirectory: app.getPath("temp"),
+		bundlePath: process.platform === "darwin" ? bundleFromExecutable(process.execPath) : null,
+		canInstall: app.isPackaged,
+		automatic: (app.isPackaged && !LOCAL_BUILD) || Boolean(DEV_UPDATE_VERSION),
+		onChange: handleUpdateState,
+		confirmInstall: confirmUpdateInstall,
+		quit: () => app.quit(),
+		diagnostic: (event, details) => writeDiagnostic(event, details),
+	});
+	updater.start();
+}
+
+/** Tray items for updates: an available or running update, then the manual check. */
+function updateTrayItems(): MenuItemConstructorOptions[] {
+	const state = updater?.current;
+	if (!state) return [];
+	if (state.kind === "available") {
+		return [{ label: mt("tray.updateAvailable", { version: state.version }), click: () => void updater?.install() }];
+	}
+	if (state.kind === "downloading") {
+		return [{ label: mt("tray.updateDownloading", { percent: Math.round(state.progress * 100) }), enabled: false }];
+	}
+	if (state.kind === "installing") return [{ label: mt("tray.updateInstalling"), enabled: false }];
+	return [];
+}
+
+// ── Settings window ────────────────────────────────────────────────────────
+
+let settingsWindow: BrowserWindow | null = null;
+
+function settingsState() {
+	const { capture, scrollCapture } = appSettings.shortcuts;
+	return {
+		platform: process.platform,
+		shortcuts: {
+			capture: { accelerator: capture, label: shortcutLabel(capture), isDefault: sameShortcut(capture, DEFAULT_CAPTURE_ACCELERATOR) },
+			scrollCapture: scrollCapture ? { accelerator: scrollCapture, label: shortcutLabel(scrollCapture) } : null,
+			restorePins: {
+				accelerator: appSettings.shortcuts.restorePins,
+				label: shortcutLabel(appSettings.shortcuts.restorePins),
+				isDefault: sameShortcut(appSettings.shortcuts.restorePins, DEFAULT_RESTORE_PINS_ACCELERATOR),
+			},
+			scrollAvailable: isScrollCaptureAvailable(),
+			defaultCaptureLabel: shortcutLabel(DEFAULT_CAPTURE_ACCELERATOR),
+			enabled: ENABLE_CAPTURE_SHORTCUT,
+		},
+		language: appSettings.language,
+		macCaptureMode: appSettings.macCaptureMode,
+		launchAtLogin: app.getLoginItemSettings().openAtLogin,
+		launchAtLoginAvailable: app.isPackaged && process.platform !== "linux",
+		update: {
+			version: app.getVersion(),
+			state: updater?.current ?? { kind: "idle" as const },
+			supported: Boolean(updateTarget(process.platform, process.arch)),
+			localBuild: LOCAL_BUILD,
+		},
+	};
+}
+
+function notifySettingsWindow() {
+	if (settingsWindow && !settingsWindow.isDestroyed()) {
+		settingsWindow.webContents.send("settings-changed", settingsState());
+	}
+}
+
+function openSettings(reason: string) {
+	writeDiagnostic("settings-opened", { reason });
+	const existing = settingsWindow;
+	if (existing && !existing.isDestroyed()) {
+		existing.show();
+		if (process.platform === "darwin") app.focus({ steal: true });
+		existing.focus();
+		return;
+	}
+	const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+	const size = { width: 580, height: 660 };
+	const win = new BrowserWindow({
+		...size,
+		x: Math.round(workArea.x + (workArea.width - size.width) / 2),
+		y: Math.round(workArea.y + (workArea.height - size.height) / 2),
+		resizable: false,
+		maximizable: false,
+		minimizable: false,
+		fullscreenable: false,
+		show: false,
+		title: mt("settings.title"),
+		titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+		autoHideMenuBar: true,
+		backgroundColor: nativeTheme.shouldUseDarkColors ? "#1C1C1E" : "#FAFAFB",
+		webPreferences: {
+			preload: path.join(__dirname, "preload.mjs"),
+			nodeIntegration: false,
+			contextIsolation: true,
+			webSecurity: true,
+			allowRunningInsecureContent: false,
+			webviewTag: false,
+			additionalArguments: [`--quickshot-lang=${getMainLanguage()}`],
+		},
+	});
+	settingsWindow = win;
+	installWindowGuards(win);
+	loadWindow(win, "settings");
+	win.once("ready-to-show", () => {
+		if (win.isDestroyed()) return;
+		win.show();
+		if (process.platform === "darwin") app.focus({ steal: true });
+		win.focus();
+	});
+	// While a shortcut is being recorded, every key goes to the recorder:
+	// nothing reaches the Edit menu or the page itself.
+	win.webContents.on("before-input-event", (event, input) => {
+		if (!shortcutsSuspended || (input.type !== "keyDown" && input.type !== "keyUp")) return;
+		event.preventDefault();
+		win.webContents.send("settings-key", {
+			type: input.type,
+			code: input.code,
+			metaKey: input.meta,
+			ctrlKey: input.control,
+			altKey: input.alt,
+			shiftKey: input.shift,
+		});
+	});
+	// Recording a shortcut never outlives the window, nor its focus.
+	win.on("blur", () => setShortcutsSuspended(false));
+	win.on("closed", () => {
+		if (settingsWindow === win) settingsWindow = null;
+		setShortcutsSuspended(false);
 	});
 }
 
@@ -2678,7 +2951,7 @@ function explainHiddenMenuBarIcon(reason: string) {
 		.showMessageBox({
 			type: "info",
 			message: mt("menuBarHidden.title"),
-			detail: mt("menuBarHidden.detail", { shortcut: CAPTURE_SHORTCUT_LABEL }),
+			detail: mt("menuBarHidden.detail", { shortcut: shortcutLabel(captureShortcut()) }),
 			buttons: [mt("menuBarHidden.openSettings"), mt("menuBarHidden.ok")],
 			defaultId: 0,
 			cancelId: 1,
@@ -2697,7 +2970,7 @@ async function writeQuickSaveScreenshot(pngBuffer: Buffer): Promise<string> {
 	return writePngWithoutOverwrite(pngBuffer, buildDefaultScreenshotPath);
 }
 
-async function triggerScreenshot(source = "unknown") {
+async function triggerScreenshot(source = "unknown", options: CaptureOptions = {}) {
 	clearCaptureRestartTimer();
 	if (capturePhase !== "idle") {
 		writeDiagnostic("capture-restarted-while-busy", {
@@ -2708,7 +2981,7 @@ async function triggerScreenshot(source = "unknown") {
 		cancelActiveCapture(!stitchTarget, false, Boolean(stitchTarget));
 		captureRestartTimer = setTimeout(() => {
 			captureRestartTimer = null;
-			void triggerScreenshot(`${source}:restart`);
+			void triggerScreenshot(`${source}:restart`, options);
 		}, CAPTURE_RESTART_DELAY_MS);
 		return;
 	}
@@ -2723,15 +2996,16 @@ async function triggerScreenshot(source = "unknown") {
 	}
 
 	const captureAttempt = ++activeCaptureAttempt;
+	// Scrolling always selects with QuickShot's overlay, whatever the setting.
+	const scroll = Boolean(options.scroll) && isScrollCaptureAvailable();
 	capturePhase = "preparing-region";
 	captureStartedAt = Date.now();
-	writeDiagnostic("capture-started", { source, captureAttempt });
+	writeDiagnostic("capture-started", { source, captureAttempt, scroll });
 	screenshotCroppedBuffer = null;
 	pendingRegionCaptureSession = null;
-	if (!stitchTarget || screenshotPreviewWindow !== stitchTarget) screenshotPreviewWindow?.close();
 
 	try {
-		if (!usesOverlaySelection()) {
+		if (!usesOverlaySelection() && !scroll) {
 			const imageBuffer =
 				await captureInteractiveSelectionWithScreencapture(captureAttempt);
 			if (captureAttempt !== activeCaptureAttempt) return;
@@ -2786,6 +3060,7 @@ async function triggerScreenshot(source = "unknown") {
 			sessionId,
 			imageBuffer: frame.buffer,
 			mimeType: frame.mimeType,
+			scroll,
 		};
 		regionFrozenFrame = { sessionId, frame };
 		regionSelectorWindow.webContents.send(
@@ -2955,6 +3230,354 @@ async function cropFrozenFrame(sessionId: number, rect: unknown): Promise<Buffer
 	return cropped.isEmpty() ? null : cropped.toPNG();
 }
 
+// ── Scrolling capture (macOS) ──────────────────────────────────────────────
+// After the overlay selects an area, QuickShot steps aside, the agent streams
+// the area while the user scrolls and stitches it, and a small panel beside
+// it shows the progress. Done (↩) opens the long image in the editor; Esc
+// cancels.
+
+type CaptureOptions = { scroll?: boolean };
+
+type ScrollSession = {
+	area: ScrollRect;
+	/** One screen of the area, in pixels. */
+	frameHeight: number;
+	ring: BrowserWindow | null;
+	panel: BrowserWindow | null;
+	previewPath: string;
+	progress: ScrollProgress;
+	/** The latest preview JPEG, for a panel that asks after it was sent. */
+	preview: Buffer | null;
+	finishing: boolean;
+	startedAt: number;
+	timer: NodeJS.Timeout | null;
+};
+
+const SCROLL_START_TIMEOUT_MS = 5_000;
+const SCROLL_FINISH_TIMEOUT_MS = 30_000;
+/** A forgotten scrolling capture finishes on its own instead of recording for ever. */
+const SCROLL_CAPTURE_LIMIT_MS = 10 * 60 * 1000;
+const SCROLL_ERROR_DISPLAY_MS = 2_400;
+const SCROLL_SHORTCUTS = ["Escape", "Return"];
+
+let scrollSession: ScrollSession | null = null;
+
+/** The command-line flags that start a capture: --capture-region, --capture-scroll. */
+function launchCaptureOptions(argv: readonly string[]): CaptureOptions | null {
+	if (argv.includes("--capture-scroll")) return { scroll: true };
+	if (argv.includes("--capture-region")) return {};
+	return null;
+}
+
+/** The agent streams with ScreenCaptureKit APIs from macOS 14. */
+function isScrollCaptureAvailable() {
+	if (!scrollAgent) return false;
+	if (DEV_SCROLL_FIXTURE) return true;
+	return Number.parseInt(process.getSystemVersion().split(".")[0] ?? "", 10) >= 14;
+}
+
+async function startScrollCapture(sessionId: number, rect: unknown): Promise<boolean> {
+	const held = regionFrozenFrame;
+	const display = activeCaptureDisplay;
+	if (!scrollAgent || !isScrollCaptureAvailable() || scrollSession || !held || held.sessionId !== sessionId || !display) {
+		return false;
+	}
+	const region = scrollRegionFromSelection(rect, held.frame, display.bounds);
+	if (!region) return false;
+	const previewPath = temporaryCapturePath("quickshot-scroll-preview", "jpg");
+	const response = await scrollAgent.request(
+		{
+			cmd: "scroll-start",
+			display: display.id,
+			rect: region.points,
+			size: region.pixels,
+			exclude: process.pid,
+			maxHeight: scrollMaxHeight(region.pixels.width),
+			preview: previewPath,
+			...(DEV_SCROLL_FIXTURE ? { fixture: DEV_SCROLL_FIXTURE } : {}),
+		},
+		SCROLL_START_TIMEOUT_MS,
+	);
+	if (sessionId !== activeCaptureSessionId || capturePhase !== "selecting-region" || scrollSession) {
+		if (response?.ok) void scrollAgent.request({ cmd: "scroll-cancel" }, 2_000);
+		return false;
+	}
+	if (!response?.ok) {
+		writeDiagnostic("scroll-capture-start-failed", { error: response?.error ?? "no response" });
+		return false;
+	}
+
+	// The overlay's session ends here, so its late cancel cannot stop this one.
+	activeCaptureSessionId = ++nextCaptureSessionId;
+	capturePhase = "scrolling";
+	releaseFrozenFrame();
+	hideRegionSelector();
+	const session: ScrollSession = {
+		area: region.global,
+		frameHeight: region.pixels.height,
+		ring: null,
+		panel: null,
+		previewPath,
+		progress: { status: "waiting", height: region.pixels.height, width: region.pixels.width, preview: 0 },
+		preview: null,
+		finishing: false,
+		startedAt: Date.now(),
+		timer: null,
+	};
+	scrollSession = session;
+	yieldForegroundForScroll();
+	session.ring = createScrollRing(region.global, display);
+	session.panel = createScrollPanel(region.global, display);
+	session.timer = setTimeout(() => void finishScrollCapture("time-limit"), SCROLL_CAPTURE_LIMIT_MS);
+	// Like the capture shortcut, a development build left without shortcuts
+	// keeps its hands off the keyboard; the panel's buttons still work.
+	for (const key of ENABLE_CAPTURE_SHORTCUT ? SCROLL_SHORTCUTS : []) {
+		try {
+			globalShortcut.register(key, () =>
+				key === "Escape" ? cancelScrollCapture("escape") : void finishScrollCapture("return"),
+			);
+		} catch {}
+	}
+	writeDiagnostic("scroll-capture-started", { ...region.pixels, ms: Date.now() - captureStartedAt });
+	return true;
+}
+
+/**
+ * Hands the foreground back to the app being scrolled, so it looks active
+ * and takes the keyboard. Hiding QuickShot hides every window, so the pins
+ * and the editor that were showing come straight back without taking focus.
+ */
+function yieldForegroundForScroll() {
+	if (process.platform !== "darwin") return;
+	const showing = [...[...pinnedScreenshots.values()].map((record) => record.window), screenshotPreviewWindow]
+		.filter((win): win is BrowserWindow => Boolean(win && !win.isDestroyed() && win.isVisible()));
+	app.hide();
+	for (const win of showing) win.showInactive();
+}
+
+/** A slowly turning spectrum around the area; it ignores the mouse and is never captured. */
+function createScrollRing(area: ScrollRect, display: Display) {
+	const layout = scrollRingLayout(area, display.bounds);
+	const { ring } = layout;
+	const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+@property --turn{syntax:'<angle>';inherits:false;initial-value:0deg}
+html,body{margin:0;height:100%;background:transparent;overflow:hidden}
+.shade{position:absolute;left:${ring.x}px;top:${ring.y}px;width:${ring.width}px;height:${ring.height}px;
+filter:drop-shadow(0 0 1.5px rgba(0,0,0,.35))}
+.ring{width:100%;height:100%;box-sizing:border-box;padding:3px;border-radius:9px;
+background:conic-gradient(from var(--turn),#FF5A7A,#FF9F43,#FFD43B,#38D9A9,#4DABF7,#9775FA,#FF5A7A);
+-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+-webkit-mask-composite:xor;mask-composite:exclude;animation:turn 6s linear infinite}
+@keyframes turn{to{--turn:360deg}}
+@media (prefers-reduced-motion:reduce){.ring{animation:none}}
+</style></head><body><div class="shade"><div class="ring"></div></div></body></html>`;
+	const win = new BrowserWindow({
+		...layout.window,
+		frame: false,
+		transparent: true,
+		backgroundColor: "#00000000",
+		resizable: false,
+		movable: false,
+		minimizable: false,
+		maximizable: false,
+		fullscreenable: false,
+		focusable: false,
+		skipTaskbar: true,
+		hasShadow: false,
+		enableLargerThanScreen: true,
+		roundedCorners: false,
+		show: false,
+		webPreferences: {
+			nodeIntegration: false,
+			contextIsolation: true,
+			sandbox: true,
+			javascript: false,
+		},
+	});
+	installWindowGuards(win);
+	win.setIgnoreMouseEvents(true);
+	win.setAlwaysOnTop(true, "floating");
+	win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+	void win
+		.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+		.then(() => {
+			if (!win.isDestroyed() && scrollSession?.ring === win) win.showInactive();
+		})
+		.catch(() => {});
+	return win;
+}
+
+/** Progress, preview, Done and Cancel. A panel: clicking it never activates QuickShot. */
+function createScrollPanel(area: ScrollRect, display: Display) {
+	const panel = new BrowserWindow({
+		...placeScrollPanel(area, display.workArea),
+		...SCROLL_PANEL_SIZE,
+		type: "panel",
+		// The panel never becomes key, so every click is a first click.
+		acceptFirstMouse: true,
+		frame: false,
+		transparent: true,
+		backgroundColor: "#00000000",
+		resizable: false,
+		minimizable: false,
+		maximizable: false,
+		fullscreenable: false,
+		focusable: false,
+		skipTaskbar: true,
+		hasShadow: false,
+		show: false,
+		webPreferences: {
+			preload: path.join(__dirname, "preload.mjs"),
+			nodeIntegration: false,
+			contextIsolation: true,
+			webSecurity: true,
+			allowRunningInsecureContent: false,
+			webviewTag: false,
+			backgroundThrottling: false,
+			additionalArguments: [`--quickshot-lang=${getMainLanguage()}`],
+		},
+	});
+	installWindowGuards(panel);
+	panel.setAlwaysOnTop(true, "floating", 1);
+	panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+	loadWindow(panel, "scroll-capture");
+	panel.once("ready-to-show", () => {
+		if (!panel.isDestroyed() && scrollSession?.panel === panel) panel.showInactive();
+	});
+	panel.webContents.on("render-process-gone", () => {
+		if (scrollSession?.panel === panel) cancelScrollCapture("panel-gone");
+	});
+	return panel;
+}
+
+function sendScrollProgress(session: ScrollSession, withPreview: boolean) {
+	const panel = session.panel;
+	if (!panel || panel.isDestroyed()) return;
+	panel.webContents.send("scroll-capture-progress", {
+		...session.progress,
+		frameHeight: session.frameHeight,
+		...(withPreview && session.preview ? { previewBytes: toIpcPngBytes(session.preview) } : {}),
+	});
+}
+
+function handleScrollAgentEvent(event: AgentEvent) {
+	const session = scrollSession;
+	if (!session) return;
+	if (event.event === "stopped") {
+		if (!session.finishing) failScrollCapture(session, "agent-stopped");
+		return;
+	}
+	const progress = parseScrollProgress(event);
+	if (!progress || session.finishing) return;
+	if (progress.status === "error") {
+		failScrollCapture(session, "stream-error");
+		return;
+	}
+	const previewChanged = progress.preview !== session.progress.preview;
+	session.progress = progress;
+	if (!previewChanged) {
+		sendScrollProgress(session, false);
+		return;
+	}
+	void import("node:fs/promises")
+		.then((fs) => fs.readFile(session.previewPath))
+		.then((bytes) => {
+			// A newer preview is on its way; it carries this progress too.
+			if (scrollSession !== session || session.progress.preview !== progress.preview) return;
+			session.preview = acceptCapturedJpeg(bytes);
+			sendScrollProgress(session, true);
+		})
+		.catch(() => sendScrollProgress(session, false));
+}
+
+/** Says so in the panel for a moment, then ends the capture. */
+function failScrollCapture(session: ScrollSession, reason: string) {
+	if (scrollSession !== session || session.progress.status === "error") return;
+	writeDiagnostic("scroll-capture-failed", { reason });
+	session.finishing = true;
+	session.progress = { ...session.progress, status: "error" };
+	sendScrollProgress(session, false);
+	setTimeout(() => {
+		if (scrollSession === session) cancelActiveCapture(false, false);
+	}, SCROLL_ERROR_DISPLAY_MS);
+}
+
+async function finishScrollCapture(reason: string) {
+	const session = scrollSession;
+	if (!session || session.finishing || !scrollAgent) return;
+	session.finishing = true;
+	session.progress = { ...session.progress, status: "finishing" };
+	sendScrollProgress(session, false);
+	const fs = await import("node:fs/promises");
+	const filePath = temporaryCapturePath("quickshot-scroll", "png");
+	let image: Buffer | null = null;
+	let stats: unknown;
+	try {
+		const response = await scrollAgent.request({ cmd: "scroll-finish", path: filePath }, SCROLL_FINISH_TIMEOUT_MS);
+		stats = response?.stats;
+		if (response?.ok) {
+			image = acceptCapturedPng(await fs.readFile(filePath));
+		} else {
+			writeDiagnostic("scroll-capture-finish-failed", { error: response?.error ?? "no response" });
+		}
+	} catch (error) {
+		writeDiagnostic("scroll-capture-finish-failed", { error: serializeError(error) });
+	} finally {
+		await fs.unlink(filePath).catch(() => {});
+	}
+	if (scrollSession !== session) return;
+	if (!image) {
+		session.finishing = false;
+		failScrollCapture(session, "finish-failed");
+		return;
+	}
+	endScrollSession(session);
+	writeDiagnostic("scroll-capture-finished", {
+		reason,
+		...readPngDimensions(image),
+		ms: Date.now() - session.startedAt,
+		// How the stitching went, in numbers only: frames, losses and why.
+		stats,
+	});
+	if (deliverStitchPiece(image)) return;
+	if (!openPreviewForImage(image)) cancelActiveCapture();
+}
+
+function cancelScrollCapture(reason: string) {
+	stopScrollSession(reason);
+	cancelActiveCapture(false, false);
+}
+
+/** Ends a scrolling capture without keeping anything. */
+function stopScrollSession(reason: string) {
+	const session = scrollSession;
+	if (!session) return;
+	const ms = Date.now() - session.startedAt;
+	void scrollAgent
+		?.request({ cmd: "scroll-cancel" }, 2_000)
+		.then((response) => writeDiagnostic("scroll-capture-cancelled", { reason, ms, stats: response?.stats }));
+	endScrollSession(session);
+}
+
+function endScrollSession(session: ScrollSession) {
+	if (scrollSession !== session) return;
+	scrollSession = null;
+	if (session.timer) clearTimeout(session.timer);
+	for (const key of SCROLL_SHORTCUTS) {
+		try {
+			globalShortcut.unregister(key);
+		} catch {}
+	}
+	for (const win of [session.panel, session.ring]) {
+		if (win && !win.isDestroyed()) win.destroy();
+	}
+	void import("node:fs/promises").then((fs) =>
+		Promise.all(
+			[session.previewPath, `${session.previewPath}.part.jpg`].map((file) => fs.unlink(file).catch(() => {})),
+		),
+	);
+}
+
 function hideRegionSelector() {
 	if (regionSelectorWindow?.isVisible()) {
 		regionSelectorWindow.hide();
@@ -2979,6 +3602,7 @@ function yieldForegroundAfterOverlay() {
 
 function cancelActiveCapture(closePreview = false, restoreForeground = true, keepStitch = false) {
 	const previousPhase = capturePhase;
+	stopScrollSession("capture-cancelled");
 	clearCaptureRestartTimer();
 	clearRegionReadyWatchdog();
 	clearOverlayCaptureWatchdog();
@@ -3009,21 +3633,48 @@ function cancelActiveCapture(closePreview = false, restoreForeground = true, kee
 	}
 }
 
+/** The global capture shortcut, as set in settings. */
+function captureShortcut() {
+	return appSettings.shortcuts.capture;
+}
+
+function shortcutLabel(accelerator: string) {
+	return acceleratorLabel(accelerator, process.platform as ShortcutPlatform);
+}
+
+/** Whether two accelerators press the same keys here, e.g. CmdOrCtrl and Command on a Mac. */
+function sameShortcut(first: string, second: string) {
+	return shortcutLabel(first) === shortcutLabel(second);
+}
+
+/** What is registered right now, so a changed setting can replace it. */
+let registeredCaptureShortcut: string | null = null;
+let registeredScrollShortcut: string | null = null;
+let registeredRestoreShortcut: string | null = null;
+/** While the settings window records a shortcut, QuickShot's own stay out of its way. */
+let shortcutsSuspended = false;
+
 function registerCaptureShortcut(
 	force = false,
 	reason = "unspecified",
 ): boolean {
-	if (!ENABLE_CAPTURE_SHORTCUT) return false;
-	const wasRegistered = globalShortcut.isRegistered(CAPTURE_SHORTCUT);
-	if (force && globalShortcut.isRegistered(CAPTURE_SHORTCUT)) {
-		globalShortcut.unregister(CAPTURE_SHORTCUT);
+	if (!ENABLE_CAPTURE_SHORTCUT || shortcutsSuspended) return false;
+	registerScrollShortcut(force);
+	const accelerator = captureShortcut();
+	if (registeredCaptureShortcut && registeredCaptureShortcut !== accelerator) {
+		globalShortcut.unregister(registeredCaptureShortcut);
+		registeredCaptureShortcut = null;
 	}
-	if (globalShortcut.isRegistered(CAPTURE_SHORTCUT)) {
+	const wasRegistered = globalShortcut.isRegistered(accelerator);
+	if (force && globalShortcut.isRegistered(accelerator)) {
+		globalShortcut.unregister(accelerator);
+	}
+	if (globalShortcut.isRegistered(accelerator)) {
 		shortcutRetryAttempt = 0;
 		return true;
 	}
 
-	const registered = globalShortcut.register(CAPTURE_SHORTCUT, () => {
+	const registered = globalShortcut.register(accelerator, () => {
 		lastShortcutTriggerAt = Date.now();
 		writeDiagnostic("shortcut-triggered", {
 			phase: capturePhase,
@@ -3031,11 +3682,13 @@ function registerCaptureShortcut(
 		requestCaptureFromUser("shortcut");
 	});
 	if (registered) {
+		registeredCaptureShortcut = accelerator;
 		shortcutRetryAttempt = 0;
 		writeDiagnostic("shortcut-registered", {
 			reason,
 			force,
 			wasRegistered,
+			custom: accelerator !== DEFAULT_CAPTURE_ACCELERATOR,
 		});
 	} else {
 		const retryDelay =
@@ -3055,10 +3708,94 @@ function registerCaptureShortcut(
 	}
 	tray?.setToolTip(
 		registered
-			? `QuickShot · ${CAPTURE_SHORTCUT_LABEL}`
+			? `QuickShot · ${shortcutLabel(accelerator)}`
 			: mt("tray.tooltipShortcutFailed"),
 	);
 	return registered;
+}
+
+/** The optional shortcut that starts a scrolling capture straight away. */
+function registerScrollShortcut(force = false): boolean {
+	const accelerator = isScrollCaptureAvailable() ? appSettings.shortcuts.scrollCapture : null;
+	if (registeredScrollShortcut && registeredScrollShortcut !== accelerator) {
+		globalShortcut.unregister(registeredScrollShortcut);
+		registeredScrollShortcut = null;
+	}
+	if (!accelerator) return false;
+	if (force && globalShortcut.isRegistered(accelerator)) globalShortcut.unregister(accelerator);
+	if (globalShortcut.isRegistered(accelerator)) return true;
+	const registered = globalShortcut.register(accelerator, () => {
+		writeDiagnostic("scroll-shortcut-triggered", { phase: capturePhase });
+		requestCaptureFromUser("shortcut-scroll", { scroll: true });
+	});
+	if (registered) registeredScrollShortcut = accelerator;
+	else writeDiagnostic("scroll-shortcut-registration-failed");
+	return registered;
+}
+
+function setShortcutsSuspended(suspended: boolean) {
+	if (shortcutsSuspended === suspended) return;
+	shortcutsSuspended = suspended;
+	if (suspended) {
+		for (const accelerator of [registeredCaptureShortcut, registeredScrollShortcut, registeredRestoreShortcut]) {
+			if (accelerator) globalShortcut.unregister(accelerator);
+		}
+		registeredCaptureShortcut = null;
+		registeredScrollShortcut = null;
+		registeredRestoreShortcut = null;
+	} else {
+		registerCaptureShortcut(true, "settings-recorded");
+		ensurePinnedScreenshotRecoveryShortcut();
+	}
+}
+
+/** Whether another app or the system already holds `accelerator`. */
+function shortcutIsTaken(accelerator: string) {
+	if (!ENABLE_CAPTURE_SHORTCUT || globalShortcut.isRegistered(accelerator)) return false;
+	const registered = globalShortcut.register(accelerator, () => {});
+	if (registered) globalShortcut.unregister(accelerator);
+	return !registered;
+}
+
+/**
+ * Changes a global shortcut from the settings window. `value` null resets
+ * the capture shortcut and clears the scrolling one.
+ */
+type GlobalShortcutKind = "capture" | "scrollCapture" | "restorePins";
+
+async function setShortcut(
+	kind: GlobalShortcutKind,
+	value: unknown,
+): Promise<{ success: true } | { success: false; error: string }> {
+	let accelerator: string | null = null;
+	if (value === null) {
+		accelerator =
+			kind === "capture" ? DEFAULT_CAPTURE_ACCELERATOR : kind === "restorePins" ? DEFAULT_RESTORE_PINS_ACCELERATOR : null;
+	} else {
+		accelerator = normalizeAccelerator(value);
+		if (!accelerator) return { success: false, error: mt("shortcut.invalid") };
+	}
+	if (accelerator) {
+		const others = (["capture", "scrollCapture", "restorePins"] as const)
+			.filter((other) => other !== kind)
+			.map((other) => appSettings.shortcuts[other]);
+		if (others.some((other) => other && sameShortcut(accelerator as string, other))) {
+			return { success: false, error: mt("shortcut.duplicate") };
+		}
+		const current = { capture: registeredCaptureShortcut, scrollCapture: registeredScrollShortcut, restorePins: registeredRestoreShortcut }[kind];
+		if (!(current && sameShortcut(current, accelerator)) && shortcutIsTaken(accelerator)) {
+			return { success: false, error: mt("shortcut.taken") };
+		}
+	}
+	appSettings = { ...appSettings, shortcuts: { ...appSettings.shortcuts, [kind]: accelerator } };
+	writeDiagnostic("shortcut-changed", { kind, set: Boolean(accelerator) });
+	if (!shortcutsSuspended) {
+		registerCaptureShortcut(true, "settings");
+		if (kind === "restorePins") ensurePinnedScreenshotRecoveryShortcut();
+	}
+	refreshTrayMenu();
+	await persistAppSettings();
+	return { success: true };
 }
 
 function scheduleShortcutRecovery(
@@ -3137,21 +3874,22 @@ function scheduleInputSourceRecovery(reason: string) {
 	}, INPUT_SOURCE_CHECK_DELAY_MS);
 }
 
-function requestCaptureFromUser(source = "unknown") {
+function requestCaptureFromUser(source = "unknown", options: CaptureOptions = {}) {
 	if (ENABLE_CAPTURE_SHORTCUT && source.startsWith("tray")) {
 		registerCaptureShortcut(true, `${source}-repair`);
 	} else if (
 		ENABLE_CAPTURE_SHORTCUT &&
-		!globalShortcut.isRegistered(CAPTURE_SHORTCUT)
+		!globalShortcut.isRegistered(captureShortcut())
 	) {
 		registerCaptureShortcut(false, `${source}-missing`);
 	}
 	writeDiagnostic("capture-requested", {
 		source,
 		phase: capturePhase,
-		shortcutRegistered: globalShortcut.isRegistered(CAPTURE_SHORTCUT),
+		shortcutRegistered: globalShortcut.isRegistered(captureShortcut()),
+		scroll: Boolean(options.scroll),
 	});
-	void triggerScreenshot(source);
+	void triggerScreenshot(source, options);
 }
 
 function registerIpcHandlers() {
@@ -3201,12 +3939,78 @@ function registerIpcHandlers() {
 		return { success: true };
 	});
 
+	ipcMain.handle("settings-state", (event) => {
+		if (!isTrustedWindowSender(event, settingsWindow)) return null;
+		return settingsState();
+	});
+
+	ipcMain.handle("settings-set-shortcut", async (event, kind: unknown, value: unknown) => {
+		if (
+			!isTrustedWindowSender(event, settingsWindow) ||
+			(kind !== "capture" && kind !== "scrollCapture" && kind !== "restorePins")
+		) {
+			return { success: false };
+		}
+		const result = await setShortcut(kind, value);
+		return { ...result, state: settingsState() };
+	});
+
+	ipcMain.handle("settings-recording", (event, recording: unknown) => {
+		if (!isTrustedWindowSender(event, settingsWindow) || typeof recording !== "boolean") return { success: false };
+		setShortcutsSuspended(recording);
+		return { success: true };
+	});
+
+	ipcMain.handle("settings-set-language", async (event, language: unknown) => {
+		const win = settingsWindow;
+		if (!win || !isTrustedWindowSender(event, win) || (language !== "auto" && language !== "zh" && language !== "en")) {
+			return { success: false };
+		}
+		const before = getMainLanguage();
+		await setLanguagePreference(language);
+		// The window was built in the previous language; open it afresh.
+		if (getMainLanguage() !== before) {
+			setTimeout(() => {
+				if (!win.isDestroyed()) win.close();
+				openSettings("language-changed");
+			}, 50);
+		}
+		return { success: true, state: settingsState() };
+	});
+
+	ipcMain.handle("settings-set-capture-mode", async (event, mode: unknown) => {
+		if (!isTrustedWindowSender(event, settingsWindow) || (mode !== "overlay" && mode !== "system")) {
+			return { success: false };
+		}
+		await setMacCaptureMode(mode);
+		return { success: true, state: settingsState() };
+	});
+
+	ipcMain.handle("settings-check-update", async (event) => {
+		if (!isTrustedWindowSender(event, settingsWindow) || !updater) return { success: false };
+		await updater.check(true);
+		return { success: true, state: settingsState() };
+	});
+
+	ipcMain.handle("settings-install-update", (event) => {
+		if (!isTrustedWindowSender(event, settingsWindow) || !updater) return { success: false };
+		void updater.install();
+		return { success: true };
+	});
+
+	ipcMain.handle("settings-set-launch-at-login", (event, enabled: unknown) => {
+		if (!isTrustedWindowSender(event, settingsWindow) || typeof enabled !== "boolean") return { success: false };
+		app.setLoginItemSettings({ openAtLogin: enabled });
+		refreshTrayMenu();
+		return { success: true, state: settingsState() };
+	});
+
 	ipcMain.handle("onboarding-state", (event) => {
 		if (!isTrustedWindowSender(event, onboardingWindow)) return null;
 		return {
 			platform: process.platform,
 			permission: getScreenPermissionStatus(),
-			shortcut: CAPTURE_SHORTCUT_LABEL,
+			shortcut: shortcutLabel(captureShortcut()),
 			launchAtLogin: app.getLoginItemSettings().openAtLogin,
 		};
 	});
@@ -3309,7 +4113,7 @@ function registerIpcHandlers() {
 			payload: {
 				sessionId: number;
 				croppedImageBytes?: Uint8Array;
-				action?: "edit" | "copy" | "save" | "pin";
+				action?: "edit" | "copy" | "save" | "pin" | "scroll";
 				windowId?: number;
 				/** With `windowId`: the window in frozen-frame pixels, cropped if the window capture fails. */
 				rect?: { x: number; y: number; width: number; height: number };
@@ -3334,8 +4138,13 @@ function registerIpcHandlers() {
 			}
 
 			const action = payload.action ?? "edit";
-			if (!["edit", "copy", "save", "pin"].includes(action)) {
+			if (!["edit", "copy", "save", "pin", "scroll"].includes(action)) {
 				return { success: false, error: "unknown action" };
+			}
+			if (action === "scroll") {
+				return (await startScrollCapture(payload.sessionId, payload.rect))
+					? { success: true }
+					: { success: false, error: "scroll capture unavailable" };
 			}
 
 			// A click on a window captures that window itself instead of the
@@ -3395,6 +4204,30 @@ function registerIpcHandlers() {
 			}
 		},
 	);
+
+	ipcMain.handle("get-scroll-capture-state", (event) => {
+		const session = scrollSession;
+		if (!session || !isTrustedWindowSender(event, session.panel)) return { success: false };
+		return {
+			success: true,
+			progress: { ...session.progress, frameHeight: session.frameHeight },
+			...(session.preview ? { previewBytes: toIpcPngBytes(session.preview) } : {}),
+		};
+	});
+
+	ipcMain.handle("finish-scroll-capture", (event) => {
+		const session = scrollSession;
+		if (!session || !isTrustedWindowSender(event, session.panel)) return { success: false };
+		void finishScrollCapture("panel");
+		return { success: true };
+	});
+
+	ipcMain.handle("cancel-scroll-capture", (event) => {
+		const session = scrollSession;
+		if (!session || !isTrustedWindowSender(event, session.panel)) return { success: false };
+		cancelScrollCapture("panel");
+		return { success: true };
+	});
 
 	// A warm editor may subscribe after the session event was sent; it asks here.
 	ipcMain.handle("get-pending-preview-session", (event) => {
@@ -3565,6 +4398,7 @@ function registerIpcHandlers() {
 		return {
 			success: true as const,
 			imageBytes,
+			recoveryShortcut: shortcutLabel(appSettings.shortcuts.restorePins),
 		};
 	});
 
@@ -3615,9 +4449,8 @@ function registerIpcHandlers() {
 			});
 			return {
 				success: true as const,
-				recoveryShortcutRegistered: globalShortcut.isRegistered(
-					PINNED_SCREENSHOT_RECOVERY_SHORTCUT,
-				),
+				recoveryShortcutRegistered: globalShortcut.isRegistered(appSettings.shortcuts.restorePins),
+				recoveryShortcut: shortcutLabel(appSettings.shortcuts.restorePins),
 			};
 		},
 	);
@@ -3783,9 +4616,9 @@ app.whenReady().then(async () => {
 		openOnboarding(relaunchStep, "relaunch");
 	} else if (process.platform === "darwin" && celebratePermissionIfPending()) {
 		// Opened at the guide's last step.
-	} else if (appSettings.onboardingVersion < ONBOARDING_VERSION && !process.argv.includes("--capture-region")) {
+	} else if (appSettings.onboardingVersion < ONBOARDING_VERSION && !launchCaptureOptions(process.argv)) {
 		openOnboarding("welcome", "first-launch");
-	} else if (!openedAtLogin && !process.argv.includes("--capture-region")) {
+	} else if (!openedAtLogin && !launchCaptureOptions(process.argv)) {
 		setTimeout(() => showTrayHint("launch"), 1_200);
 	}
 
@@ -3794,6 +4627,7 @@ app.whenReady().then(async () => {
 	}
 	scheduleSparePreviewWindow(2_500);
 	warmCaptureAgent("app-ready");
+	createUpdater();
 	setTimeout(() => void reportLaunchUsage(), 15_000);
 
 	if (ENABLE_CAPTURE_SHORTCUT) {
@@ -3842,7 +4676,7 @@ app.whenReady().then(async () => {
 
 	if (ENABLE_CAPTURE_SHORTCUT) {
 		shortcutHealthTimer = setInterval(() => {
-			const registered = globalShortcut.isRegistered(CAPTURE_SHORTCUT);
+			const registered = shortcutsSuspended || globalShortcut.isRegistered(captureShortcut());
 			if (!registered) {
 				writeDiagnostic("shortcut-health-missing", {
 					phase: capturePhase,
@@ -3853,9 +4687,9 @@ app.whenReady().then(async () => {
 		}, SHORTCUT_HEALTH_INTERVAL_MS);
 		shortcutHealthTimer.unref();
 	}
-	if (process.argv.includes("--capture-region")) {
-		requestCaptureFromUser("launch-command");
-	}
+	const launchCapture = launchCaptureOptions(process.argv);
+	if (launchCapture) requestCaptureFromUser("launch-command", launchCapture);
+	else if (process.argv.includes("--settings")) openSettings("launch-command");
 });
 
 function readBundleStamp(bundle: string): BundleStamp | null {
@@ -3899,8 +4733,13 @@ app.on("second-instance", (_event, commandLine) => {
 		return;
 	}
 	scheduleShortcutRecovery("second-instance", 0, true);
-	if (commandLine.includes("--capture-region")) {
-		requestCaptureFromUser("launch-command");
+	const launchCapture = launchCaptureOptions(commandLine);
+	if (launchCapture) {
+		requestCaptureFromUser("launch-command", launchCapture);
+		return;
+	}
+	if (commandLine.includes("--settings")) {
+		openSettings("launch-command");
 		return;
 	}
 	if (screenshotPreviewWindow && !screenshotPreviewWindow.isDestroyed()) {
@@ -3913,6 +4752,7 @@ app.on("will-quit", () => {
 	isQuitting = true;
 	closePermissionHelper();
 	captureAgent?.stop();
+	if (scrollAgent !== captureAgent) scrollAgent?.stop();
 	forceTerminateActiveCaptureProcess("app-will-quit");
 	abortActiveOcr("app-will-quit", true);
 	closeAllPinnedScreenshots();

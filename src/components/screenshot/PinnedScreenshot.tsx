@@ -21,10 +21,8 @@ import { resolvePinnedResizeScale } from "@/lib/pinnedResize";
 const MIN_OPACITY_PERCENT = 35;
 const INTRO_CONTROLS_DURATION_MS = 2_200;
 const IS_MAC = navigator.userAgent.includes("Mac");
-const RECOVERY_SHORTCUT_TEXT = IS_MAC
-	? "Command Shift L"
-	: "Control Shift L";
-const RECOVERY_SHORTCUT_HINT = IS_MAC ? "⌘⇧L" : "Ctrl+Shift+L";
+/** Until the main process says otherwise (it can be changed in Settings). */
+const DEFAULT_RECOVERY_SHORTCUT = IS_MAC ? "⌘⇧L" : "Ctrl+Shift+L";
 
 type ResizeGesture = {
 	startScreenX: number;
@@ -37,6 +35,7 @@ export function PinnedScreenshot() {
 	const [imageSrc, setImageSrc] = useState("");
 	const [opacityPercent, setOpacityPercent] = useState(100);
 	const [clickThrough, setClickThrough] = useState(false);
+	const [recoveryShortcut, setRecoveryShortcut] = useState(DEFAULT_RECOVERY_SHORTCUT);
 	const [introControlsVisible, setIntroControlsVisible] = useState(true);
 	const [hovered, setHovered] = useState(false);
 	const [focusWithin, setFocusWithin] = useState(false);
@@ -62,6 +61,7 @@ export function PinnedScreenshot() {
 				closeWindow();
 				return;
 			}
+			if (result.recoveryShortcut) setRecoveryShortcut(result.recoveryShortcut);
 			try {
 				objectUrl = createPngObjectUrl(result.imageBytes);
 				setImageSrc(objectUrl);
@@ -148,17 +148,18 @@ export function PinnedScreenshot() {
 			setLiveMessage(t("pin.toggleFailed"));
 			return;
 		}
+		if (result.recoveryShortcut) setRecoveryShortcut(result.recoveryShortcut);
 		setClickThrough(nextClickThrough);
 		setIntroControlsVisible(false);
 		setHovered(false);
 		setLiveMessage(
 			nextClickThrough
 				? result.recoveryShortcutRegistered
-					? t("pin.clickThroughOnShortcut", { shortcut: RECOVERY_SHORTCUT_TEXT })
+					? t("pin.clickThroughOnShortcut", { shortcut: result.recoveryShortcut ?? recoveryShortcut })
 					: t("pin.clickThroughOn")
 				: t("pin.clickThroughOff"),
 		);
-	}, [clickThrough]);
+	}, [clickThrough, recoveryShortcut]);
 
 	const flushResize = useCallback(() => {
 		resizeFrameRef.current = null;
@@ -300,9 +301,9 @@ export function PinnedScreenshot() {
 					type="button"
 					onClick={() => void handleClickThroughToggle()}
 					className="flex h-8 w-8 items-center justify-center rounded-[9px] text-white/72 transition-colors hover:bg-white/12 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-					aria-label={t("pin.clickThroughAria", { shortcut: RECOVERY_SHORTCUT_TEXT })}
+					aria-label={t("pin.clickThroughAria", { shortcut: recoveryShortcut })}
 					aria-pressed={clickThrough}
-					title={t("pin.clickThroughTitle", { shortcut: RECOVERY_SHORTCUT_HINT })}
+					title={t("pin.clickThroughTitle", { shortcut: recoveryShortcut })}
 				>
 					<MousePointer2
 						size={14}

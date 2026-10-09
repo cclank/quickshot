@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	screenshotRegionSelected: (payload: {
 		sessionId: number;
 		croppedImageBytes?: Uint8Array;
-		action?: "edit" | "copy" | "save" | "pin";
+		action?: "edit" | "copy" | "save" | "pin" | "scroll";
 		windowId?: number;
 		rect?: { x: number; y: number; width: number; height: number };
 	}) => ipcRenderer.invoke("screenshot-region-selected", payload),
@@ -60,11 +60,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	readAssetDataUrl: (relativePath: string) =>
 		ipcRenderer.invoke("read-asset-data-url", relativePath),
 	onCaptureSession: (
-		callback: (payload: { sessionId: number; imageBytes: Uint8Array; mimeType?: string }) => void,
+		callback: (payload: {
+			sessionId: number;
+			imageBytes: Uint8Array;
+			mimeType?: string;
+			scroll?: boolean;
+			scrollAvailable?: boolean;
+		}) => void,
 	) => {
 		const listener = (
 			_event: Electron.IpcRendererEvent,
-			payload: { sessionId: number; imageBytes: Uint8Array; mimeType?: string },
+			payload: {
+				sessionId: number;
+				imageBytes: Uint8Array;
+				mimeType?: string;
+				scroll?: boolean;
+				scrollAvailable?: boolean;
+			},
 		) => callback(payload);
 		ipcRenderer.on("capture-session", listener);
 		return () => {
@@ -82,6 +94,43 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			ipcRenderer.on("onboarding-step", listener);
 			return () => {
 				ipcRenderer.removeListener("onboarding-step", listener);
+			};
+		},
+	},
+	settings: {
+		getState: () => ipcRenderer.invoke("settings-state"),
+		setShortcut: (kind: "capture" | "scrollCapture" | "restorePins", value: string | null) =>
+			ipcRenderer.invoke("settings-set-shortcut", kind, value),
+		setRecording: (recording: boolean) => ipcRenderer.invoke("settings-recording", recording),
+		setLanguage: (language: "auto" | "zh" | "en") => ipcRenderer.invoke("settings-set-language", language),
+		setCaptureMode: (mode: "overlay" | "system") => ipcRenderer.invoke("settings-set-capture-mode", mode),
+		setLaunchAtLogin: (enabled: boolean) => ipcRenderer.invoke("settings-set-launch-at-login", enabled),
+		checkUpdate: () => ipcRenderer.invoke("settings-check-update"),
+		installUpdate: () => ipcRenderer.invoke("settings-install-update"),
+		onChanged: (callback: (state: unknown) => void) => {
+			const listener = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state);
+			ipcRenderer.on("settings-changed", listener);
+			return () => {
+				ipcRenderer.removeListener("settings-changed", listener);
+			};
+		},
+		onKey: (callback: (press: unknown) => void) => {
+			const listener = (_event: Electron.IpcRendererEvent, press: unknown) => callback(press);
+			ipcRenderer.on("settings-key", listener);
+			return () => {
+				ipcRenderer.removeListener("settings-key", listener);
+			};
+		},
+	},
+	scrollCapture: {
+		getState: () => ipcRenderer.invoke("get-scroll-capture-state"),
+		finish: () => ipcRenderer.invoke("finish-scroll-capture"),
+		cancel: () => ipcRenderer.invoke("cancel-scroll-capture"),
+		onProgress: (callback: (progress: unknown) => void) => {
+			const listener = (_event: Electron.IpcRendererEvent, progress: unknown) => callback(progress);
+			ipcRenderer.on("scroll-capture-progress", listener);
+			return () => {
+				ipcRenderer.removeListener("scroll-capture-progress", listener);
 			};
 		},
 	},

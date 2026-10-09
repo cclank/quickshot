@@ -66,6 +66,7 @@ jobs:
 
       - run: npm ci
       - run: npm run verify
+      - run: npm run test:scroll-stitcher
       - run: npm run build:ocr-helper:universal
       - name: Package macOS arm64 directory
         run: npx electron-builder --mac --dir --arm64 --config.directories.output="$RUNNER_TEMP/quickshot-package"

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>QuickShot Settings Fixture</title>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script>
+			// The settings window against a mocked main process. Open with
+			// ?windowType=settings; ?platform=win32 shows Windows labels.
+			const parameters = new URLSearchParams(window.location.search);
+			const platform = parameters.get("platform") || "darwin";
+			const mac = platform === "darwin";
+			const label = (accelerator) => {
+				const parts = accelerator.split("+");
+				const names = mac
+					? { CommandOrControl: "⌘", Command: "⌘", Control: "⌃", Alt: "⌥", Shift: "⇧", Super: "⌘" }
+					: { CommandOrControl: "Ctrl", Command: "Win", Control: "Ctrl", Alt: "Alt", Shift: "Shift", Super: "Win" };
+				const keys = parts.slice(0, -1).map((part) => names[part] || part);
+				return mac ? keys.join("") + parts.at(-1) : [...keys, parts.at(-1)].join("+");
+			};
+			const fixture = (window.__quickshotSettingsFixture = { update: { kind: parameters.get("update") || "idle", version: "1.3.0", progress: 0.42, reason: "network" }, capture: "CommandOrControl+Shift+X", scroll: null, restore: "CommandOrControl+Shift+L", recording: false, language: "auto", mode: "overlay", login: false });
+			const state = () => ({
+				platform,
+				shortcuts: {
+					capture: { accelerator: fixture.capture, label: label(fixture.capture), isDefault: fixture.capture === "CommandOrControl+Shift+X" },
+					scrollCapture: fixture.scroll ? { accelerator: fixture.scroll, label: label(fixture.scroll) } : null,
+					restorePins: { accelerator: fixture.restore, label: label(fixture.restore), isDefault: fixture.restore === "CommandOrControl+Shift+L" },
+					scrollAvailable: mac,
+					defaultCaptureLabel: label("CommandOrControl+Shift+X"),
+					enabled: true,
+				},
+				language: fixture.language,
+				macCaptureMode: fixture.mode,
+				launchAtLogin: fixture.login,
+				launchAtLoginAvailable: true,
+				update: { version: "1.2.0", state: fixture.update, supported: true, localBuild: parameters.has("local") },
+			});
+			window.electronAPI = {
+				platform,
+				language: parameters.get("lang") || undefined,
+				settings: {
+					getState: async () => state(),
+					setShortcut: async (kind, value) => {
+						const others = [["capture", fixture.capture], ["scrollCapture", fixture.scroll], ["restorePins", fixture.restore]].filter(([k]) => k !== kind).map(([, v]) => v);
+						if (value && others.some((other) => other && label(value) === label(other))) return { success: false, error: "和另一个快捷键重复了", state: state() };
+						if (value && label(value) === label("Command+Shift+3")) return { success: false, error: "这个组合已被系统或其他应用占用", state: state() };
+						if (kind === "capture") fixture.capture = value || "CommandOrControl+Shift+X";
+						else if (kind === "restorePins") fixture.restore = value || "CommandOrControl+Shift+L";
+						else fixture.scroll = value;
+						return { success: true, state: state() };
+					},
+					setRecording: async (recording) => ((fixture.recording = recording), { success: true }),
+					setLanguage: async (language) => ((fixture.language = language), { success: true, state: state() }),
+					setCaptureMode: async (mode) => ((fixture.mode = mode), { success: true, state: state() }),
+					setLaunchAtLogin: async (enabled) => ((fixture.login = enabled), { success: true, state: state() }),
+					checkUpdate: async () => ((fixture.update = { kind: "available", version: "1.3.0" }), { success: true, state: state() }),
+					installUpdate: async () => ((fixture.update = { kind: "downloading", version: "1.3.0", progress: 0.42 }), { success: true }),
+					onChanged: () => () => {},
+				},
+			};
+		</script>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

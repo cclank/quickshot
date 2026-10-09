@@ -25,6 +25,7 @@
 		"build:ocr-helper": "node scripts/build-native-helpers.mjs",
 		"build:ocr-helper:universal": "node scripts/build-native-helpers.mjs --universal",
 		"test:ocr-helper": "npm run build:ocr-helper && node scripts/smoke-ocr-helper.mjs",
+		"test:scroll-stitcher": "node scripts/test-scroll-stitcher.mjs",
 		"dev": "npm run build:ocr-helper && vite",
 		"dev:ui": "vite --config vite.ui.config.ts",
 		"typecheck": "tsc --noEmit --incremental false",

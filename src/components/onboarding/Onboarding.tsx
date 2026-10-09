@@ -1,9 +1,11 @@
 import { ArrowLeft, Check, ShieldCheck } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type MessageKey, t } from "@/lib/i18n";
-import { IS_MAC, formatShortcut } from "@/lib/platform";
+import { DEFAULT_KEYMAP, bindingLabel, useKeymap } from "@/lib/keymap";
+import { IS_MAC } from "@/lib/platform";
 import appIcon from "@/assets/app-icon.svg";
 import { Switch } from "../editor/ui";
+import { Confetti } from "./Confetti";
 
 type Step = "welcome" | "permission" | "done";
 
@@ -147,6 +149,7 @@ function stepsFor(platform: string): Step[] {
 
 export function Onboarding() {
 	const api = window.electronAPI.onboarding;
+	const keymap = useKeymap();
 	const [state, setState] = useState<OnboardingState | null>(null);
 	const [step, setStep] = useState<Step>(() => {
 		const requested = new URLSearchParams(window.location.search).get("step");
@@ -208,7 +211,7 @@ export function Onboarding() {
 							<FeatureCard
 								art="stitch"
 								title={t("onboarding.feature.stitch")}
-								detail={t("onboarding.feature.stitchDetail", { shortcut: formatShortcut("mod+shift+a") })}
+								detail={t("onboarding.feature.stitchDetail", { shortcut: bindingLabel(keymap.stitch || DEFAULT_KEYMAP.stitch) })}
 							/>
 							<FeatureCard art="menubar" title={t(IS_MAC ? "onboarding.feature.menubar" : "onboarding.feature.tray")} detail={t("onboarding.feature.menubarDetail")} />
 						</div>
@@ -271,13 +274,15 @@ export function Onboarding() {
 
 				{step === "done" && (
 					<>
-						<span className="relative mt-2 flex h-16 w-16 items-center justify-center rounded-full">
+						<Confetti />
+						<span className="relative mt-2 flex h-16 w-16 animate-in zoom-in-50 fade-in items-center justify-center rounded-full duration-500">
 							<span className="absolute inset-0 rounded-full p-[2.5px]" style={{ background: `conic-gradient(from 200deg, #FF5A7A, #FF9F43, #FFD43B, #38D9A9, #4DABF7, #9775FA, #FF5A7A)` }}>
 								<span className="block h-full w-full rounded-full bg-[var(--qs-panel)]" />
 							</span>
 							<Check size={28} strokeWidth={2.4} className="relative" />
 						</span>
 						<h1 className="mt-4 text-[24px] font-semibold tracking-[-0.01em]">{t("onboarding.done.title")}</h1>
+						<p className="mt-1 text-[13px] text-[var(--qs-text-2)]">{t("onboarding.done.subtitle")}</p>
 						<div className="mt-3 flex items-center gap-2 text-[13px] text-[var(--qs-text-2)]">
 							<Keycaps label={shortcut} size="sm" />
 							<span>{t("onboarding.done.shortcut")}</span>
@@ -285,9 +290,9 @@ export function Onboarding() {
 						<ul className="mt-6 w-full max-w-[480px] divide-y divide-[var(--qs-border)] overflow-hidden rounded-[12px] bg-[var(--qs-field)] shadow-[inset_0_0_0_1px_var(--qs-border)]">
 							{[
 								t("onboarding.done.tip1", {
-									copy: formatShortcut("mod+c"),
-									save: formatShortcut("mod+s"),
-									copyClose: formatShortcut("mod+enter"),
+									copy: bindingLabel(keymap.copy || DEFAULT_KEYMAP.copy),
+									save: bindingLabel(keymap.quickSave || DEFAULT_KEYMAP.quickSave),
+									copyClose: bindingLabel(keymap.copyAndClose || DEFAULT_KEYMAP.copyAndClose),
 								}),
 								t("onboarding.done.tip2"),
 								t(IS_MAC ? "onboarding.done.tip3" : "onboarding.done.tip3Tray"),

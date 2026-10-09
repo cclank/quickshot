@@ -26,7 +26,9 @@ private func activeDisplayBounds() -> [CGRect] {
 /// On-screen application windows, front to back, in global display points with
 /// a top-left origin (Electron's screen space). `id` is the CGWindowID that
 /// `screencapture -l` and ScreenCaptureKit use to capture one window.
-func listOnScreenWindows(excludingPid excludedPid: Int32) -> [[String: Any]] {
+/// Windows of `excludedPid`, and the windows numbered in `excludedWindows`,
+/// are left out.
+func listOnScreenWindows(excludingPid excludedPid: Int32, excludingWindows excludedWindows: Set<Int> = []) -> [[String: Any]] {
     let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
     let entries = (CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]) ?? []
     let displayBounds = activeDisplayBounds()
@@ -36,7 +38,7 @@ func listOnScreenWindows(excludingPid excludedPid: Int32) -> [[String: Any]] {
         guard
             let layer = entry[kCGWindowLayer as String] as? Int, layer >= 0, layer <= maximumLayer,
             let pid = entry[kCGWindowOwnerPID as String] as? Int32, pid != excludedPid,
-            let number = entry[kCGWindowNumber as String] as? Int,
+            let number = entry[kCGWindowNumber as String] as? Int, !excludedWindows.contains(number),
             let boundsDictionary = entry[kCGWindowBounds as String] as? NSDictionary,
             let bounds = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary),
             bounds.width >= 40, bounds.height >= 40

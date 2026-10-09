@@ -27,10 +27,12 @@ const helpers = [
 		name: "quickshot-capture-agent",
 		sources: [
 			path.join(projectRoot, "native", "quickshot-capture-agent", "main.swift"),
+			path.join(projectRoot, "native", "quickshot-capture-agent", "ScrollCapture.swift"),
+			path.join(projectRoot, "native", "quickshot-capture-agent", "ScrollStitcher.swift"),
 			path.join(projectRoot, "native", "quickshot-window-list", "WindowList.swift"),
 		],
 		outputDirectory: path.join(projectRoot, "build", "capture-agent"),
-		frameworks: ["AppKit", "CoreGraphics", "ImageIO"],
+		frameworks: ["AppKit", "CoreGraphics", "CoreMedia", "CoreVideo", "ImageIO"],
 		// ScreenCaptureKit's screenshot API needs macOS 14; weak linking keeps
 		// the agent starting on older systems, where it reports "unsupported".
 		weakFrameworks: ["ScreenCaptureKit"],

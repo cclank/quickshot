@@ -24,7 +24,7 @@ export type StitchPiece = {
 export type Stitch = { pieces: StitchPiece[]; settings: StitchSettings };
 
 /** Chromium refuses canvases past these, so stitching stops short of them. */
-export const MAX_STITCH_SIDE = 16_384;
+export const MAX_STITCH_SIDE = 32_000;
 export const MAX_STITCH_PIXELS = 120_000_000;
 
 export function stitchSizes(stitch: Stitch): StitchSize[] {

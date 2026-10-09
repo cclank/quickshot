@@ -16,11 +16,17 @@ import ScreenCaptureKit
 //       Writes part of the kept frame, losslessly, in frame pixels.
 //   {"id":3,"cmd":"window","window":<CGWindowID>,"path":"/…/c.png"}
 //       Captures one window without its shadow, trimmed to its visible pixels.
-//   {"id":4,"cmd":"windows","exclude":<pid>}
+//   {"id":4,"cmd":"windows","exclude":<pid or -1>,"excludeWindows":[<CGWindowID>…]}
 //   {"id":5,"cmd":"release"}   Drops the kept frame.
 //   {"id":6,"cmd":"warm"}
 //   {"id":7,"cmd":"app-window","bundle":"com.apple.systempreferences"}
 //       The frontmost window of a running app, in global points.
+//   {"id":8,"cmd":"scroll-start","display":<id>,"rect":{…points…},"size":{"width":…,"height":…},
+//    "exclude":<pid>,"maxHeight":15000,"preview":"/…/p.jpg"}
+//       Starts a scrolling capture of part of a display (see ScrollCapture),
+//       which then reports progress as {"event":"scroll",…} lines.
+//   {"id":9,"cmd":"scroll-finish","path":"/…/d.png"}   Writes the stitched image.
+//   {"id":10,"cmd":"scroll-cancel"}
 //
 // Image requests need macOS 14 (SCScreenshotManager). Older systems answer
 // "unsupported" and Electron falls back to /usr/sbin/screencapture.
@@ -28,14 +34,14 @@ import ScreenCaptureKit
 
 private let outputQueue = DispatchQueue(label: "quickshot.agent.output")
 
-private func send(_ object: [String: Any]) {
+func send(_ object: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: object) else { return }
     outputQueue.async {
         FileHandle.standardOutput.write(data + Data("\n".utf8))
     }
 }
 
-private func fail(_ id: Int, _ message: String) {
+func fail(_ id: Int, _ message: String) {
     send(["id": id, "ok": false, "error": message])
 }
 
@@ -43,7 +49,7 @@ private func elapsedMilliseconds(since start: Date) -> Int {
     Int((Date().timeIntervalSince(start) * 1000).rounded())
 }
 
-private func write(_ image: CGImage, to path: String) -> Bool {
+func write(_ image: CGImage, to path: String, quality: Double = 1) -> Bool {
     let isJPEG = path.hasSuffix(".jpg")
     guard let destination = CGImageDestinationCreateWithURL(
         URL(fileURLWithPath: path) as CFURL,
@@ -53,7 +59,7 @@ private func write(_ image: CGImage, to path: String) -> Bool {
     }
     // At quality 1 ImageIO also keeps full-resolution colour (4:4:4), so the
     // overlay looks exactly like the screen.
-    let options: [CFString: Any] = isJPEG ? [kCGImageDestinationLossyCompressionQuality: 1.0] : [:]
+    let options: [CFString: Any] = isJPEG ? [kCGImageDestinationLossyCompressionQuality: quality] : [:]
     CGImageDestinationAddImage(destination, image, options as CFDictionary)
     return CGImageDestinationFinalize(destination)
 }
@@ -237,13 +243,17 @@ private final class Capturer {
     }
 }
 
+/// The scrolling capture in progress, if any; only touched on `scrollControl`.
+private let scrollControl = DispatchQueue(label: "quickshot.agent.scroll-control")
+private var activeScroll: AnyObject?
+
 private let capturer: AnyObject? = {
     if #available(macOS 14.0, *) { return Capturer() }
     return nil
 }()
 
-private func imagePath(_ request: [String: Any], _ extensions: [String]) -> String? {
-    guard let path = request["path"] as? String, extensions.contains(where: { path.hasSuffix($0) }) else {
+private func imagePath(_ request: [String: Any], _ extensions: [String], key: String = "path") -> String? {
+    guard let path = request[key] as? String, extensions.contains(where: { path.hasSuffix($0) }) else {
         return nil
     }
     return path
@@ -253,7 +263,11 @@ private func handle(_ request: [String: Any]) {
     guard let id = request["id"] as? Int, let command = request["cmd"] as? String else { return }
     if command == "windows" {
         let exclude = (request["exclude"] as? Int).map { Int32(truncatingIfNeeded: $0) } ?? -1
-        send(["id": id, "ok": true, "windows": listOnScreenWindows(excludingPid: exclude)])
+        let excludedWindows = Set((request["excludeWindows"] as? [Int]) ?? [])
+        send([
+            "id": id, "ok": true,
+            "windows": listOnScreenWindows(excludingPid: exclude, excludingWindows: excludedWindows),
+        ])
         return
     }
     if command == "app-window" {
@@ -332,6 +346,63 @@ private func handle(_ request: [String: Any]) {
     case "release":
         capturer.release()
         send(["id": id, "ok": true])
+    case "scroll-start":
+        func number(_ value: Any?) -> Double? { (value as? NSNumber)?.doubleValue }
+        guard
+            let display = request["display"] as? Int,
+            let rect = request["rect"] as? [String: Any],
+            let x = number(rect["x"]), let y = number(rect["y"]),
+            let pointWidth = number(rect["width"]), let pointHeight = number(rect["height"]),
+            pointWidth > 0, pointHeight > 0,
+            let size = request["size"] as? [String: Any],
+            let width = size["width"] as? Int, let height = size["height"] as? Int,
+            (8...16384).contains(width), (8...16384).contains(height)
+        else {
+            fail(id, "bad request")
+            return
+        }
+        let maxHeight = min(32000, max(height, request["maxHeight"] as? Int ?? 15000))
+        let exclude = (request["exclude"] as? Int).map { pid_t(truncatingIfNeeded: $0) } ?? -1
+        let preview = imagePath(request, [".jpg"], key: "preview")
+        let fixture = request["fixture"] as? String
+        // Leaves out the strip where an overlay scroll bar appears while scrolling.
+        let ignoredRight = Int((16 * Double(width) / pointWidth).rounded())
+        scrollControl.async {
+            (activeScroll as? ScrollCapture)?.stop()
+            let scroll = ScrollCapture(
+                width: width, height: height, maxHeight: maxHeight, ignoredRight: ignoredRight, previewPath: preview)
+            activeScroll = scroll
+            if let fixture {
+                scroll.startFixture(path: fixture, id: id)
+            } else {
+                scroll.start(
+                    displayID: CGDirectDisplayID(truncatingIfNeeded: display),
+                    sourceRect: CGRect(x: x, y: y, width: pointWidth, height: pointHeight),
+                    excludingPid: exclude, id: id)
+            }
+        }
+    case "scroll-finish":
+        guard let path = imagePath(request, [".png"]) else {
+            fail(id, "bad request")
+            return
+        }
+        scrollControl.async {
+            guard let scroll = activeScroll as? ScrollCapture else {
+                fail(id, "no scroll capture")
+                return
+            }
+            activeScroll = nil
+            scroll.finish(path: path, id: id)
+        }
+    case "scroll-cancel":
+        scrollControl.async {
+            guard let scroll = activeScroll as? ScrollCapture else {
+                send(["id": id, "ok": true])
+                return
+            }
+            activeScroll = nil
+            scroll.stop(id: id)
+        }
     default:
         fail(id, "unknown command")
     }

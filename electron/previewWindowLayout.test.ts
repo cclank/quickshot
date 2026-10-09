@@ -67,6 +67,28 @@ describe("normalizeAppSettings", () => {
 		expect(normalizeAppSettings({ macCaptureMode: "nope" }).macCaptureMode).toBe("overlay");
 		expect(normalizeAppSettings(null).macCaptureMode).toBe("overlay");
 	});
+
+	it("keeps valid custom shortcuts and falls back for broken ones", () => {
+		expect(normalizeAppSettings(null).shortcuts).toEqual({
+			capture: "CommandOrControl+Shift+X",
+			scrollCapture: null,
+			restorePins: "CommandOrControl+Shift+L",
+		});
+		expect(
+			normalizeAppSettings({ shortcuts: { capture: "cmd+shift+2", scrollCapture: "Control+Alt+S", restorePins: "F9" } })
+				.shortcuts,
+		).toEqual({ capture: "Command+Shift+2", scrollCapture: "Control+Alt+S", restorePins: "F9" });
+		expect(normalizeAppSettings({ shortcuts: { capture: "X", scrollCapture: "Shift+S" } }).shortcuts).toEqual({
+			capture: "CommandOrControl+Shift+X",
+			scrollCapture: null,
+			restorePins: "CommandOrControl+Shift+L",
+		});
+		// Two jobs cannot share one shortcut; capturing keeps it.
+		expect(
+			normalizeAppSettings({ shortcuts: { capture: "Command+Shift+2", scrollCapture: "Command+Shift+2" } }).shortcuts
+				.scrollCapture,
+		).toBeNull();
+	});
 });
 
 describe("resolveLanguage", () => {

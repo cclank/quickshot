@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { isStableRequirement, readDesignatedRequirement } from "./mac-signing-policy.mjs";
@@ -22,12 +22,23 @@ if (!identities.includes(`"${identity}"`)) {
 	);
 }
 
+// Marks the bundle as a local build, which skips automatic update checks: a
+// public release must not replace unreleased fixes or this signing identity.
+await writeFile(path.join(app, "Contents", "Resources", "local-build"), "Built and signed on this Mac.\n");
+
 const sign = (target, extra = []) =>
 	exec("codesign", ["--force", "--timestamp=none", ...extra, "--sign", identity, target]);
 
-// Code outside the standard nested locations is sealed as a resource, so sign it first.
-const ocrHelper = path.join(app, "Contents", "Resources", "ocr", "quickshot-ocr");
-if (await access(ocrHelper).then(() => true, () => false)) await sign(ocrHelper);
+// Code outside the standard nested locations is sealed as a resource, so sign
+// the helpers first: OCR, the window list, and the capture agent.
+for (const helper of [
+	["ocr", "quickshot-ocr"],
+	["window-list", "quickshot-window-list"],
+	["capture-agent", "quickshot-capture-agent"],
+]) {
+	const helperPath = path.join(app, "Contents", "Resources", ...helper);
+	if (await access(helperPath).then(() => true, () => false)) await sign(helperPath);
+}
 await sign(app, ["--deep"]);
 await exec("codesign", ["--verify", "--deep", "--strict", app]);
 

@@ -7,7 +7,7 @@ import {
 	type StitchSettings,
 } from "@/editor/stitch";
 import { t } from "@/lib/i18n";
-import { formatShortcut } from "@/lib/platform";
+import { useBindingLabel } from "@/lib/keymap";
 import { IconButton, Section, Segmented, Slider } from "./ui";
 
 type StitchPanelProps = {
@@ -34,6 +34,7 @@ export const StitchPanel = memo(function StitchPanel({
 	onRemove,
 	onAdd,
 }: StitchPanelProps) {
+	const stitchKeys = useBindingLabel("stitch");
 	const vertical = settings.arrangement !== "horizontal";
 	return (
 		<Section
@@ -132,7 +133,7 @@ export const StitchPanel = memo(function StitchPanel({
 			>
 				<Plus size={14} strokeWidth={2} />
 				{t("stitch.add")}
-				<span className="text-[11px] text-[var(--qs-text-3)]">{formatShortcut("mod+shift+a")}</span>
+				<span className="text-[11px] text-[var(--qs-text-3)]">{stitchKeys}</span>
 			</button>
 			<p className="mt-1.5 text-center text-[11px] text-[var(--qs-text-3)]">{t("stitch.addHint")}</p>
 		</Section>

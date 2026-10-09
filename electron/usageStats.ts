@@ -3,8 +3,8 @@
  * many installations are in use. It carries a random installation ID, the app
  * version, the OS name and major.minor version, and the CPU architecture —
  * never screenshots, text, file names or anything about the user. It is on by
- * default, can be switched off from the tray menu, and development builds
- * never send it.
+ * default with no switch in the interface; `"usageStats": false` in
+ * settings.json turns it off, and development builds never send it.
  */
 export const USAGE_STATS_ENDPOINT = "https://quickshot-ops.lanshuagent.com/v1/heartbeat";
 export const USAGE_STATS_TIMEOUT_MS = 8_000;

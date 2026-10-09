@@ -10,10 +10,12 @@ const PNG_IHDR_END_OFFSET =
 	PNG_IHDR_DATA_LENGTH +
 	4;
 
-export const MAX_PNG_DIMENSION = 16_384;
-export const MAX_PNG_PIXELS = 50_000_000;
-export const MAX_CAPTURE_PNG_BYTES = 96 * 1024 * 1024;
-export const MAX_EXPORT_PNG_BYTES = 128 * 1024 * 1024;
+// Long scrolling captures reach 30,000 pixels; Chromium's canvases stop
+// at 32,767 a side, and the editor exports at most 120 million pixels.
+export const MAX_PNG_DIMENSION = 32_000;
+export const MAX_PNG_PIXELS = 120_000_000;
+export const MAX_CAPTURE_PNG_BYTES = 160 * 1024 * 1024;
+export const MAX_EXPORT_PNG_BYTES = 192 * 1024 * 1024;
 
 export interface PngDimensions {
 	width: number;

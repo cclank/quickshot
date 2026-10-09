@@ -13,9 +13,10 @@ import {
 	X,
 } from "lucide-react";
 import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
-import { TOOL_ORDER, TOOL_SHORTCUTS } from "@/editor/presets";
+import { TOOL_ORDER } from "@/editor/presets";
 import type { Tool } from "@/editor/types";
 import { t } from "@/lib/i18n";
+import { type KeymapCommand, bindingLabel, useKeymap } from "@/lib/keymap";
 import { IS_MAC, IS_WINDOWS, PLATFORM, SUPPORTS_OCR, formatShortcut } from "@/lib/platform";
 import { TOOL_ICONS } from "./icons";
 import { Divider, IconButton, Tooltip } from "./ui";
@@ -75,6 +76,8 @@ export const Toolbar = memo(function Toolbar({
 	styleBarProbes,
 	onStyleBarModeChange,
 }: ToolbarProps) {
+	const keymap = useKeymap();
+	const keys = (command: KeymapCommand) => (keymap[command] ? bindingLabel(keymap[command]) : undefined);
 	const headerRef = useRef<HTMLElement>(null);
 	const leadingRef = useRef<HTMLDivElement>(null);
 	const toolsRef = useRef<HTMLDivElement>(null);
@@ -163,7 +166,7 @@ export const Toolbar = memo(function Toolbar({
 						<IconButton
 							key={value}
 							label={t(`tool.${value}`)}
-							shortcut={TOOL_SHORTCUTS[value]}
+							shortcut={keys(`tool.${value}` as KeymapCommand)}
 							active={tool === value}
 							aria-pressed={tool === value}
 							onClick={() => onToolChange(value)}
@@ -192,7 +195,7 @@ export const Toolbar = memo(function Toolbar({
 				<IconButton
 					data-quickshot-action="stitch"
 					label={t("action.stitch")}
-					shortcut={formatShortcut("mod+shift+a")}
+					shortcut={keys("stitch")}
 					onClick={onStitch}
 					disabled={!ready}
 				>
@@ -201,7 +204,7 @@ export const Toolbar = memo(function Toolbar({
 				{SUPPORTS_OCR && (
 					<IconButton
 						label={t("action.ocr")}
-						shortcut={formatShortcut("mod+shift+t")}
+						shortcut={keys("ocr")}
 						active={ocrOpen}
 						aria-expanded={ocrOpen}
 						aria-controls="text-extraction-panel"
@@ -213,7 +216,7 @@ export const Toolbar = memo(function Toolbar({
 				)}
 				<IconButton
 					label={t("action.pin")}
-					shortcut={formatShortcut("mod+shift+p")}
+					shortcut={keys("pin")}
 					onClick={onPin}
 					disabled={!ready}
 				>
@@ -222,7 +225,7 @@ export const Toolbar = memo(function Toolbar({
 				<Divider />
 				<IconButton
 					label={t("action.saveAs")}
-					shortcut={formatShortcut("mod+shift+s")}
+					shortcut={keys("saveAs")}
 					onClick={onSaveAs}
 					disabled={!ready}
 				>
@@ -231,7 +234,7 @@ export const Toolbar = memo(function Toolbar({
 				<IconButton
 					data-quickshot-action="quick-save"
 					label={t("action.quickSave")}
-					shortcut={formatShortcut("mod+s")}
+					shortcut={keys("quickSave")}
 					onClick={onQuickSave}
 					disabled={!ready}
 				>
@@ -245,12 +248,12 @@ export const Toolbar = memo(function Toolbar({
 				>
 					<Copy size={15} strokeWidth={2} />
 					{t("action.copy")}
-					<Tooltip label={t("action.copyImage")} shortcut={formatShortcut("mod+c")} />
+					<Tooltip label={t("action.copyImage")} shortcut={keys("copy")} />
 				</button>
 				<Divider />
 				<IconButton
 					label={inspectorOpen ? t("action.inspectorHide") : t("action.inspectorShow")}
-					shortcut={formatShortcut("mod+.")}
+					shortcut={keys("toggleInspector")}
 					active={inspectorOpen}
 					onClick={onToggleInspector}
 				>

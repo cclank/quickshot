@@ -12,6 +12,12 @@ type Pending = {
 	timer: ReturnType<typeof setTimeout>;
 };
 
+/** A line the agent sends on its own, e.g. scrolling-capture progress. */
+export type AgentEvent = {
+	event: string;
+	[key: string]: unknown;
+};
+
 type Diagnostic = (event: string, details?: Record<string, unknown>) => void;
 
 /** Parses one line of agent output; anything malformed is ignored. */
@@ -26,6 +32,20 @@ export function parseAgentLine(line: string): AgentResponse | null {
 	const { id, ok } = value as Record<string, unknown>;
 	if (typeof id !== "number" || !Number.isInteger(id) || typeof ok !== "boolean") return null;
 	return value as AgentResponse;
+}
+
+/** Parses an unsolicited agent line; anything else is ignored. */
+export function parseAgentEvent(line: string): AgentEvent | null {
+	let value: unknown;
+	try {
+		value = JSON.parse(line);
+	} catch {
+		return null;
+	}
+	if (!value || typeof value !== "object") return null;
+	const { event, id } = value as Record<string, unknown>;
+	if (typeof event !== "string" || !event || id !== undefined) return null;
+	return value as AgentEvent;
 }
 
 /** Splits streamed output into complete lines, keeping a partial tail. */
@@ -49,6 +69,7 @@ export class CaptureAgent {
 	private buffer = "";
 	private crashes = 0;
 	private pausedUntil = 0;
+	private eventListener: ((event: AgentEvent) => void) | null = null;
 
 	constructor(
 		private readonly executable: string,
@@ -88,6 +109,26 @@ export class CaptureAgent {
 		if (child) {
 			child.stdin.end();
 			child.kill();
+			this.emit({ event: "stopped" });
+		}
+	}
+
+	/**
+	 * Receives the agent's own messages, plus {event: "stopped"} whenever the
+	 * helper goes away, since anything it was doing went with it.
+	 */
+	onEvent(listener: ((event: AgentEvent) => void) | null) {
+		this.eventListener = listener;
+	}
+
+	private emit(event: AgentEvent) {
+		try {
+			this.eventListener?.(event);
+		} catch (error) {
+			this.diagnostic("capture-agent-event-failed", {
+				event: event.event,
+				error: error instanceof Error ? error.message : String(error),
+			});
 		}
 	}
 
@@ -113,7 +154,11 @@ export class CaptureAgent {
 		this.buffer = rest;
 		for (const line of lines) {
 			const response = parseAgentLine(line);
-			if (!response) continue;
+			if (!response) {
+				const event = parseAgentEvent(line);
+				if (event) this.emit(event);
+				continue;
+			}
 			const entry = this.pending.get(response.id);
 			if (!entry) continue;
 			this.pending.delete(response.id);
@@ -128,6 +173,7 @@ export class CaptureAgent {
 		this.child = null;
 		this.failPending();
 		this.noteCrash(reason, details);
+		this.emit({ event: "stopped" });
 	}
 
 	private noteCrash(reason: string, details: unknown) {

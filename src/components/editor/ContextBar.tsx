@@ -8,7 +8,7 @@ import {
 } from "@/editor/presets";
 import type { AnnotationKind, RedactMode, ShapeFill, TextStyle } from "@/editor/types";
 import { t } from "@/lib/i18n";
-import { formatShortcut } from "@/lib/platform";
+import { bindingLabel, useKeymap } from "@/lib/keymap";
 import {
 	BlurIcon,
 	FillNoneIcon,
@@ -221,6 +221,7 @@ export const ContextBar = memo(function ContextBar({
 	compactColors = false,
 	measureOnly = false,
 }: ContextBarProps) {
+	const duplicateKeys = useKeymap().duplicate;
 	const showColor = !COLORLESS.includes(kind);
 	const showSize = SIZED.includes(kind);
 	const sizeLabels = [t("style.size.s"), t("style.size.m"), t("style.size.l")];
@@ -365,7 +366,7 @@ export const ContextBar = memo(function ContextBar({
 					<IconButton
 						size="sm"
 						label={t("action.duplicate")}
-						shortcut={formatShortcut("mod+d")}
+						shortcut={duplicateKeys ? bindingLabel(duplicateKeys) : undefined}
 						onClick={onDuplicate}
 					>
 						<DuplicateIcon size={14} strokeWidth={1.75} />

@@ -55,7 +55,7 @@
 | **一键变成可以发布的成品图** | 渐变背景、窗口样式、圆角、柔和阴影、画面比例，再署上你的名字。设为默认后，之后的截图都用这套样式。 |
 | **多张截图拼成一张** | 按 `Mod+Shift+A` 再截一张，或直接粘贴、拖入图片，纵向、横向、网格随意排列。 |
 | **贴到桌面，提取文字** | 截图置顶悬浮在桌面上对照，本机识别图中的文字。 |
-| **隐私优先** | 截图始终留在你的电脑上，没有账号、没有云端，只有一个可随时关闭的匿名启动计数。 |
+| **隐私优先** | 截图始终留在你的电脑上，没有账号、没有云端，只有一个匿名启动计数。 |
 
 ## 下载
 
@@ -116,11 +116,11 @@
 
 ### 隐私
 
-截图和其中的文字始终留在本机，没有账号，也没有云端。从 1.2.0 起，QuickShot 每次启动会发送一次匿名统计，用来了解有多少人在使用：随机安装 ID、应用版本、系统及版本、CPU 架构，不包含任何截图内容。在菜单栏取消勾选“发送匿名使用统计”即可关闭；开发版不会发送。渲染进程开启上下文隔离，禁用 Node.js，只通过白名单 IPC 与主进程通信。
+截图和其中的文字始终留在本机，没有账号，也没有云端。从 1.2.0 起，QuickShot 每次启动会发送一次匿名统计，用来了解有多少人在使用：随机安装 ID、应用版本、系统及版本、CPU 架构，不包含任何截图内容。如需关闭，在 `settings.json`（macOS 位于 `~/Library/Application Support/quickshot/`，Windows 位于 `%APPDATA%\quickshot\`）中加入 `"usageStats": false` 并重启 QuickShot；开发版不会发送。渲染进程开启上下文隔离，禁用 Node.js，只通过白名单 IPC 与主进程通信。
 
 ## 快捷键
 
-`Mod` 在 macOS 上是 `⌘`，在 Windows 上是 `Ctrl`。
+`Mod` 在 macOS 上是 `⌘`，在 Windows 上是 `Ctrl`。全局截图快捷键可以在菜单栏的“设置…”里修改，也可以给滚动截图单独设一个。
 
 | 场景 | 快捷键 | 作用 |
 | --- | --- | --- |
@@ -170,7 +170,8 @@ npm run dev
 `npm run dev:ui` 只启动界面，使用 HTML 夹具渲染编辑器和选区浮层，不需要 Electron 和录屏权限，适合调整界面：
 
 - 编辑器：`http://localhost:5188/test-fixtures/screenshot-preview.html?windowType=screenshot-preview&sessionId=1&fixtureSource=/test-fixtures/sample-ui.svg&scaleFactor=2`
-- 选区：`http://localhost:5188/test-fixtures/region-selector.html?windowType=screenshot-region`
+- 选区：`http://localhost:5188/test-fixtures/region-selector.html?windowType=screenshot-region`（加 `&scroll=on` 进入滚动截图）
+- 滚动截图面板：`http://localhost:5188/test-fixtures/scroll-capture.html?windowType=scroll-capture`
 
 仅在开发模式生效的环境变量（安装包会忽略）：
 
@@ -178,18 +179,27 @@ npm run dev
 | --- | --- |
 | `QUICKSHOT_USER_DATA_DIR` | 使用独立的数据目录，开发版不会与已安装的应用共用状态或单实例锁 |
 | `QUICKSHOT_DEV_CAPTURE_FILE` | 用指定 PNG 代替屏幕，无需录屏权限即可跑通完整截图流程 |
-| `QUICKSHOT_ENABLE_DEV_SHORTCUT=0` | 不注册全局截图快捷键 |
+| `QUICKSHOT_DEV_SCROLL_FIXTURE` | macOS：滚动截图（`--capture-scroll`）改为在这张长 PNG 上模拟滚动，不读取屏幕 |
+| `QUICKSHOT_ENABLE_DEV_SHORTCUT=0` | 不注册全局快捷键（截图快捷键，以及滚动截图时的 Esc / 回车） |
 | `QUICKSHOT_DEV_REMOTE_DEBUGGING_PORT` | 开放 Chrome DevTools 协议端口，便于自动化检查 |
 | `QUICKSHOT_DEV_USAGE_STATS=1` | 让开发版也发送匿名使用统计（默认不发）；`QUICKSHOT_DEV_USAGE_STATS_ENDPOINT` 可改为其他地址，例如本地测试服务 |
 | `QUICKSHOT_DEV_SETTINGS_BUNDLE` | 用其他 App 的窗口（如 `com.apple.finder`）代替系统设置，测试录屏授权浮条，不会真的打开系统设置 |
 
-常用命令：`npm test` 运行单元测试，`npm run verify` 运行测试、类型检查、生产构建与体积预算检查，`npm run build:mac` / `npm run build:win` 打包安装程序。
+常用命令：`npm test` 运行单元测试，`npm run verify` 运行测试、类型检查、生产构建与体积预算检查，`npm run test:scroll-stitcher` 用合成页面检查 macOS 滚动截图的拼接，`npm run build:mac` / `npm run build:win` 打包安装程序。
 
 官网在 `site/`，是一个静态页面。演示视频用真实的选区浮层和编辑器在演示桌面（`test-fixtures/demo/`）上录制：先运行 `npm run dev:ui`，再运行 `node scripts/record-site-demos.mjs` 重新生成 `site/assets/video/`（需要 Chrome、ffmpeg 和 cwebp）。
 
 ## 发布
 
 推送 `v*` 标签会运行 `.github/workflows/release.yml`，构建 macOS DMG 和 Windows 安装包并附到草稿 Release。仓库配置了 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 时会自动签名和公证。macOS 签名身份需要在各版本间保持一致，否则系统会重新要求录屏授权。
+
+Release 里还会附带 `latest.json`，这是 QuickShot 读取的更新信息（见 `electron/updates.ts`）。已安装的 QuickShot 先查 `dl.lanshuagent.com/quickshot/latest.json`，再查 GitHub 最新 Release 上的同名文件，两者都失败时才调用 GitHub 接口。启动时和每隔 6 小时检查一次；发现新版只提示，用户确认后才下载，并在校验 SHA-256 之后安装。草稿 Release 正式发布后，把它同步到下载服务器：
+
+```bash
+WRANGLER=/path/to/wrangler node scripts/publish-update-feed.mjs vX.Y.Z
+```
+
+用 `npm run install:mac:local` 安装的本机构建不会自动检查更新，避免公开版本覆盖尚未发布的本地修复。
 
 ## 参与贡献
 

@@ -55,7 +55,7 @@
 | **Presentation-ready in one click** | Gradients, window frames, rounded corners, soft shadows, aspect ratios and your own signature. Set a style as the default and every new capture starts that way. |
 | **Stitch several captures** | Add another capture with `Mod+Shift+A`, or paste and drop images, then lay them out vertically, horizontally or in a grid. |
 | **Pin and read** | Float a capture above everything, or pull out its text with on-device OCR. |
-| **Private by design** | Screenshots never leave your computer. No account, no cloud, just an anonymous launch count you can switch off. |
+| **Private by design** | Screenshots never leave your computer. No account, no cloud, just an anonymous launch count. |
 
 ## Download
 
@@ -116,11 +116,11 @@ Ten tools, each on a single key: **select, rectangle, ellipse, arrow, line, pen,
 
 ### Private by design
 
-Screenshots, and any text in them, never leave your computer. There is no account and no cloud. From 1.2.0, QuickShot sends one anonymous report per launch so we can tell how many people use it: a random installation ID, the app version, the OS and its version, and the CPU type. Nothing about what you capture is included. Turn it off with **Share Anonymous Usage Stats** in the menu bar; development builds never send it. The renderer runs with context isolation, no Node.js access and an allow-listed IPC bridge.
+Screenshots, and any text in them, never leave your computer. There is no account and no cloud. From 1.2.0, QuickShot sends one anonymous report per launch so we can tell how many people use it: a random installation ID, the app version, the OS and its version, and the CPU type. Nothing about what you capture is included. To turn it off, set `"usageStats": false` in `settings.json` (in `~/Library/Application Support/quickshot/` on macOS, `%APPDATA%\quickshot\` on Windows) and restart QuickShot; development builds never send it. The renderer runs with context isolation, no Node.js access and an allow-listed IPC bridge.
 
 ## Keyboard shortcuts
 
-`Mod` is `⌘` on macOS and `Ctrl` on Windows.
+`Mod` is `⌘` on macOS and `Ctrl` on Windows. The global capture shortcut can be changed, and scrolling capture given its own, under **Settings…** in the menu bar menu.
 
 | Where | Shortcut | Action |
 | --- | --- | --- |
@@ -170,7 +170,8 @@ npm run dev
 `npm run dev:ui` serves the editor and the selection overlay against HTML fixtures, without Electron or screen permissions. It is the fastest way to work on the interface:
 
 - Editor: `http://localhost:5188/test-fixtures/screenshot-preview.html?windowType=screenshot-preview&sessionId=1&fixtureSource=/test-fixtures/sample-ui.svg&scaleFactor=2`
-- Selection: `http://localhost:5188/test-fixtures/region-selector.html?windowType=screenshot-region`
+- Selection: `http://localhost:5188/test-fixtures/region-selector.html?windowType=screenshot-region` (add `&scroll=on` for scrolling capture)
+- Scrolling capture panel: `http://localhost:5188/test-fixtures/scroll-capture.html?windowType=scroll-capture`
 
 Development-only environment variables (ignored by packaged builds):
 
@@ -178,7 +179,8 @@ Development-only environment variables (ignored by packaged builds):
 | --- | --- |
 | `QUICKSHOT_USER_DATA_DIR` | Use a separate profile, so a dev build never shares state or the single-instance lock with an installed copy |
 | `QUICKSHOT_DEV_CAPTURE_FILE` | Use this PNG instead of the screen, so the whole capture flow runs without Screen Recording permission |
-| `QUICKSHOT_ENABLE_DEV_SHORTCUT=0` | Do not register the global capture shortcut |
+| `QUICKSHOT_DEV_SCROLL_FIXTURE` | macOS: a tall PNG that a scrolling capture (`--capture-scroll`) scrolls through instead of the screen |
+| `QUICKSHOT_ENABLE_DEV_SHORTCUT=0` | Do not register global shortcuts (the capture shortcut, and Esc/Return during a scrolling capture) |
 | `QUICKSHOT_DEV_REMOTE_DEBUGGING_PORT` | Expose the Chrome DevTools Protocol for automated checks |
 | `QUICKSHOT_DEV_USAGE_STATS=1` | Send the anonymous usage report from a dev build (off by default); `QUICKSHOT_DEV_USAGE_STATS_ENDPOINT` points it elsewhere, such as a local test server |
 | `QUICKSHOT_DEV_SETTINGS_BUNDLE` | Test the Screen Recording helper against another app's window (e.g. `com.apple.finder`) instead of opening System Settings |
@@ -192,6 +194,7 @@ Development-only environment variables (ignored by packaged builds):
 | `npm test` | Unit tests |
 | `npm run verify` | Tests, type check, production build and bundle budgets |
 | `npm run test:ocr-helper` | Build and smoke-test the macOS OCR helper |
+| `npm run test:scroll-stitcher` | Check the macOS scrolling-capture stitcher against synthetic pages |
 | `npm run build:mac` | macOS DMGs (arm64 and x64) |
 | `node scripts/render-dmg-background.mjs` | Re-render the DMG background from `installer/dmg-background.html` |
 | `node scripts/record-site-demos.mjs` | Re-record the landing page videos in `site/assets/video` (needs `npm run dev:ui` running, Chrome, ffmpeg and cwebp) |
@@ -218,6 +221,14 @@ scripts/                  Build verification, packaging and fixture capture tool
 ## Releasing
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the macOS DMGs and the Windows installer and attaches them to a draft GitHub release. Signing and notarization are used when the repository has `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` secrets. Keep the macOS signing identity stable across releases: changing it makes macOS ask for Screen Recording permission again.
+
+The release also carries `latest.json`, the update feed QuickShot reads (see `electron/updates.ts`). Installed copies check `dl.lanshuagent.com/quickshot/latest.json` first, then the feed on GitHub's latest release, and GitHub's API only when neither answers; they check at launch and every six hours, offer what they find, and install it only when asked, after verifying its SHA-256. After publishing the draft release, mirror it to the download host:
+
+```bash
+WRANGLER=/path/to/wrangler node scripts/publish-update-feed.mjs vX.Y.Z
+```
+
+Builds installed with `npm run install:mac:local` skip the automatic checks, so a public release never replaces an unreleased local fix.
 
 ## Contributing
 

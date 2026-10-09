@@ -9,6 +9,7 @@
 		<div id="root"></div>
 		<script>
 			// Renders the capture overlay against a fixed image instead of the screen.
+			// ?scroll=available lets S switch to scrolling capture; ?scroll=on starts there.
 			const parameters = new URLSearchParams(window.location.search);
 			const source = parameters.get("fixtureSource") || "/test-fixtures/sample-ui.svg";
 			window.__quickshotRegionFixture = { actions: [] };
@@ -30,7 +31,12 @@
 				language: parameters.get("lang") || undefined,
 				getRegionCaptureSession: async () => ({
 					success: true,
-					session: { sessionId: 1, imageBytes: await screenBytes() },
+					session: {
+						sessionId: 1,
+						imageBytes: await screenBytes(),
+						scroll: parameters.get("scroll") === "on",
+						scrollAvailable: parameters.has("scroll"),
+					},
 				}),
 				onCaptureSession: () => () => {},
 				regionSelectorReady: async () => ({ success: true }),
