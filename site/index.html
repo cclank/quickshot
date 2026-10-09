@@ -1064,6 +1064,21 @@ footer { padding: 56px 0 calc(48px + env(safe-area-inset-bottom)); border-top: 1
 			</figure>
 		</div>
 		<div class="features">
+			<article class="feature reveal" style="--tint:#f59f00">
+				<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M12 7v9M9 13l3 3 3-3"/></svg></div>
+				<h3><span class="zh">滚动长截图</span><span class="en">Scrolling capture</span></h3>
+				<p><span class="zh">框选后滚动页面，自动拼成一张长图，最长 30,000 像素。需要 macOS 14 及以上。</span><span class="en">Select an area and scroll. QuickShot stitches it into one long image, up to 30,000 pixels. macOS 14 or later.</span></p>
+			</article>
+			<article class="feature reveal d1" style="--tint:#12b886">
+				<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/></svg></div>
+				<h3><span class="zh">智能打码</span><span class="en">Smart Redact</span></h3>
+				<p><span class="zh">按 <kbd class="mod"></kbd> <kbd class="shift"></kbd> <kbd>M</kbd> 自动遮住用户名、主机名、邮箱、IP 和密钥，发终端截图不用再一处处手动糊。</span><span class="en">Press <kbd class="mod"></kbd> <kbd class="shift"></kbd> <kbd>M</kbd> to cover user and host names, emails, IPs and keys, so terminal screenshots need no hand blurring.</span></p>
+			</article>
+			<article class="feature reveal d2" style="--tint:#845ef7">
+				<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></div>
+				<h3><span class="zh">快捷键随心改</span><span class="en">Shortcuts your way</span></h3>
+				<p><span class="zh">截图、滚动截图和编辑器里的每个快捷键，都能在设置里改成顺手的组合。</span><span class="en">Change any shortcut in Settings, from capturing and scrolling capture to every editor tool.</span></p>
+			</article>
 			<article class="feature reveal" style="--tint:#ff5a7a">
 				<div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="11" height="12" rx="2"/><rect x="16" y="9" width="5" height="9" rx="1.5"/><path d="M6 3h5"/></svg></div>
 				<h3><span class="zh">各平台比例</span><span class="en">Ratios for every feed</span></h3>
@@ -1186,20 +1201,20 @@ footer { padding: 56px 0 calc(48px + env(safe-area-inset-bottom)); border-top: 1
 			<h2><span class="zh">现在就开始<br>优雅地截图。</span><span class="en">Start capturing<br>beautifully.</span></h2>
 			<p class="lead" style="margin:0 auto"><span class="zh">免费下载，源代码公开。一个快捷键，从此告别凌乱的截图。</span><span class="en">Free to download, open to read. One shortcut, and messy screenshots are behind you.</span></p>
 			<div class="dl-buttons">
-				<a class="btn" href="https://github.com/cclank/quickshot/releases/download/v1.2.0/QuickShot-Mac-arm64-1.2.0.dmg">
+				<a class="btn" href="https://github.com/cclank/quickshot/releases/download/v1.3.0/QuickShot-Mac-arm64-1.3.0.dmg">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg>
 					<span class="txt"><span class="zh">macOS · Apple 芯片</span><span class="en">macOS · Apple silicon</span><small>.dmg</small></span>
 				</a>
-				<a class="btn btn-ghost" href="https://github.com/cclank/quickshot/releases/download/v1.2.0/QuickShot-Mac-x64-1.2.0.dmg">
+				<a class="btn btn-ghost" href="https://github.com/cclank/quickshot/releases/download/v1.3.0/QuickShot-Mac-x64-1.3.0.dmg">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg>
 					<span class="txt"><span class="zh">macOS · Intel</span><span class="en">macOS · Intel</span><small>.dmg</small></span>
 				</a>
-				<a class="btn btn-ghost" href="https://github.com/cclank/quickshot/releases/download/v1.2.0/QuickShot-Win-x64-1.2.0-Setup.exe">
+				<a class="btn btn-ghost" href="https://github.com/cclank/quickshot/releases/download/v1.3.0/QuickShot-Win-x64-1.3.0-Setup.exe">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></svg>
 					<span class="txt">Windows<small>Setup.exe</small></span>
 				</a>
 			</div>
-			<p class="dl-meta"><span class="zh">版本 1.2.0 · macOS 12 及以上 · Windows 10 / 11（64 位）· <a href="https://github.com/cclank/quickshot/releases">全部版本</a></span><span class="en">Version 1.2.0 · macOS 12 or later · Windows 10 / 11 (64-bit) · <a href="https://github.com/cclank/quickshot/releases">All releases</a></span></p>
+			<p class="dl-meta"><span class="zh">版本 1.3.0 · macOS 12 及以上 · Windows 10 / 11（64 位）· <a href="https://github.com/cclank/quickshot/releases">全部版本</a></span><span class="en">Version 1.3.0 · macOS 12 or later · Windows 10 / 11 (64-bit) · <a href="https://github.com/cclank/quickshot/releases">All releases</a></span></p>
 		</div>
 
 		<div class="sec-head center reveal" style="margin-top:clamp(72px,10vw,120px)">
