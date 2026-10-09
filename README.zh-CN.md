@@ -191,7 +191,7 @@ npm run dev
 
 ## 发布
 
-推送 `v*` 标签会运行 `.github/workflows/release.yml`，构建 macOS DMG 和 Windows 安装包并附到草稿 Release。仓库配置了 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 时会自动签名和公证。macOS 签名身份需要在各版本间保持一致，否则系统会重新要求录屏授权。
+推送 `v*` 标签会运行 `.github/workflows/release.yml`，构建 macOS DMG 和 Windows 安装包并附到草稿 Release。`CSC_LINK`、`CSC_KEY_PASSWORD` 存放 macOS 发布证书，配置后 macOS 包会用它签名，并在构建后核对签名身份；证书的来历和配置步骤见 [docs/release-signing.md](docs/release-signing.md)。配置了 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 时还会公证，这需要 Apple 的 Developer ID 证书。macOS 签名身份需要在各版本间保持一致，否则系统会重新要求录屏授权。
 
 Release 里还会附带 `latest.json`，这是 QuickShot 读取的更新信息（见 `electron/updates.ts`）。已安装的 QuickShot 先查 `dl.lanshuagent.com/quickshot/latest.json`，再查 GitHub 最新 Release 上的同名文件，两者都失败时才调用 GitHub 接口。启动时和每隔 6 小时检查一次；发现新版只提示，用户确认后才下载，并在校验 SHA-256 之后安装。草稿 Release 正式发布后，把它同步到下载服务器：
 

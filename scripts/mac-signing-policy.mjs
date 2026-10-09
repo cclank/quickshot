@@ -8,6 +8,23 @@ export async function readDesignatedRequirement(app, run = exec) {
 	return `${stdout}\n${stderr}`.match(/^(?:#\s*)?designated => (.+)$/m)?.[1]?.trim() ?? null;
 }
 
+// The certificate QuickShot for macOS is signed with, on this Mac
+// (scripts/sign-mac-local.mjs) and for releases (CSC_LINK, scripts/mac-sign.mjs).
+// Users grant Screen Recording to this requirement: changing the certificate
+// makes macOS ask every one of them again.
+export const RELEASE_REQUIREMENT =
+	'identifier "com.quickshot.app" and certificate leaf = H"04da0be632515e04ce46fe9be3f36a8ee76597c6"';
+
+/** Fails unless `app` is validly signed with the release certificate. */
+export async function verifyReleaseSignature(app, run = exec) {
+	await run("codesign", ["--verify", "--deep", "--strict", `-R=${RELEASE_REQUIREMENT}`, app]);
+	const requirement = await readDesignatedRequirement(app, run);
+	if (requirement !== RELEASE_REQUIREMENT) {
+		throw new Error(`${app} requires ${requirement ?? "nothing"} instead of the release certificate`);
+	}
+	return requirement;
+}
+
 /** A requirement bound to a certificate survives rebuilds; a cdhash one does not. */
 export function isStableRequirement(requirement) {
 	return /certificate leaf\s*=\s*H"[0-9a-f]+"/i.test(requirement) || /\banchor apple\b/.test(requirement);

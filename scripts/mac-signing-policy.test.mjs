@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+	RELEASE_REQUIREMENT,
 	isStableRequirement,
 	verifyMacReauthorizedChange,
 	verifyMacSigningMigration,
 	verifyMacUpdateIdentity,
+	verifyReleaseSignature,
 } from "./mac-signing-policy.mjs";
 
 const source = "/build/QuickShot.app";
@@ -119,5 +121,31 @@ describe("user-accepted re-authorization", () => {
 			.mockResolvedValueOnce({ stderr: "" })
 			.mockResolvedValueOnce({ stderr: '# designated => cdhash H"new"' });
 		await expect(verifyMacReauthorizedChange(source, target, run)).rejects.toThrow("无法读取");
+	});
+});
+
+describe("release signature", () => {
+	const app = "/release/mac-arm64/QuickShot.app";
+
+	it("accepts a build signed with the release certificate", async () => {
+		const run = vi.fn()
+			.mockResolvedValueOnce({})
+			.mockResolvedValueOnce({ stderr: `# designated => ${RELEASE_REQUIREMENT}` });
+		await expect(verifyReleaseSignature(app, run)).resolves.toBe(RELEASE_REQUIREMENT);
+		expect(run).toHaveBeenNthCalledWith(1, "codesign", [
+			"--verify", "--deep", "--strict", `-R=${RELEASE_REQUIREMENT}`, app,
+		]);
+	});
+
+	it("rejects an ad hoc build", async () => {
+		const run = vi.fn().mockRejectedValueOnce(new Error("failed to satisfy code requirement(s)"));
+		await expect(verifyReleaseSignature(app, run)).rejects.toThrow("failed to satisfy");
+	});
+
+	it("rejects a build that would require something else next time", async () => {
+		const run = vi.fn()
+			.mockResolvedValueOnce({})
+			.mockResolvedValueOnce({ stderr: `# designated => ${RELEASE_REQUIREMENT} or anchor apple` });
+		await expect(verifyReleaseSignature(app, run)).rejects.toThrow("instead of the release certificate");
 	});
 });

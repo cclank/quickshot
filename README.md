@@ -220,7 +220,7 @@ scripts/                  Build verification, packaging and fixture capture tool
 
 ## Releasing
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the macOS DMGs and the Windows installer and attaches them to a draft GitHub release. Signing and notarization are used when the repository has `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` secrets. Keep the macOS signing identity stable across releases: changing it makes macOS ask for Screen Recording permission again.
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the macOS DMGs and the Windows installer and attaches them to a draft GitHub release. The `CSC_LINK` and `CSC_KEY_PASSWORD` secrets hold the macOS release certificate; with them, the macOS apps are signed with it and checked after the build (see [docs/release-signing.md](docs/release-signing.md), in Chinese, for where the certificate comes from and how to set it up). Notarization also runs when `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` are set, which needs an Apple Developer ID certificate. Keep the macOS signing identity stable across releases: changing it makes macOS ask for Screen Recording permission again.
 
 The release also carries `latest.json`, the update feed QuickShot reads (see `electron/updates.ts`). Installed copies check `dl.lanshuagent.com/quickshot/latest.json` first, then the feed on GitHub's latest release, and GitHub's API only when neither answers; they check at launch and every six hours, offer what they find, and install it only when asked, after verifying its SHA-256. After publishing the draft release, mirror it to the download host:
 

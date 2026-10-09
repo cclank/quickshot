@@ -18,6 +18,9 @@
 		"icon": "icons/icon.icns",
 		"category": "public.app-category.utilities",
 		"hardenedRuntime": true,
+		// Signs with the release certificate from CSC_LINK, which is self-signed;
+		// ad hoc without one. See docs/release-signing.md.
+		"sign": "./scripts/mac-sign.mjs",
 		"artifactName": "${productName}-Mac-${arch}-${version}.${ext}",
 		"extraResources": [
 			{

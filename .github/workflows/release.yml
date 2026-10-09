@@ -22,6 +22,9 @@ jobs:
             artifacts: release/*/*-Setup.exe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
+    env:
+      # Step conditions cannot read secrets directly.
+      MAC_SIGNING: ${{ secrets.CSC_LINK != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -36,12 +39,14 @@ jobs:
 
       # Signing and notarization run only when the repository provides the
       # secrets; otherwise electron-builder produces unsigned installers.
+      # CSC_LINK holds the macOS release certificate (docs/release-signing.md).
       - name: Build installers
         shell: bash
         run: |
           # An empty CSC_LINK makes electron-builder look for a certificate at
-          # the project path, so drop the signing variables when unset.
-          if [ -z "$CSC_LINK" ]; then
+          # the project path, so drop the signing variables when unset. The
+          # macOS certificate must not sign the Windows installer either.
+          if [ -z "$CSC_LINK" ] || [ "$RUNNER_OS" != "macOS" ]; then
             unset CSC_LINK CSC_KEY_PASSWORD
             export CSC_IDENTITY_AUTO_DISCOVERY=false
           fi
@@ -56,6 +61,12 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+
+      # Users granted Screen Recording to the release certificate; a build
+      # signed with anything else would make macOS ask them again.
+      - name: Check the macOS signature
+        if: runner.os == 'macOS' && env.MAC_SIGNING == 'true'
+        run: node scripts/check-mac-signature.mjs release/*/mac*/QuickShot.app
 
       - uses: actions/upload-artifact@v4
         with:
