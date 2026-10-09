@@ -138,6 +138,19 @@ const LEGACY_DIAGNOSTIC_LOG_CLEANUP_MARKER =
 const LEGACY_DIAGNOSTIC_LOG_CLEANUP_BATCH_SIZE = 32;
 const SHORTCUT_RETRY_DELAYS_MS = [250, 1_500, 5_000, 30_000];
 const SPARE_PREVIEW_DELAY_MS = 1_200;
+/**
+ * Hidden helper windows (the region selector and the warm editor) each hold a
+ * renderer process. After this long without a capture they are released and
+ * rebuilt on demand, so an idle machine does not pay for them all day.
+ * QUICKSHOT_IDLE_RECYCLE_MS overrides the delay for diagnostics; 0 keeps the
+ * windows forever.
+ */
+const DEFAULT_IDLE_RECYCLE_MS = 10 * 60_000;
+const IDLE_RECYCLE_ENV = Number(process.env.QUICKSHOT_IDLE_RECYCLE_MS);
+const IDLE_WINDOW_RECYCLE_MS =
+	Number.isFinite(IDLE_RECYCLE_ENV) && IDLE_RECYCLE_ENV > 0
+		? IDLE_RECYCLE_ENV
+		: DEFAULT_IDLE_RECYCLE_MS;
 /** Matches the editor's --qs-bg token so windows never flash the wrong colour. */
 function getPreviewChromeColors() {
 	return nativeTheme.shouldUseDarkColors
@@ -1556,6 +1569,7 @@ function syncRegionSelectorBounds(display = activeCaptureDisplay) {
 }
 
 async function ensureRegionSelector() {
+	clearIdleRecycleTimer();
 	if (regionSelectorWindow && !regionSelectorWindow.isDestroyed()) {
 		syncRegionSelectorBounds();
 		if (regionSelectorReady) return;
@@ -2110,6 +2124,7 @@ function scheduleSparePreviewWindow(delayMs = SPARE_PREVIEW_DELAY_MS) {
 			if (sparePreviewWindow === win) sparePreviewWindow = null;
 		});
 		loadWindow(win, "screenshot-preview");
+		scheduleIdleWindowRecycle();
 	}, delayMs);
 	sparePreviewTimer.unref();
 }
@@ -2135,6 +2150,60 @@ function destroySparePreviewWindow() {
 	if (win && !win.isDestroyed()) win.destroy();
 }
 
+let idleRecycleTimer: NodeJS.Timeout | null = null;
+
+function clearIdleRecycleTimer() {
+	if (!idleRecycleTimer) return;
+	clearTimeout(idleRecycleTimer);
+	idleRecycleTimer = null;
+}
+
+/** Rebuilds the helper windows are cheap; keeping them costs a renderer
+ * process each. Every hide re-arms this timer, every capture clears it. */
+function scheduleIdleWindowRecycle() {
+	clearIdleRecycleTimer();
+	if (isQuitting) return;
+	idleRecycleTimer = setTimeout(() => {
+		idleRecycleTimer = null;
+		recycleIdleWindows();
+	}, IDLE_WINDOW_RECYCLE_MS);
+	idleRecycleTimer.unref();
+}
+
+function destroyRegionSelector(reason: string) {
+	const win = regionSelectorWindow;
+	if (!win || win.isDestroyed()) return;
+	if (capturePhase !== "idle") cancelActiveCapture(false);
+	regionSelectorWindow = null;
+	regionSelectorReady = false;
+	regionSelectorLoadPromise = null;
+	writeDiagnostic("region-selector-discarded", { reason });
+	if (!win.isDestroyed()) win.destroy();
+}
+
+function recycleIdleWindows() {
+	if (isQuitting) return;
+	// A capture or an editor handoff is in flight: look again after a while.
+	if (
+		capturePhase !== "idle" ||
+		overlayAwaitingEditor ||
+		regionSelectorWindow?.isVisible()
+	) {
+		scheduleIdleWindowRecycle();
+		return;
+	}
+	const destroyedSpare = Boolean(sparePreviewWindow);
+	const destroyedSelector = Boolean(regionSelectorWindow);
+	destroySparePreviewWindow();
+	destroyRegionSelector("idle-recycle");
+	if (destroyedSpare || destroyedSelector) {
+		writeDiagnostic("idle-windows-recycled", {
+			spare: destroyedSpare,
+			selector: destroyedSelector,
+		});
+	}
+}
+
 function openPreviewForImage(imageBuffer: Buffer): boolean {
 	if (!isValidCapturePngPayload(imageBuffer)) {
 		writeDiagnostic("preview-image-rejected");
@@ -2144,6 +2213,7 @@ function openPreviewForImage(imageBuffer: Buffer): boolean {
 	const sessionId = nextCaptureSessionId + 1;
 	const display = activeCaptureDisplay ?? getCaptureDisplay();
 	const scaleFactor = display.scaleFactor || 1;
+	clearIdleRecycleTimer();
 	const warmWindow = takeSparePreviewWindow();
 	let previewWindow: BrowserWindow;
 	try {
@@ -3649,6 +3719,7 @@ function hideRegionSelector() {
 	try {
 		globalShortcut.unregister("Escape");
 	} catch {}
+	scheduleIdleWindowRecycle();
 }
 
 /**
@@ -4706,6 +4777,9 @@ app.whenReady().then(async () => {
 		await ensureRegionSelector();
 	}
 	scheduleSparePreviewWindow(2_500);
+	// The pre-warmed windows exist only for capture speed. If the app is never
+	// used, let them go.
+	scheduleIdleWindowRecycle();
 	warmCaptureAgent("app-ready");
 	createUpdater();
 	setTimeout(() => void reportLaunchUsage(), 15_000);
