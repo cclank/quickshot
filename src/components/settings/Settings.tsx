@@ -12,6 +12,7 @@ import {
 	saveKeymap,
 	useKeymap,
 } from "@/lib/keymap";
+import { setCopyCloses, useCopyCloses } from "@/lib/editorPrefs";
 import { IS_MAC, PLATFORM } from "@/lib/platform";
 import { Switch } from "../editor/ui";
 
@@ -216,6 +217,7 @@ function UpdateRow({
 export function Settings() {
 	const api = window.electronAPI.settings;
 	const keymap = useKeymap();
+	const copyCloses = useCopyCloses();
 	const [state, setState] = useState<SettingsState | null>(null);
 	const [recording, setRecording] = useState<Target | null>(null);
 	const [held, setHeld] = useState("");
@@ -512,6 +514,16 @@ export function Settings() {
 							/>
 						</Row>
 					)}
+					<Row
+						label={t("settings.copyCloses")}
+						detail={
+							<p className="mt-1 text-[11.5px] text-[var(--qs-text-3)]">
+								{t("settings.copyClosesHint", { key: keymap.copyAndClose ? bindingLabel(keymap.copyAndClose) : "—" })}
+							</p>
+						}
+					>
+						<Switch checked={copyCloses} label={t("settings.copyCloses")} onChange={setCopyCloses} />
+					</Row>
 					{state.launchAtLoginAvailable && (
 						<Row label={t("settings.launchAtLogin")}>
 							<Switch

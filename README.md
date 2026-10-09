@@ -72,7 +72,7 @@ Get them from the [latest release](https://github.com/cclank/quickshot/releases/
 ### Capture
 
 - **One shortcut, anywhere.** `⌘⇧X` on macOS, `Ctrl+Shift+X` on Windows, or click the tray icon.
-- **QuickShot selection** (default): the screen stays exactly as it is. Hover to ring the window under the pointer in a soft spectrum and click to capture just that window, or drag to capture an area. Either way the editor opens straight away. On macOS a window is captured on its own, so overlapping windows are left out and rounded corners stay transparent.
+- **QuickShot selection** (default): the screen stays exactly as it is. Hover to ring the window under the pointer in a soft spectrum and click to capture just that window and open the editor. Or drag out an area: after you let go you can still move it, resize it by an edge or corner, or nudge it with the arrow keys, then press Return, double-click or click ✓ to open the editor (Esc starts over). On macOS a window is captured on its own, so overlapping windows are left out and rounded corners stay transparent.
 - **System selection** (optional on macOS, via the tray menu → Selection Style): the native crosshair, including `Space` to capture a single window.
 - The editor window is kept warm in the background, so it opens the moment you finish selecting.
 
@@ -131,8 +131,8 @@ Screenshots, and any text in them, never leave your computer. There is no accoun
 | Selecting | Right-click / `Esc` | Cancel |
 | Editor | `V` `R` `O` `A` `L` `P` `H` `T` `N` `M` | Select, rectangle, ellipse, arrow, line, pen, highlighter, text, counter, redact |
 | Editor | `Mod+Z` / `Mod+Shift+Z` | Undo / redo |
-| Editor | `Mod+C` | Copy the final image |
-| Editor | `Mod+Enter` | Copy and close |
+| Editor | `Mod+C` | Copy the final image and close the editor (Settings can keep it open) |
+| Editor | `Mod+Enter` | Copy and close, always |
 | Editor | `Mod+S` / `Mod+Shift+S` | Save to Downloads / Save As |
 | Editor | `Mod+Shift+P` / `Mod+Shift+T` | Pin / extract text |
 | Editor | `Mod+Shift+M` | Smart Redact |

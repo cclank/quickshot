@@ -15,6 +15,7 @@ import {
 import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
 import { TOOL_ORDER } from "@/editor/presets";
 import type { Tool } from "@/editor/types";
+import { useCopyCloses } from "@/lib/editorPrefs";
 import { t } from "@/lib/i18n";
 import { type KeymapCommand, bindingLabel, useKeymap } from "@/lib/keymap";
 import { IS_MAC, IS_WINDOWS, PLATFORM, SUPPORTS_OCR, formatShortcut } from "@/lib/platform";
@@ -77,6 +78,7 @@ export const Toolbar = memo(function Toolbar({
 	onStyleBarModeChange,
 }: ToolbarProps) {
 	const keymap = useKeymap();
+	const copyCloses = useCopyCloses();
 	const keys = (command: KeymapCommand) => (keymap[command] ? bindingLabel(keymap[command]) : undefined);
 	const headerRef = useRef<HTMLElement>(null);
 	const leadingRef = useRef<HTMLDivElement>(null);
@@ -248,7 +250,7 @@ export const Toolbar = memo(function Toolbar({
 				>
 					<Copy size={15} strokeWidth={2} />
 					{t("action.copy")}
-					<Tooltip label={t("action.copyImage")} shortcut={keys("copy")} />
+					<Tooltip label={copyCloses ? t("action.copyAndClose") : t("action.copyImage")} shortcut={keys("copy")} />
 				</button>
 				<Divider />
 				<IconButton

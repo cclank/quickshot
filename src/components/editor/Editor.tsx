@@ -59,6 +59,7 @@ import {
 import { measureTextAnnotation } from "@/editor/textLayout";
 import { calculateCanvasBackingSize } from "@/lib/canvasBacking";
 import { decodeImageData } from "@/lib/decodeImage";
+import { useCopyCloses } from "@/lib/editorPrefs";
 import { type MessageKey, t } from "@/lib/i18n";
 import { type KeymapCommand, commandFor, useKeymap } from "@/lib/keymap";
 import { SUPPORTS_OCR, isModKey } from "@/lib/platform";
@@ -208,6 +209,8 @@ export function Editor() {
 	const annotationsRef = useRef(annotations);
 	annotationsRef.current = annotations;
 	const exportBusyRef = useRef(false);
+	/** Copying closes the editor unless that is turned off in Settings. */
+	const copyCloses = useCopyCloses();
 	const imageRef = useRef(image);
 	imageRef.current = image;
 	const [smartRedacting, setSmartRedacting] = useState(false);
@@ -960,7 +963,7 @@ export function Editor() {
 			}
 			switch (command) {
 				case "copy":
-					void copyImage();
+					void copyImage(copyCloses);
 					break;
 				case "copyAndClose":
 					void copyImage(true);
@@ -998,6 +1001,7 @@ export function Editor() {
 		beginText,
 		captureForStitch,
 		commit,
+		copyCloses,
 		copyImage,
 		deleteSelected,
 		duplicateSelected,
@@ -1050,7 +1054,7 @@ export function Editor() {
 				onUndo={undo}
 				onRedo={redo}
 				ready={Boolean(image)}
-				onCopy={() => void copyImage()}
+				onCopy={() => void copyImage(copyCloses)}
 				onQuickSave={() => void quickSave()}
 				onSaveAs={() => void saveAs()}
 				onPin={() => void pin()}

@@ -2,30 +2,41 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { t } from "@/lib/i18n";
 import { bindingLabel, commandFor, useKeymap } from "@/lib/keymap";
 import { createFrameObjectUrl } from "@/lib/pngBytes";
+import { Check, X } from "lucide-react";
 import {
 	type SelectionPoint as Point,
+	type SelectionHandle,
 	type SelectionRect,
+	adjustSelection,
 	findWindowAt,
 	getClampedSelectionRect,
+	selectionCursor,
+	selectionHandleAt,
 } from "@/lib/selectionGeometry";
 
 /**
  * The capture overlay. It shows the frozen screen exactly as it was, with no
- * dimming: hovering outlines the window under the pointer, a click captures
- * that window, a drag captures an area, and either goes straight to the
- * editor. Esc or a right-click cancels.
+ * dimming: hovering outlines the window under the pointer, and a click
+ * captures that window straight away. A drag selects an area that can still
+ * be moved, resized and nudged; Enter, a double-click or the check button
+ * captures it. Esc or a right-click clears the selection, then cancels.
  *
  * In scrolling mode (S, or the tray's Scrolling Capture on macOS) the
  * selection starts a scrolling capture of that area instead.
  */
 
 type Drag = { anchor: Point; current: Point; moved: boolean };
+/** A selection being moved or resized: what was grabbed, where, and the selection then. */
+type Adjust = { handle: SelectionHandle; start: Point; origin: SelectionRect };
 
 type OverlayState = {
 	pointer: Point | null;
 	/** The window a click would capture, or the whole screen over the desktop. */
 	hoverWindow: DetectedWindow | null;
 	drag: Drag | null;
+	/** An area released after a drag, adjustable until it is captured. */
+	selection: SelectionRect | null;
+	adjust: Adjust | null;
 	submitting: boolean;
 };
 
@@ -38,8 +49,20 @@ const OUTLINE = {
 const MIN_SELECTION = 4;
 const CLICK_SLOP = 4;
 const DECODE_GRACE_MS = 250;
+const HANDLE_RADIUS = 4;
 
-const IDLE_STATE: OverlayState = { pointer: null, hoverWindow: null, drag: null, submitting: false };
+const IDLE_STATE: OverlayState = {
+	pointer: null,
+	hoverWindow: null,
+	drag: null,
+	selection: null,
+	adjust: null,
+	submitting: false,
+};
+
+function screenSize() {
+	return { width: window.innerWidth, height: window.innerHeight };
+}
 
 function loadImageElement(image: HTMLImageElement, source: string) {
 	let settled = false;
@@ -86,10 +109,12 @@ function loadImageElement(image: HTMLImageElement, source: string) {
 }
 
 function dragRect(drag: Drag): SelectionRect {
-	return getClampedSelectionRect(drag.anchor, drag.current, {
-		width: window.innerWidth,
-		height: window.innerHeight,
-	});
+	return getClampedSelectionRect(drag.anchor, drag.current, screenSize());
+}
+
+/** The area the overlay outlines as a selection: one being drawn, or one released. */
+function selectedArea(state: OverlayState) {
+	return state.drag?.moved ? dragRect(state.drag) : state.selection;
 }
 
 /**
@@ -125,8 +150,9 @@ function spectrum(context: CanvasRenderingContext2D, rect: SelectionRect) {
 
 /** Identifies what the overlay shows, so an unchanged ring is not redrawn. */
 function overlayKey(canvas: HTMLCanvasElement, state: OverlayState) {
-	const target = state.drag?.moved ? dragRect(state.drag) : state.hoverWindow;
-	const kind = state.drag?.moved ? "area" : "window";
+	const area = selectedArea(state);
+	const target = area ?? state.hoverWindow;
+	const kind = state.drag?.moved ? "area" : area ? `selection${state.adjust ? "-adjusting" : ""}` : "window";
 	return target
 		? `${canvas.width}x${canvas.height}:${kind}:${target.x},${target.y},${target.width},${target.height}`
 		: `${canvas.width}x${canvas.height}:none`;
@@ -167,6 +193,29 @@ function drawOverlay(canvas: HTMLCanvasElement, state: OverlayState) {
 	if (state.drag?.moved) {
 		// No glow while dragging: it would cost a blur on every frame.
 		ring(dragRect(state.drag), OUTLINE.area, false);
+	} else if (state.selection) {
+		const rect = state.selection;
+		ring(rect, OUTLINE.area, !state.adjust);
+		// Handles at the corners, and mid-edge where there is room for them.
+		const xs = [rect.x, rect.x + rect.width / 2, rect.x + rect.width];
+		const ys = [rect.y, rect.y + rect.height / 2, rect.y + rect.height];
+		context.save();
+		context.fillStyle = "#fff";
+		context.strokeStyle = "rgba(0, 0, 0, 0.35)";
+		context.lineWidth = 1;
+		context.shadowColor = "rgba(0, 0, 0, 0.25)";
+		context.shadowBlur = 3;
+		for (const [column, x] of xs.entries()) {
+			for (const [row, y] of ys.entries()) {
+				if (column === 1 && row === 1) continue;
+				if ((column === 1 && rect.width < 40) || (row === 1 && rect.height < 40)) continue;
+				context.beginPath();
+				context.arc(x, y, HANDLE_RADIUS, 0, Math.PI * 2);
+				context.fill();
+				context.stroke();
+			}
+		}
+		context.restore();
 	} else if (state.hoverWindow) {
 		ring(state.hoverWindow, OUTLINE.window, true);
 	}
@@ -247,7 +296,7 @@ export function RegionSelector() {
 			windowsRef.current = windows;
 			windowsReadyRef.current = true;
 			const state = stateRef.current;
-			if (state.pointer && !state.drag) {
+			if (state.pointer && !state.drag && !state.selection) {
 				state.hoverWindow = hoverTargetAt(state.pointer);
 				scheduleRender();
 			}
@@ -420,29 +469,6 @@ export function RegionSelector() {
 		return () => window.removeEventListener("resize", handleResize);
 	}, [imageReady, scheduleRender, sizeOverlayCanvas]);
 
-	useEffect(() => {
-		if (!imageReady) return;
-		const handleKeyDown = (event: KeyboardEvent) => {
-			if (event.key === "Escape") {
-				event.preventDefault();
-				void cancel();
-				return;
-			}
-			// S (or whatever Settings says) switches between a regular and a scrolling capture.
-			if (
-				!event.repeat &&
-				scrollAvailableRef.current &&
-				!stateRef.current.submitting &&
-				commandFor(keymapRef.current, event, "overlay") === "overlay.scroll"
-			) {
-				event.preventDefault();
-				setScrollMode(!scrollModeRef.current);
-			}
-		};
-		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [cancel, imageReady, setScrollMode]);
-
 	// ── Completion ────────────────────────────────────────────────────────────
 	/**
 	 * Opens the editor with `rect` (CSS pixels). The main process does the
@@ -484,6 +510,7 @@ export function RegionSelector() {
 			} catch (error) {
 				console.error("QuickShot could not hand the selection to the editor", error);
 			}
+			// The selection stays, so the user can try again or change it.
 			state.submitting = false;
 			state.drag = null;
 			scheduleRender();
@@ -491,18 +518,84 @@ export function RegionSelector() {
 		[scheduleRender],
 	);
 
+	/** Captures the selected area. */
+	const confirmSelection = useCallback(() => {
+		const selection = stateRef.current.selection;
+		if (selection) void submit(selection, null);
+	}, [submit]);
+
+	/** Drops the selection, back to choosing a window or drawing an area. */
+	const clearSelection = useCallback(() => {
+		const state = stateRef.current;
+		state.selection = null;
+		state.adjust = null;
+		state.hoverWindow = state.pointer ? hoverTargetAt(state.pointer) : null;
+		scheduleRender();
+	}, [hoverTargetAt, scheduleRender]);
+
+	useEffect(() => {
+		if (!imageReady) return;
+		const handleKeyDown = (event: KeyboardEvent) => {
+			const state = stateRef.current;
+			if (event.key === "Escape") {
+				event.preventDefault();
+				if (state.selection && !state.submitting) clearSelection();
+				else void cancel();
+				return;
+			}
+			if (state.submitting) return;
+			if (event.key === "Enter" && state.selection) {
+				event.preventDefault();
+				confirmSelection();
+				return;
+			}
+			// Arrow keys nudge the selection, by ten points with Shift.
+			const step = event.shiftKey ? 10 : 1;
+			const nudge = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[
+				event.key
+			];
+			if (nudge && state.selection && !state.adjust) {
+				event.preventDefault();
+				const start = { x: 0, y: 0 };
+				state.selection = adjustSelection(state.selection, "move", start, { x: nudge[0], y: nudge[1] }, screenSize());
+				scheduleRender();
+				return;
+			}
+			// S (or whatever Settings says) switches between a regular and a scrolling capture.
+			if (
+				!event.repeat &&
+				scrollAvailableRef.current &&
+				commandFor(keymapRef.current, event, "overlay") === "overlay.scroll"
+			) {
+				event.preventDefault();
+				setScrollMode(!scrollModeRef.current);
+			}
+		};
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, [cancel, clearSelection, confirmSelection, imageReady, scheduleRender, setScrollMode]);
+
 	// ── Pointer ───────────────────────────────────────────────────────────────
 	const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-		if (!imageReady || stateRef.current.submitting) return;
+		const state = stateRef.current;
+		if (!imageReady || state.submitting) return;
 		if (event.button === 2) {
-			void cancel();
+			if (state.selection) clearSelection();
+			else void cancel();
 			return;
 		}
 		if (event.button !== 0) return;
 		event.currentTarget.setPointerCapture(event.pointerId);
 		const point = { x: event.clientX, y: event.clientY };
-		stateRef.current.drag = { anchor: point, current: point, moved: false };
-		stateRef.current.pointer = point;
+		state.pointer = point;
+		// On the selection: move it, or resize it by an edge or corner.
+		const handle = state.selection ? selectionHandleAt(state.selection, point) : null;
+		if (state.selection && handle) {
+			state.adjust = { handle, start: point, origin: state.selection };
+		} else {
+			// Elsewhere: draw a new area, which replaces the selection once it moves.
+			state.drag = { anchor: point, current: point, moved: false };
+		}
 		scheduleRender();
 	};
 
@@ -513,13 +606,17 @@ export function RegionSelector() {
 		state.pointer = point;
 		if (state.submitting) return;
 		const drag = state.drag;
-		if (drag) {
+		if (state.adjust) {
+			const { origin, handle, start } = state.adjust;
+			state.selection = adjustSelection(origin, handle, start, point, screenSize());
+		} else if (drag) {
 			drag.current = point;
 			if (!drag.moved && Math.hypot(point.x - drag.anchor.x, point.y - drag.anchor.y) >= CLICK_SLOP) {
 				drag.moved = true;
 				state.hoverWindow = null;
+				state.selection = null;
 			}
-		} else {
+		} else if (!state.selection) {
 			state.hoverWindow = hoverTargetAt(point);
 		}
 		scheduleRender();
@@ -530,15 +627,23 @@ export function RegionSelector() {
 			event.currentTarget.releasePointerCapture(event.pointerId);
 		}
 		const state = stateRef.current;
+		if (state.adjust) {
+			state.adjust = null;
+			scheduleRender();
+			return;
+		}
 		const drag = state.drag;
 		if (!drag || state.submitting) return;
+		state.drag = null;
 		if (drag.moved) {
+			// The area stays selected, to adjust before it is captured.
 			const rect = dragRect(drag);
-			if (rect.width >= MIN_SELECTION && rect.height >= MIN_SELECTION) {
-				void submit(rect, null);
-				return;
-			}
-			state.drag = null;
+			if (rect.width >= MIN_SELECTION && rect.height >= MIN_SELECTION) state.selection = rect;
+			scheduleRender();
+			return;
+		}
+		// A click outside a selection leaves it alone.
+		if (state.selection) {
 			scheduleRender();
 			return;
 		}
@@ -547,12 +652,34 @@ export function RegionSelector() {
 		void submit(target ?? { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }, target);
 	};
 
+	const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
+		const selection = stateRef.current.selection;
+		if (selection && selectionHandleAt(selection, { x: event.clientX, y: event.clientY }) === "move") {
+			confirmSelection();
+		}
+	};
+
 	// ── Render ────────────────────────────────────────────────────────────────
 	const image = sourceImageRef.current;
 	const pixelScale = image && image.naturalWidth > 0 ? image.naturalWidth / window.innerWidth : 1;
-	const dragging = view.drag?.moved ? dragRect(view.drag) : null;
-	const hovered = view.drag?.moved ? null : view.hoverWindow;
+	const dragging = selectedArea(view);
+	const hovered = dragging ? null : view.hoverWindow;
 	const labelTarget = dragging ?? hovered;
+	const selection = view.drag?.moved ? null : view.selection;
+	const grabbed = view.adjust?.handle ?? (selection && view.pointer ? selectionHandleAt(selection, view.pointer) : null);
+	const cursor = !imageReady ? "wait" : view.submitting ? "progress" : grabbed ? selectionCursor(grabbed) : "crosshair";
+	// The buttons go under the selection, above it near the bottom, or inside when it fills the screen.
+	const actionsPosition = selection
+		? {
+				left: Math.min(Math.max(8, selection.x + selection.width - 200), window.innerWidth - 208),
+				top:
+					selection.y + selection.height + 50 <= window.innerHeight
+						? selection.y + selection.height + 10
+						: selection.y >= 50
+							? selection.y - 46
+							: selection.y + selection.height - 46,
+			}
+		: null;
 	const labelPosition = labelTarget
 		? {
 				left: Math.min(Math.max(6, labelTarget.x + 4), window.innerWidth - 220),
@@ -564,7 +691,7 @@ export function RegionSelector() {
 		<div
 			className="fixed inset-0 select-none overflow-hidden"
 			style={{
-				cursor: !imageReady ? "wait" : view.submitting ? "progress" : "crosshair",
+				cursor,
 				background: imageReady ? "transparent" : "rgba(0,0,0,0.001)",
 				touchAction: "none",
 			}}
@@ -572,6 +699,7 @@ export function RegionSelector() {
 			onPointerMove={handlePointerMove}
 			onPointerUp={handlePointerUp}
 			onPointerCancel={handlePointerUp}
+			onDoubleClick={handleDoubleClick}
 			onContextMenu={(event) => event.preventDefault()}
 		>
 			<img
@@ -593,6 +721,36 @@ export function RegionSelector() {
 					<span className="shrink-0 tabular-nums text-white/70">
 						{Math.round(labelTarget.width * pixelScale)} × {Math.round(labelTarget.height * pixelScale)}
 					</span>
+				</div>
+			)}
+
+			{selection && actionsPosition && !view.submitting && !view.adjust && (
+				<div
+					className="absolute flex w-[200px] items-center justify-end gap-1"
+					style={actionsPosition}
+					onPointerDown={(event) => event.stopPropagation()}
+					onDoubleClick={(event) => event.stopPropagation()}
+				>
+					<div className="flex items-center gap-0.5 rounded-[10px] border border-white/10 bg-[rgba(24,24,27,0.88)] p-1 text-white shadow-[0_8px_24px_rgba(0,0,0,0.32)] backdrop-blur-md">
+						<button
+							type="button"
+							aria-label={t("region.cancel")}
+							title={`${t("region.cancel")} (Esc)`}
+							onClick={() => void cancel()}
+							className="flex h-7 w-7 cursor-default items-center justify-center rounded-[7px] text-white/80 hover:bg-white/10 hover:text-white"
+						>
+							<X size={15} strokeWidth={2} />
+						</button>
+						<button
+							type="button"
+							onClick={confirmSelection}
+							title="↩"
+							className="flex h-7 cursor-default items-center gap-1.5 rounded-[7px] bg-white/15 px-2.5 text-[12px] font-semibold text-white hover:bg-white/20"
+						>
+							<Check size={14} strokeWidth={2.4} />
+							{scrollMode ? t("region.startScroll") : t("region.confirm")}
+						</button>
+					</div>
 				</div>
 			)}
 
