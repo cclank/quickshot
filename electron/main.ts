@@ -1977,8 +1977,8 @@ async function captureDisplayWithDesktopCapturer(
 	const sources = await desktopCapturer.getSources({
 		types: ["screen"],
 		thumbnailSize: {
-			width: display.size.width * sf,
-			height: display.size.height * sf,
+			width: Math.round(display.size.width * sf),
+			height: Math.round(display.size.height * sf),
 		},
 	});
 	if (!sources.length) {
