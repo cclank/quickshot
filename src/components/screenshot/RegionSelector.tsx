@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { renderStyledCopy } from "@/editor/quickCompose";
 import { t } from "@/lib/i18n";
 import { bindingLabel, commandFor, useKeymap } from "@/lib/keymap";
 import { createFrameObjectUrl } from "@/lib/pngBytes";
@@ -480,6 +481,9 @@ export function RegionSelector() {
 	 * in scrolling mode it starts a scrolling capture instead — and "copy"
 	 * puts the capture straight onto the clipboard. The main process does the
 	 * cropping from the lossless frame, or captures a clicked window on its own.
+	 * For "copy" the overlay also renders the styled export (the editor's
+	 * background, frame and watermark) so the clipboard never holds a bare
+	 * crop.
 	 */
 	const submit = useCallback(
 		async (rect: SelectionRect, target: DetectedWindow | null, intent: "edit" | "copy" = "edit") => {
@@ -503,11 +507,40 @@ export function RegionSelector() {
 			scheduleRender();
 
 			try {
+				// A straight copy skips the editor, so the styled export the editor
+				// would produce is rendered here and handed over with the selection.
+				let composedImageBytes: Uint8Array | undefined;
+				if (intent === "copy") {
+					try {
+						const crop = document.createElement("canvas");
+						crop.width = pixels.width;
+						crop.height = pixels.height;
+						const context = crop.getContext("2d");
+						if (context) {
+							context.drawImage(
+								image,
+								pixels.x,
+								pixels.y,
+								pixels.width,
+								pixels.height,
+								0,
+								0,
+								pixels.width,
+								pixels.height,
+							);
+							const unit = Math.min(4, Math.max(1, image.naturalWidth / window.innerWidth));
+							composedImageBytes = (await renderStyledCopy(crop, unit)) ?? undefined;
+						}
+					} catch (composeError) {
+						console.error("QuickShot could not render the styled copy", composeError);
+					}
+				}
 				const result = await window.electronAPI.screenshotRegionSelected({
 					sessionId,
 					action: intent === "copy" ? "copy" : scroll ? "scroll" : "edit",
 					rect: pixels,
 					windowId: scroll || intent === "copy" ? undefined : target?.id,
+					composedImageBytes,
 				});
 				if (activeSessionIdRef.current !== sessionId || result.success) return;
 				if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);

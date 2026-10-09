@@ -59,6 +59,12 @@
 					document.documentElement.dataset.lastAction = payload.action;
 					document.documentElement.dataset.lastRect = JSON.stringify(payload.rect ?? null);
 					document.documentElement.dataset.lastWindowId = String(payload.windowId ?? "");
+					const composed = payload.composedImageBytes;
+					document.documentElement.dataset.lastComposedBytes =
+						composed instanceof Uint8Array ? String(composed.byteLength) : "";
+					if (composed instanceof Uint8Array) {
+						window.__quickshotRegionFixture.composedSignature = Array.from(composed.slice(0, 8));
+					}
 					return { success: true };
 				},
 			};

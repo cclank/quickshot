@@ -108,6 +108,8 @@ interface Window {
 			sessionId: number;
 			/** The selected area, encoded by the overlay. */
 			croppedImageBytes?: Uint8Array;
+			/** The styled export for clipboard copies, rendered by the overlay. */
+			composedImageBytes?: Uint8Array;
 			/** "scroll" starts a scrolling capture of `rect`. */
 			action?: "edit" | "copy" | "save" | "pin" | "scroll";
 			/** A clicked window, captured on its own by the main process. */

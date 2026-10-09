@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	screenshotRegionSelected: (payload: {
 		sessionId: number;
 		croppedImageBytes?: Uint8Array;
+		/** The styled export for clipboard copies, rendered by the overlay. */
+		composedImageBytes?: Uint8Array;
 		action?: "edit" | "copy" | "save" | "pin" | "scroll";
 		windowId?: number;
 		rect?: { x: number; y: number; width: number; height: number };

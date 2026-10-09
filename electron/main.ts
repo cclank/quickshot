@@ -4192,6 +4192,8 @@ function registerIpcHandlers() {
 			payload: {
 				sessionId: number;
 				croppedImageBytes?: Uint8Array;
+				/** The styled export for clipboard copies, rendered by the overlay. */
+				composedImageBytes?: Uint8Array;
 				action?: "edit" | "copy" | "save" | "pin" | "scroll";
 				windowId?: number;
 				/** With `windowId`: the window in frozen-frame pixels, cropped if the window capture fails. */
@@ -4215,6 +4217,16 @@ function registerIpcHandlers() {
 					return { success: false, error: "invalid image data" };
 				}
 			}
+			// The overlay's styled export for clipboard copies. Invalid data only
+			// downgrades the paste to the bare capture, so it never fails the action.
+			let composedImageBuffer: Buffer | null = null;
+			if (payload.composedImageBytes !== undefined) {
+				try {
+					composedImageBuffer = validateCapturePngPayload(payload.composedImageBytes);
+				} catch {
+					composedImageBuffer = null;
+				}
+			}
 
 			const action = payload.action ?? "edit";
 			if (!["edit", "copy", "save", "pin", "scroll"].includes(action)) {
@@ -4229,6 +4241,7 @@ function registerIpcHandlers() {
 			// A click on a window captures that window itself instead of the
 			// frozen pixels under it. Only ids this session listed are accepted.
 			const windowId = payload.windowId;
+			let capturedWindowInstead = false;
 			if (
 				process.platform === "darwin" &&
 				!DEV_CAPTURE_FILE &&
@@ -4240,7 +4253,10 @@ function registerIpcHandlers() {
 				if (payload.sessionId !== activeCaptureSessionId) {
 					return { success: false, error: "stale capture session" };
 				}
-				if (windowImage) croppedImageBuffer = windowImage;
+				if (windowImage) {
+					croppedImageBuffer = windowImage;
+					capturedWindowInstead = true;
+				}
 			}
 			croppedImageBuffer ??= await cropFrozenFrame(payload.sessionId, payload.rect);
 			if (payload.sessionId !== activeCaptureSessionId) {
@@ -4249,11 +4265,16 @@ function registerIpcHandlers() {
 			if (!croppedImageBuffer) {
 				return { success: false, error: "invalid image data" };
 			}
+			// Copies hand out the styled export the overlay rendered from the same
+			// pixels. A window captured on its own looks different from the frozen
+			// frame, so its composition would wrap the wrong image.
+			const clipboardImageBuffer =
+				!capturedWindowInstead && composedImageBuffer ? composedImageBuffer : croppedImageBuffer;
 			if (action === "edit") {
 				if (deliverStitchPiece(croppedImageBuffer)) return { success: true };
 				// Opening the editor also hands the capture to the clipboard: most
 				// captures are pasted straight away. Stitch pieces stay out of it.
-				clipboard.writeImage(nativeImage.createFromBuffer(croppedImageBuffer));
+				clipboard.writeImage(nativeImage.createFromBuffer(clipboardImageBuffer));
 				if (!openPreviewForImage(croppedImageBuffer)) {
 					return { success: false, error: "preview unavailable" };
 				}
@@ -4269,7 +4290,7 @@ function registerIpcHandlers() {
 			writeDiagnostic("region-quick-action", { action });
 			try {
 				if (action === "copy") {
-					clipboard.writeImage(nativeImage.createFromBuffer(croppedImageBuffer));
+					clipboard.writeImage(nativeImage.createFromBuffer(clipboardImageBuffer));
 				} else if (action === "save") {
 					await writeQuickSaveScreenshot(croppedImageBuffer);
 				} else if (action === "pin" && !createPinnedScreenshotWindow(croppedImageBuffer)) {
