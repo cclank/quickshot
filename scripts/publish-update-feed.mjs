@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -10,6 +10,8 @@ import { buildUpdateFeed, feedJson } from "./write-update-feed.mjs";
 //   WRANGLER=~/code/tokei/node_modules/.bin/wrangler node scripts/publish-update-feed.mjs v1.3.0 [--dry-run]
 // Downloads the release's installers, checks them against GitHub's digests,
 // uploads them and latest.json to the R2 bucket, then reads everything back.
+// QUICKSHOT_FEED_DOWNLOADS=<folder> keeps the downloads there, so a run cut
+// short by the network resumes where it stopped.
 
 const exec = promisify(execFile);
 const REPO = "cclank/quickshot";
@@ -31,10 +33,20 @@ const release = JSON.parse(await run("gh", ["api", `repos/${REPO}/releases/tags/
 if (release.draft) throw new Error(`${tag} is still a draft; publish it on GitHub first.`);
 const digests = new Map(release.assets.map((asset) => [asset.name, String(asset.digest ?? "").replace(/^sha256:/, "")]));
 
-const folder = await mkdtemp(path.join(os.tmpdir(), "quickshot-feed-"));
+const keptFolder = process.env.QUICKSHOT_FEED_DOWNLOADS;
+const folder = keptFolder ? path.resolve(keptFolder) : await mkdtemp(path.join(os.tmpdir(), "quickshot-feed-"));
+await mkdir(folder, { recursive: true });
 try {
 	console.log(`==> Downloading ${tag} from GitHub`);
-	await run("gh", ["release", "download", tag, "--repo", REPO, "--dir", folder, "--pattern", "*.dmg", "--pattern", "*-Setup.exe"]);
+	// One file at a time, resuming after dropped connections, which a
+	// parallel `gh release download` does not survive.
+	for (const asset of release.assets.filter(({ name }) => /\.dmg$|-Setup\.exe$/.test(name))) {
+		await run("curl", [
+			"-fLsS", "--retry", "8", "--retry-all-errors", "--retry-delay", "3",
+			"-C", "-", "-o", path.join(folder, asset.name), asset.browser_download_url,
+		]);
+		console.log(`    ${asset.name}`);
+	}
 	const feed = await buildUpdateFeed(folder, tag, BASE_URL);
 	for (const { file, sha256 } of Object.values(feed.assets)) {
 		const name = path.basename(file);
@@ -49,7 +61,7 @@ try {
 		await upload(feed, latest);
 	}
 } finally {
-	await rm(folder, { recursive: true, force: true });
+	if (!keptFolder) await rm(folder, { recursive: true, force: true });
 }
 
 async function upload(feed, latest) {
