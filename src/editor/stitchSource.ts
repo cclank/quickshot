@@ -16,7 +16,7 @@ export function sourceSize(source: SourceImage) {
 
 export type StitchPiece = {
 	id: string;
-	image: HTMLImageElement;
+	image: SourceImage;
 	/** Converts the piece's pixels to the stitched image's, e.g. 2 for a 1x capture in a 2x stitch. */
 	scale: number;
 };
@@ -30,8 +30,8 @@ export const MAX_STITCH_PIXELS = 120_000_000;
 export function stitchSizes(stitch: Stitch): StitchSize[] {
 	return stitch.pieces.map((piece) => ({
 		id: piece.id,
-		width: Math.max(1, Math.round(piece.image.naturalWidth * piece.scale)),
-		height: Math.max(1, Math.round(piece.image.naturalHeight * piece.scale)),
+		width: Math.max(1, Math.round(sourceSize(piece.image).width * piece.scale)),
+		height: Math.max(1, Math.round(sourceSize(piece.image).height * piece.scale)),
 	}));
 }
 

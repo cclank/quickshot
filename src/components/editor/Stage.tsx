@@ -2,7 +2,9 @@ import {
 	type ReactNode,
 	type PointerEvent as ReactPointerEvent,
 	useCallback,
+	forwardRef,
 	useEffect,
+	useImperativeHandle,
 	useLayoutEffect,
 	useMemo,
 	useRef,
@@ -31,6 +33,7 @@ import {
 	simplifyPath,
 	snapAngle,
 } from "@/editor/geometry";
+import { rectsOverlap } from "@/editor/crop";
 import {
 	COUNTER_SIZES,
 	HIGHLIGHTER_SIZES,
@@ -51,13 +54,19 @@ import type {
 	Annotation,
 	HandleId,
 	Point,
+	Rect,
 	TextAnnotation,
 	Tool,
 } from "@/editor/types";
 import { calculateCanvasBackingSize } from "@/lib/canvasBacking";
 import { t } from "@/lib/i18n";
+import { adjustSelection, getClampedSelectionRect, selectionCursor, selectionHandleAt, type SelectionHandle, type SelectionRect } from "@/lib/selectionGeometry";
+import { CropOverlay } from "./CropOverlay";
+import { ViewControls } from "./ViewControls";
+import { useStageView } from "./useStageView";
 
 export type EditingText = { annotation: TextAnnotation; isNew: boolean };
+export type StageHandle = { zoomIn: () => void; zoomOut: () => void; actualSize: () => void; fit: () => void; stopPanning: () => void };
 
 type StageProps = {
 	image: SourceImage | null;
@@ -75,6 +84,11 @@ type StageProps = {
 	onBeginText: (annotation: TextAnnotation, isNew: boolean) => void;
 	onEditingChange: (annotation: TextAnnotation) => void;
 	onFinishText: () => void;
+	cropActive: boolean;
+	crop: Rect | null;
+	onCropChange: (crop: Rect | null) => void;
+	onCropApply: () => void;
+	onCropCancel: () => void;
 	/** Room kept free above the canvas, e.g. for a floating style bar. */
 	topMargin?: number;
 	children?: ReactNode;
@@ -119,7 +133,6 @@ function grabbableAnnotations(
 	if (!GRAB_TOOLS.has(tool)) return [];
 	return annotations.filter((item) => item.kind === tool || item.id === selectedId);
 }
-const MARGIN = { right: 32, bottom: 40, left: 32 };
 /** Above the canvas when the style bar floats over it, and when it does not. */
 export const STAGE_TOP_MARGIN = { floating: 64, clear: 28 } as const;
 const MAX_BACKING_DIMENSION = 8192;
@@ -212,7 +225,7 @@ function replaceAnnotation(list: readonly Annotation[], next: Annotation) {
 	return list.map((item) => (item.id === next.id ? next : item));
 }
 
-export function Stage({
+export const Stage = forwardRef<StageHandle, StageProps>(function Stage({
 	image,
 	unit,
 	settings,
@@ -228,15 +241,21 @@ export function Stage({
 	onBeginText,
 	onEditingChange,
 	onFinishText,
+	cropActive,
+	crop,
+	onCropChange,
+	onCropApply,
+	onCropCancel,
 	topMargin = STAGE_TOP_MARGIN.floating,
 	children,
-}: StageProps) {
+}: StageProps, ref) {
 	const viewportRef = useRef<HTMLDivElement>(null);
 	const stageRef = useRef<HTMLDivElement>(null);
 	const compositionCanvasRef = useRef<HTMLCanvasElement>(null);
 	const annotationCanvasRef = useRef<HTMLCanvasElement>(null);
 	const scratchCanvasRef = useRef<HTMLCanvasElement | null>(null);
 	const gestureRef = useRef<Gesture | null>(null);
+	const cropGestureRef = useRef<{ pointerId: number; start: Point; original: SelectionRect | null; handle: SelectionHandle | null } | null>(null);
 	const liveRef = useRef<Annotation | null>(null);
 	const liveFrameRef = useRef<number | null>(null);
 	const stageRectRef = useRef<DOMRect | null>(null);
@@ -245,6 +264,13 @@ export function Stage({
 	const [live, setLive] = useState<Annotation | null>(null);
 	const [hoverId, setHoverId] = useState<string | null>(null);
 	const [cursor, setCursor] = useState(toolCursor(tool));
+	const busy = useCallback(() => Boolean(gestureRef.current || cropGestureRef.current || editing), [editing]);
+	const view = useStageView({ image, layout, viewport, unit, topMargin, viewportRef, busy });
+	const { scale, visible } = view;
+	useImperativeHandle(ref, () => ({ zoomIn: view.zoomIn, zoomOut: view.zoomOut, actualSize: view.actualSize, fit: view.fit, stopPanning: view.stopPanning }),
+		[view.zoomIn, view.zoomOut, view.actualSize, view.fit, view.stopPanning]);
+	useEffect(() => { if (!cropActive) cropGestureRef.current = null; }, [cropActive]);
+	useEffect(() => { if (cropActive) view.stopPanning(); }, [cropActive, view.stopPanning]);
 
 	useLayoutEffect(() => {
 		const element = viewportRef.current;
@@ -293,18 +319,6 @@ export function Stage({
 		[],
 	);
 
-	const scale = useMemo(() => {
-		if (!layout || viewport.w <= 0 || viewport.h <= 0) return 0;
-		const availableWidth = Math.max(1, viewport.w - MARGIN.left - MARGIN.right);
-		const availableHeight = Math.max(1, viewport.h - topMargin - MARGIN.bottom);
-		// Never enlarge past the capture's physical size; small shots stay crisp.
-		return Math.min(
-			availableWidth / layout.width,
-			availableHeight / layout.height,
-			1 / layout.unit,
-		);
-	}, [layout, topMargin, viewport.h, viewport.w]);
-
 	const getScratch = useCallback(() => {
 		if (!scratchCanvasRef.current) {
 			const canvas = document.createElement("canvas");
@@ -320,8 +334,8 @@ export function Stage({
 		const canvas = compositionCanvasRef.current;
 		if (!canvas || !image || !layout || scale <= 0) return;
 		const backing = calculateCanvasBackingSize(
-			layout.width * scale,
-			layout.height * scale,
+			visible.w,
+			visible.h,
 			dpr,
 			MAX_BACKING_DIMENSION,
 			MAX_BACKING_PIXELS,
@@ -334,8 +348,9 @@ export function Stage({
 			if (!context) return;
 			context.setTransform(1, 0, 0, 1, 0, 0);
 			context.clearRect(0, 0, canvas.width, canvas.height);
-			const pixelScale = backing.width / layout.width;
-			context.setTransform(pixelScale, 0, 0, backing.height / layout.height, 0, 0);
+			const pixelScale = backing.width / visible.w * scale;
+			context.setTransform(pixelScale, 0, 0, backing.height / visible.h * scale,
+				-visible.x * backing.width / visible.w, -visible.y * backing.height / visible.h);
 			renderComposition(context, {
 				layout,
 				settings,
@@ -344,7 +359,7 @@ export function Stage({
 			});
 		});
 		return () => cancelAnimationFrame(frame);
-	}, [dpr, image, layout, scale, settings, wallpaper]);
+	}, [dpr, image, layout, scale, settings, visible, wallpaper]);
 
 	// ── Annotation layer ──────────────────────────────────────────────────────
 	const renderList = useMemo(() => {
@@ -362,8 +377,8 @@ export function Stage({
 		const canvas = annotationCanvasRef.current;
 		if (!canvas || !image || !layout || scale <= 0) return;
 		const backing = calculateCanvasBackingSize(
-			layout.image.w * scale,
-			layout.image.h * scale,
+			visible.w,
+			visible.h,
 			dpr,
 			MAX_BACKING_DIMENSION,
 			MAX_BACKING_PIXELS,
@@ -376,8 +391,10 @@ export function Stage({
 		context.setTransform(1, 0, 0, 1, 0, 0);
 		context.clearRect(0, 0, canvas.width, canvas.height);
 		if (renderList.length === 0) return;
-		const pixelScale = backing.width / layout.image.w;
-		context.setTransform(pixelScale, 0, 0, backing.height / layout.image.h, 0, 0);
+		const pixelScale = backing.width / visible.w * scale;
+		context.setTransform(pixelScale, 0, 0, backing.height / visible.h * scale,
+			-visible.x * backing.width / visible.w, -visible.y * backing.height / visible.h);
+		context.translate(layout.image.x, layout.image.y);
 		context.save();
 		context.beginPath();
 		context.roundRect(0, 0, layout.image.w, layout.image.h, layout.image.radii);
@@ -389,9 +406,12 @@ export function Stage({
 			pixelScale,
 			scratch: getScratch,
 		};
-		drawAnnotations(context, renderList, env, editingId);
+		const shown = { x: visible.x / scale - layout.image.x - 32 * unit,
+			y: visible.y / scale - layout.image.y - 32 * unit,
+			w: visible.w / scale + 64 * unit, h: visible.h / scale + 64 * unit };
+		drawAnnotations(context, renderList.filter((mark) => rectsOverlap(getVisualBounds(mark, measureTextAnnotation), shown)), env, editingId);
 		context.restore();
-	}, [dpr, editingId, getScratch, image, layout, renderList, scale]);
+	}, [dpr, editingId, getScratch, image, layout, renderList, scale, unit, visible]);
 
 	// ── Pointer interaction ───────────────────────────────────────────────────
 	const toImagePoint = useCallback(
@@ -435,7 +455,7 @@ export function Stage({
 	// The stage moves whenever the layout or viewport changes; drop the cached rect.
 	useLayoutEffect(() => {
 		stageRectRef.current = null;
-	}, [layout, scale, viewport]);
+	}, [layout, scale, viewport, view.origin.x, view.origin.y]);
 
 	const imageBounds = useMemo(
 		() => (layout ? { x: 0, y: 0, w: layout.image.w, h: layout.image.h } : null),
@@ -479,6 +499,15 @@ export function Stage({
 		if (!layout || !image || !imageBounds || scale <= 0) return;
 		if (event.button !== 0) return;
 		const point = toImagePoint(event.clientX, event.clientY, true);
+		if (cropActive) {
+			const original = crop ? { x: crop.x, y: crop.y, width: crop.w, height: crop.h } : null;
+			const handle = original ? selectionHandleAt(original, point, 8 / scale) : null;
+			cropGestureRef.current = { pointerId: event.pointerId, start: handle ? point : clampPointToRect(point, imageBounds), original, handle };
+			event.currentTarget.setPointerCapture(event.pointerId);
+			if (!handle) onCropChange(null);
+			event.preventDefault();
+			return;
+		}
 		if (editing) {
 			onFinishText();
 			return;
@@ -585,6 +614,21 @@ export function Stage({
 	const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
 		const gesture = gestureRef.current;
 		const point = toImagePoint(event.clientX, event.clientY);
+		if (cropActive && imageBounds) {
+			const cropGesture = cropGestureRef.current;
+			if (!cropGesture) {
+				const handle = crop ? selectionHandleAt({ x: crop.x, y: crop.y, width: crop.w, height: crop.h }, point, 8 / scale) : null;
+				setCursor(handle ? selectionCursor(handle) : "crosshair");
+				return;
+			}
+			if (event.pointerId !== cropGesture.pointerId) return;
+			const size = { width: imageBounds.w, height: imageBounds.h };
+			const next = cropGesture.handle && cropGesture.original
+				? adjustSelection(cropGesture.original, cropGesture.handle, cropGesture.start, point, size)
+				: getClampedSelectionRect(cropGesture.start, point, size);
+			onCropChange({ x: next.x, y: next.y, w: next.width, h: next.height });
+			return;
+		}
 		if (!gesture) {
 			if (!editing) updateHover(point);
 			return;
@@ -634,6 +678,14 @@ export function Stage({
 	};
 
 	const finishGesture = (event: ReactPointerEvent<HTMLDivElement>, cancelled: boolean) => {
+		const cropGesture = cropGestureRef.current;
+		if (cropGesture?.pointerId === event.pointerId) {
+			cropGestureRef.current = null;
+			if (cancelled) onCropChange(cropGesture.original
+				? { x: cropGesture.original.x, y: cropGesture.original.y, w: cropGesture.original.width, h: cropGesture.original.height } : null);
+			if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+			return;
+		}
 		const gesture = gestureRef.current;
 		if (!gesture || event.pointerId !== gesture.pointerId) return;
 		gestureRef.current = null;
@@ -670,7 +722,7 @@ export function Stage({
 	};
 
 	const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
-		if (!layout || scale <= 0 || editing) return;
+		if (!layout || scale <= 0 || editing || cropActive || view.panCursor) return;
 		const point = toImagePoint(event.clientX, event.clientY, true);
 		const hit = findAnnotationAt(annotations, point, HIT_TOLERANCE_CSS / scale, measureTextAnnotation);
 		if (hit?.annotation.kind === "text") {
@@ -706,6 +758,12 @@ export function Stage({
 			ref={viewportRef}
 			data-quickshot-viewport
 			className="qs-stage-bg relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden"
+			style={{ cursor: view.panCursor ?? undefined, touchAction: "none" }}
+			onPointerDownCapture={view.startPan}
+			onPointerMoveCapture={view.movePan}
+			onPointerUpCapture={view.finishPan}
+			onPointerCancelCapture={view.finishPan}
+			onLostPointerCapture={view.finishPan}
 			onPointerDown={(event) => {
 				// Clicking the empty workspace around the canvas clears the selection.
 				if (event.target === event.currentTarget && !editing) onSelect(null);
@@ -713,6 +771,15 @@ export function Stage({
 			}}
 		>
 			{children}
+			{cropActive && <div data-stage-controls className="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 flex-col items-center gap-2 rounded-[11px] border border-[var(--qs-border)] bg-[var(--qs-bg)] px-3 py-2 shadow-sm">
+				<span className="whitespace-nowrap text-[11px] text-[var(--qs-text-2)]">{t("crop.hint")}</span>
+				<div className="flex items-center gap-3 text-[12px]">
+					<span className="tabular-nums text-[var(--qs-text-3)]">{crop ? t("crop.size", { w: Math.round(crop.w), h: Math.round(crop.h) }) : t("action.crop")}</span>
+					<button type="button" onClick={onCropCancel} className="rounded-md px-2 py-1 hover:bg-[var(--qs-hover)]">{t("crop.cancel")}</button>
+					<button type="button" onClick={onCropApply} disabled={!crop || crop.w < 1 || crop.h < 1}
+						className="rounded-md bg-[var(--qs-primary)] px-2 py-1 text-[var(--qs-primary-text)] disabled:opacity-30">{t("crop.apply")}</button>
+				</div>
+			</div>}
 			{!layout || scale <= 0 ? (
 				<div className="text-[12px] text-[var(--qs-text-3)]">{t("stage.loading")}</div>
 			) : (
@@ -721,12 +788,15 @@ export function Stage({
 					data-quickshot-composition
 					data-source-width={image ? sourceSize(image).width : 0}
 					data-source-height={image ? sourceSize(image).height : 0}
+					data-view-scale={scale}
 					className={`relative shrink-0 ${transparent ? "qs-checker" : ""}`}
 					style={{
+						position: "absolute",
+						left: view.origin.x,
+						top: view.origin.y,
 						width: stageWidth,
 						height: stageHeight,
-						marginTop: topMargin - MARGIN.bottom,
-						cursor,
+						cursor: view.panCursor ?? (cropActive && !crop ? "crosshair" : cursor),
 						touchAction: "none",
 					}}
 					onPointerDown={handlePointerDown}
@@ -744,25 +814,27 @@ export function Stage({
 						ref={compositionCanvasRef}
 						data-quickshot-composition-canvas
 						className="pointer-events-none absolute inset-0 h-full w-full"
+						style={{ left: visible.x, top: visible.y, width: visible.w, height: visible.h, right: "auto", bottom: "auto" }}
 					/>
 					<canvas
 						ref={annotationCanvasRef}
 						className="pointer-events-none absolute"
 						style={{
-							left: layout.image.x * scale,
-							top: layout.image.y * scale,
-							width: layout.image.w * scale,
-							height: layout.image.h * scale,
+							left: visible.x,
+							top: visible.y,
+							width: visible.w,
+							height: visible.h,
 						}}
 					/>
 					<SelectionOverlay
 						width={stageWidth}
 						height={stageHeight}
-						selected={editing ? null : shownSelection}
-						hovered={gestureRef.current || editing ? null : hovered}
+						selected={editing || cropActive ? null : shownSelection}
+						hovered={gestureRef.current || editing || cropActive ? null : hovered}
 						toCss={toCss}
 						scale={scale}
 					/>
+					{cropActive && <CropOverlay crop={crop} layout={layout} scale={scale} />}
 					{editing && layout && (
 						<TextEditor
 							key={editing.annotation.id}
@@ -777,13 +849,14 @@ export function Stage({
 				</div>
 			)}
 			{layout && scale > 0 && (
-				<div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 text-[11px] tabular-nums text-[var(--qs-text-3)]">
-					{layout.image.w} × {layout.image.h} · {t("stage.zoom", { value: Math.round(scale * layout.unit * 100) })}
-				</div>
+				<ViewControls zoom={view.zoom} fitting={view.fitting} handMode={view.handMode}
+					onZoom={view.setZoom} onZoomIn={view.zoomIn} onZoomOut={view.zoomOut}
+					onActualSize={view.actualSize} onFit={view.fit} onHand={view.toggleHand}
+					width={layout.image.w} height={layout.image.h} />
 			)}
 		</div>
 	);
-}
+});
 
 function SelectionOverlay({
 	width,

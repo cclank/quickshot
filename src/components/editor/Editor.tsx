@@ -5,6 +5,7 @@ import {
 	parseBackground,
 } from "@/editor/backgrounds";
 import { duplicateAnnotation, translateAnnotation } from "@/editor/annotations";
+import { combineCrops, cropAnnotations, normalizeCrop, renderCroppedSource } from "@/editor/crop";
 import {
 	type StyleSettings,
 	type WatermarkSettings,
@@ -43,7 +44,7 @@ import { smartRedactions } from "@/editor/smartRedact";
 import { type AnnotationRenderEnv, drawAnnotations } from "@/editor/renderAnnotations";
 import { drawBackground, renderComposition } from "@/editor/renderComposition";
 import { applyStyleToAnnotation, styleFromAnnotation } from "@/editor/styleMapping";
-import type { Annotation, AnnotationKind, Tool } from "@/editor/types";
+import type { Annotation, AnnotationKind, Rect, Tool } from "@/editor/types";
 import { getAssetPath } from "@/lib/assetPath";
 import { resolveStyleDefaults } from "@/editor/styleDefaults";
 import { type StitchSettings, remapAnnotations } from "@/editor/stitch";
@@ -68,7 +69,7 @@ import { TextExtractionPanel } from "../screenshot/TextExtractionPanel";
 import { ContextBar } from "./ContextBar";
 import { Inspector } from "./Inspector";
 import { StitchPanel } from "./StitchPanel";
-import { type EditingText, STAGE_TOP_MARGIN, Stage } from "./Stage";
+import { type EditingText, type StageHandle, STAGE_TOP_MARGIN, Stage } from "./Stage";
 import { Toast, type ToastState } from "./Toast";
 import { type StyleBarMode, Toolbar } from "./Toolbar";
 
@@ -160,11 +161,11 @@ function mergeEditing(annotations: Annotation[], editing: EditingText | null) {
 	return annotations.map((item) => (item.id === editing.annotation.id ? editing.annotation : item));
 }
 
-/** Everything undo covers: the marks and how the captures are stitched. */
-type EditorDoc = { annotations: Annotation[]; stitch: Stitch };
+/** Crops, marks and stitches form one undo history; source pixels stay intact. */
+type EditorDoc = { annotations: Annotation[]; stitch: Stitch; crop: Rect | null };
 
 function createDoc(pieces: StitchPiece[] = []): EditorDoc {
-	return { annotations: [], stitch: { pieces, settings: loadStitchSettings() } };
+	return { annotations: [], stitch: { pieces, settings: loadStitchSettings() }, crop: null };
 }
 
 let pieceCounter = 0;
@@ -174,8 +175,15 @@ function createPieceId() {
 }
 
 async function sourceToPngBlob(source: SourceImage, fallback: Blob | null) {
-	if (source instanceof HTMLImageElement) return fallback;
-	return new Promise<Blob | null>((resolve) => source.toBlob(resolve, "image/png"));
+	if (source instanceof HTMLImageElement && fallback) return fallback;
+	const canvas = source instanceof HTMLCanvasElement ? source : document.createElement("canvas");
+	if (source instanceof HTMLImageElement) {
+		const size = sourceSize(source);
+		canvas.width = size.width;
+		canvas.height = size.height;
+		canvas.getContext("2d")?.drawImage(source, 0, 0);
+	}
+	return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
 }
 
 export function Editor() {
@@ -190,6 +198,9 @@ export function Editor() {
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [editing, setEditing] = useState<EditingText | null>(null);
 	const [ocrOpen, setOcrOpen] = useState(false);
+	const [cropActive, setCropActive] = useState(false);
+	const [cropDraft, setCropDraft] = useState<Rect | null>(null);
+	const stageRef = useRef<StageHandle>(null);
 	const [toast, setToast] = useState<ToastState | null>(null);
 	const [wallpaper, setWallpaper] = useState<HTMLImageElement | null>(null);
 	const [wallpaperThumbs, setWallpaperThumbs] = useState<Record<string, string>>({});
@@ -200,10 +211,12 @@ export function Editor() {
 	const docRef = useRef(doc);
 	docRef.current = doc;
 	/** One capture as is, or several stitched into a canvas. */
-	const image = useMemo(() => renderStitchSource(stitch, unit), [stitch, unit]);
+	const uncroppedImage = useMemo(() => renderStitchSource(stitch, unit), [stitch, unit]);
+	const image = useMemo(() => renderCroppedSource(uncroppedImage, doc.crop), [uncroppedImage, doc.crop]);
 	const imageSize = useMemo(() => (image ? sourceSize(image) : null), [image]);
 	const sessionIdRef = useRef<number | null>(null);
 	const sourceBlobRef = useRef<Blob | null>(null);
+	const sourceImageRef = useRef<SourceImage | null>(null);
 	const editingRef = useRef<EditingText | null>(null);
 	editingRef.current = editing;
 	const annotationsRef = useRef(annotations);
@@ -240,6 +253,9 @@ export function Editor() {
 				const decoded = await decodeImageData(url);
 				if (cancelled) return;
 				sourceBlobRef.current = blob;
+				sourceImageRef.current = decoded;
+				setCropActive(false);
+				setCropDraft(null);
 				// A warm window may have loaded long before this capture; pick up
 				// preferences changed in other editor windows since then.
 				setSettings(loadStyleSettings());
@@ -431,6 +447,9 @@ export function Editor() {
 	const setTool = useCallback(
 		(next: Tool) => {
 			finishText();
+			stageRef.current?.stopPanning();
+			setCropActive(false);
+			setCropDraft(null);
 			setToolState(next);
 			if (next !== "select") setSelectedId(null);
 		},
@@ -495,6 +514,38 @@ export function Editor() {
 		finishText();
 		setHistory(redoHistory);
 	}, [finishText]);
+
+	const cancelCrop = useCallback(() => {
+		setCropActive(false);
+		setCropDraft(null);
+	}, []);
+
+	const toggleCrop = useCallback(() => {
+		if (!image) return;
+		finishText();
+		setSelectedId(null);
+		setOcrOpen(false);
+		setCropDraft(null);
+		setCropActive((active) => !active);
+	}, [finishText, image]);
+
+	const applyCrop = useCallback(() => {
+		if (!imageSize || !cropDraft) return;
+		const crop = normalizeCrop(cropDraft, imageSize);
+		if (!crop) return;
+		if (crop.x !== 0 || crop.y !== 0 || crop.w !== imageSize.width || crop.h !== imageSize.height) {
+			setHistory((current) => {
+				const next: EditorDoc = {
+					...current.present,
+					crop: combineCrops(current.present.crop, crop),
+					annotations: cropAnnotations(current.present.annotations, crop, measureTextAnnotation),
+				};
+				docRef.current = next;
+				return pushHistory(current, next);
+			});
+		}
+		cancelCrop();
+	}, [cancelCrop, cropDraft, imageSize]);
 
 	// ── Settings ──────────────────────────────────────────────────────────────
 	const updateSettings = useCallback((patch: Partial<StyleSettings>) => {
@@ -689,7 +740,7 @@ export function Editor() {
 	);
 
 	const extractText = useCallback(async () => {
-		const blob = image ? await sourceToPngBlob(image, sourceBlobRef.current) : null;
+		const blob = image ? await sourceToPngBlob(image, image === sourceImageRef.current ? sourceBlobRef.current : null) : null;
 		if (!blob) throw new Error(t("ocr.notReady"));
 		const result = await window.electronAPI.extractText(await blob.arrayBuffer());
 		if (!result.success) throw new Error(result.error);
@@ -711,7 +762,7 @@ export function Editor() {
 		// The redact tool's style bar shows the progress.
 		if (tool !== "redact" && selected?.kind !== "redact") setTool("redact");
 		try {
-			const blob = await sourceToPngBlob(source, sourceBlobRef.current);
+			const blob = await sourceToPngBlob(source, source === sourceImageRef.current ? sourceBlobRef.current : null);
 			if (!blob) throw new Error(t("ocr.notReady"));
 			const result = await window.electronAPI.findSensitiveRegions(await blob.arrayBuffer());
 			// A stitch changed the picture meanwhile, so the regions no longer line up.
@@ -746,19 +797,28 @@ export function Editor() {
 	const toggleInspector = useCallback(() => setInspectorOpen((open) => !open), []);
 
 	// ── Stitching ─────────────────────────────────────────────────────────────
+	// A later stitch starts with the visible crop. Earlier sources and crop bounds
+	// are retained by history, so undo still restores the complete picture.
+	const editableStitch = useMemo<Stitch>(() => doc.crop && image
+		? { ...stitch, pieces: [{ id: `crop-${stitch.pieces[0]?.id}`, image, scale: 1 }] }
+		: stitch, [doc.crop, image, stitch]);
+	const editableStitchRef = useRef(editableStitch);
+	editableStitchRef.current = editableStitch;
+
 	/** Applies a new stitch, moving each annotation along with its capture. */
 	const commitStitch = useCallback(
 		(next: Stitch, options?: { coalesceKey?: string }) => {
 			const current = docRef.current;
-			const before = stitchPlacement(current.stitch, unit);
+			const before = stitchPlacement(editableStitchRef.current, unit);
 			const after = stitchPlacement(next, unit);
 			if (!fitsStitchLimits(after)) {
 				showToast("error", t("stitch.tooLarge"), t("stitch.tooLargeDetail"));
 				return false;
 			}
 			const remapped = remapAnnotations(current.annotations, before, after, measureTextAnnotation);
-			const nextDoc = { annotations: remapped, stitch: next };
+			const nextDoc: EditorDoc = { annotations: remapped, stitch: next, crop: null };
 			docRef.current = nextDoc;
+			editableStitchRef.current = next;
 			setHistory((history) => pushHistory(history, nextDoc, options));
 			saveStitchSettings(next.settings);
 			return true;
@@ -770,7 +830,8 @@ export function Editor() {
 	const addPiece = useCallback(
 		(pieceImage: HTMLImageElement, pieceUnit: number) => {
 			finishText();
-			const current = docRef.current.stitch;
+			cancelCrop();
+			const current = editableStitchRef.current;
 			const scale = pieceUnit > 0 ? unit / pieceUnit : 1;
 			if (commitStitch({ ...current, pieces: [...current.pieces, { id: createPieceId(), image: pieceImage, scale }] })) {
 				setSelectedId(null);
@@ -778,12 +839,12 @@ export function Editor() {
 				setInspectorOpen(true);
 			}
 		},
-		[commitStitch, finishText, unit],
+		[cancelCrop, commitStitch, finishText, unit],
 	);
 
 	const movePiece = useCallback(
 		(id: string, delta: -1 | 1) => {
-			const current = docRef.current.stitch;
+			const current = editableStitchRef.current;
 			const index = current.pieces.findIndex((piece) => piece.id === id);
 			const target = index + delta;
 			if (index < 0 || target < 0 || target >= current.pieces.length) return;
@@ -796,7 +857,7 @@ export function Editor() {
 
 	const removePiece = useCallback(
 		(id: string) => {
-			const current = docRef.current.stitch;
+			const current = editableStitchRef.current;
 			if (current.pieces.length <= 1) return;
 			finishText();
 			setSelectedId(null);
@@ -807,7 +868,7 @@ export function Editor() {
 
 	const updateStitchSettings = useCallback(
 		(patch: Partial<StitchSettings>) => {
-			const current = docRef.current.stitch;
+			const current = editableStitchRef.current;
 			commitStitch(
 				{ ...current, settings: { ...current.settings, ...patch } },
 				{ coalesceKey: "gap" in patch ? "stitch-gap" : undefined },
@@ -819,9 +880,10 @@ export function Editor() {
 	/** Hides the editor, takes one more capture, and appends it here. */
 	const captureForStitch = useCallback(async () => {
 		finishText();
+		cancelCrop();
 		const result = await window.electronAPI.captureForStitch?.();
 		if (result && !result.success) showToast("error", t("stitch.failed"), t("toast.retry"));
-	}, [finishText, showToast]);
+	}, [cancelCrop, finishText, showToast]);
 
 	useEffect(() => {
 		const unsubscribe = window.electronAPI.onStitchPiece?.((payload) => {
@@ -893,16 +955,26 @@ export function Editor() {
 					return;
 				}
 				event.preventDefault();
-				if (ocrOpen) setOcrOpen(false);
+				if (cropActive) cancelCrop();
+				else if (ocrOpen) setOcrOpen(false);
 				else if (selectedId) setSelectedId(null);
 				else window.close();
 				return;
 			}
 			if (isEditableTarget(event.target)) return;
+			if (cropActive && event.key === "Enter" && !mod) {
+				event.preventDefault();
+				applyCrop();
+				return;
+			}
 
 			// Commands whose shortcuts can be changed in Settings.
 			const command = commandFor(keymap, event, "editor");
 			if (command) {
+				if (cropActive && command !== "crop" && !command.startsWith("zoom")) {
+					event.preventDefault();
+					return;
+				}
 				// Copying selected text (in the text panel) stays the system's.
 				if (command === "copy" && window.getSelection()?.toString()) return;
 				event.preventDefault();
@@ -913,10 +985,12 @@ export function Editor() {
 			if (mod) {
 				if (key === "z") {
 					event.preventDefault();
+					cancelCrop();
 					if (event.shiftKey) redo();
 					else undo();
 				} else if (key === "y") {
 					event.preventDefault();
+					cancelCrop();
 					redo();
 				} else if (key === "w") {
 					event.preventDefault();
@@ -925,6 +999,7 @@ export function Editor() {
 				return;
 			}
 			if (event.altKey) return;
+			if (cropActive) return;
 
 			if ((event.key === "Delete" || event.key === "Backspace") && selectedId) {
 				event.preventDefault();
@@ -962,6 +1037,21 @@ export function Editor() {
 				return;
 			}
 			switch (command) {
+				case "crop":
+					toggleCrop();
+					break;
+				case "zoomIn":
+					stageRef.current?.zoomIn();
+					break;
+				case "zoomOut":
+					stageRef.current?.zoomOut();
+					break;
+				case "zoomActual":
+					stageRef.current?.actualSize();
+					break;
+				case "zoomFit":
+					stageRef.current?.fit();
+					break;
 				case "copy":
 					void copyImage(copyCloses);
 					break;
@@ -997,12 +1087,15 @@ export function Editor() {
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [
+		applyCrop,
 		applyStyle,
 		beginText,
+		cancelCrop,
 		captureForStitch,
 		commit,
 		copyCloses,
 		copyImage,
+		cropActive,
 		deleteSelected,
 		duplicateSelected,
 		effectiveStyle.strokeSize,
@@ -1017,6 +1110,7 @@ export function Editor() {
 		setTool,
 		smartRedact,
 		toggleInspector,
+		toggleCrop,
 		toggleOcr,
 		undo,
 		unit,
@@ -1024,12 +1118,18 @@ export function Editor() {
 
 	const outputSize = layout ? { w: layout.width, h: layout.height } : { w: 0, h: 0 };
 	const stitchPieceViews = useMemo(
-		() => stitch.pieces.map((piece) => ({ id: piece.id, src: piece.image.src })),
-		[stitch.pieces],
+		() => editableStitch.pieces.map((piece) => ({ id: piece.id, src: piece.image instanceof HTMLImageElement
+			? piece.image.src
+			: thumbnailFrom((ctx, size) => {
+				const { width, height } = sourceSize(piece.image);
+				const ratio = size / Math.max(width, height);
+				ctx.drawImage(piece.image, (size - width * ratio) / 2, (size - height * ratio) / 2, width * ratio, height * ratio);
+			}) })),
+		[editableStitch.pieces],
 	);
 	const styleBarFloats = styleBarMode === "floating";
 	const contextBar =
-		image && contextKind ? (
+		image && contextKind && !cropActive ? (
 			<ContextBar
 				kind={contextKind}
 				style={effectiveStyle}
@@ -1049,11 +1149,13 @@ export function Editor() {
 			<Toolbar
 				tool={tool}
 				onToolChange={setTool}
-				canUndo={history.past.length > 0}
-				canRedo={history.future.length > 0}
+				canUndo={!cropActive && history.past.length > 0}
+				canRedo={!cropActive && history.future.length > 0}
 				onUndo={undo}
 				onRedo={redo}
-				ready={Boolean(image)}
+				ready={Boolean(image) && !cropActive}
+				cropActive={cropActive}
+				onCrop={toggleCrop}
 				onCopy={() => void copyImage(copyCloses)}
 				onQuickSave={() => void quickSave()}
 				onSaveAs={() => void saveAs()}
@@ -1069,6 +1171,7 @@ export function Editor() {
 			/>
 			<div className="flex min-h-0 flex-1">
 				<Stage
+					ref={stageRef}
 					image={image}
 					unit={unit}
 					settings={settings}
@@ -1086,6 +1189,11 @@ export function Editor() {
 						setEditing((current) => (current ? { ...current, annotation } : current))
 					}
 					onFinishText={finishText}
+					cropActive={cropActive}
+					crop={cropDraft}
+					onCropChange={setCropDraft}
+					onCropApply={applyCrop}
+					onCropCancel={cancelCrop}
 					topMargin={styleBarFloats ? STAGE_TOP_MARGIN.floating : STAGE_TOP_MARGIN.clear}
 				>
 					{styleBarFloats && contextBar}
@@ -1096,7 +1204,7 @@ export function Editor() {
 					onExtract={extractText}
 					onCopyText={copyText}
 				/>
-				{inspectorOpen && (
+				{inspectorOpen && !cropActive && (
 					<Inspector
 						settings={settings}
 						onChange={updateSettings}
@@ -1110,7 +1218,7 @@ export function Editor() {
 						onSaveDefault={saveAsDefaultStyle}
 						onRestoreDefault={restoreDefaultStyle}
 						stitchSection={
-							stitch.pieces.length > 1 ? (
+							editableStitch.pieces.length > 1 ? (
 								<StitchPanel
 									pieces={stitchPieceViews}
 									settings={stitch.settings}

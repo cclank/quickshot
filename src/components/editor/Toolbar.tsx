@@ -1,5 +1,6 @@
 import {
 	Copy,
+	Crop,
 	Download,
 	FolderDown,
 	ImagePlus,
@@ -40,6 +41,8 @@ type ToolbarProps = {
 	onToggleInspector: () => void;
 	/** Takes another capture and stitches it onto this one. */
 	onStitch: () => void;
+	cropActive: boolean;
+	onCrop: () => void;
 	/** The current tool's style controls, shown next to the tools when they fit. */
 	styleBar: ReactNode;
 	/** Invisible copies of the widest style bar, full and with folded colours. */
@@ -73,6 +76,8 @@ export const Toolbar = memo(function Toolbar({
 	inspectorOpen,
 	onToggleInspector,
 	onStitch,
+	cropActive,
+	onCrop,
 	styleBar,
 	styleBarProbes,
 	onStyleBarModeChange,
@@ -169,14 +174,25 @@ export const Toolbar = memo(function Toolbar({
 							key={value}
 							label={t(`tool.${value}`)}
 							shortcut={keys(`tool.${value}` as KeymapCommand)}
-							active={tool === value}
-							aria-pressed={tool === value}
+							active={!cropActive && tool === value}
+							aria-pressed={!cropActive && tool === value}
 							onClick={() => onToolChange(value)}
 						>
 							<Icon size={16} strokeWidth={1.75} />
 						</IconButton>
 					);
 				})}
+				<Divider />
+				<IconButton
+					label={t("action.crop")}
+					shortcut={keys("crop")}
+					active={cropActive}
+					aria-pressed={cropActive}
+					onClick={onCrop}
+					disabled={!ready && !cropActive}
+				>
+					<Crop size={16} strokeWidth={1.75} />
+				</IconButton>
 			</div>
 
 			{styleBar}
