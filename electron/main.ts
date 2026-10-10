@@ -1,6 +1,7 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync, statSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { statSync } from "original-fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -4863,6 +4864,8 @@ app.whenReady().then(async () => {
 
 function readBundleStamp(bundle: string): BundleStamp | null {
 	try {
+		// Electron's patched fs fabricates Stats for ASAR paths. Read the actual
+		// archive so reopening an unchanged app does not look like an update.
 		const stats = statSync(path.join(bundle, "Contents", "Resources", "app.asar"));
 		return { ino: stats.ino, mtimeMs: stats.mtimeMs };
 	} catch {
