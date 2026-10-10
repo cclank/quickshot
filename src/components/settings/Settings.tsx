@@ -524,6 +524,20 @@ export function Settings() {
 					>
 						<Switch checked={copyCloses} label={t("settings.copyCloses")} onChange={setCopyCloses} />
 					</Row>
+					<Row
+						label={t("settings.doubleClickCopy")}
+						detail={
+							<p className="mt-1 text-[11.5px] text-[var(--qs-text-3)]">{t("settings.doubleClickCopyHint")}</p>
+						}
+					>
+						<Switch
+							checked={state.overlayDoubleClickCopy}
+							label={t("settings.doubleClickCopy")}
+							onChange={(enabled) =>
+								void api?.setOverlayDoubleClickCopy(enabled).then((result) => result.state && setState(result.state))
+							}
+						/>
+					</Row>
 					{state.launchAtLoginAvailable && (
 						<Row label={t("settings.launchAtLogin")}>
 							<Switch

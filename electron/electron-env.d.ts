@@ -36,6 +36,7 @@ interface SettingsState {
 	};
 	language: "auto" | "zh" | "en";
 	macCaptureMode: "overlay" | "system";
+	overlayDoubleClickCopy: boolean;
 	launchAtLogin: boolean;
 	launchAtLoginAvailable: boolean;
 	update: {
@@ -93,6 +94,8 @@ interface Window {
 				scroll?: boolean;
 				/** Whether S may switch to scrolling capture (macOS 14+). */
 				scrollAvailable?: boolean;
+				/** When true, double-clicking the selection only copies it. */
+				doubleClickCopy?: boolean;
 			};
 		}>;
 		regionSelectorReady: (
@@ -105,6 +108,8 @@ interface Window {
 			sessionId: number;
 			/** The selected area, encoded by the overlay. */
 			croppedImageBytes?: Uint8Array;
+			/** The styled export for clipboard copies, rendered by the overlay. */
+			composedImageBytes?: Uint8Array;
 			/** "scroll" starts a scrolling capture of `rect`. */
 			action?: "edit" | "copy" | "save" | "pin" | "scroll";
 			/** A clicked window, captured on its own by the main process. */
@@ -225,6 +230,8 @@ interface Window {
 				mimeType?: string;
 				scroll?: boolean;
 				scrollAvailable?: boolean;
+				/** When true, double-clicking the selection only copies it. */
+				doubleClickCopy?: boolean;
 			}) => void,
 		) => () => void;
 		onPinnedInteractionRestored: (callback: () => void) => () => void;
@@ -256,6 +263,7 @@ interface Window {
 			setRecording: (recording: boolean) => Promise<{ success: boolean }>;
 			setLanguage: (language: "auto" | "zh" | "en") => Promise<{ success: boolean; state?: SettingsState }>;
 			setCaptureMode: (mode: "overlay" | "system") => Promise<{ success: boolean; state?: SettingsState }>;
+			setOverlayDoubleClickCopy: (enabled: boolean) => Promise<{ success: boolean; state?: SettingsState }>;
 			setLaunchAtLogin: (enabled: boolean) => Promise<{ success: boolean; state?: SettingsState }>;
 			checkUpdate: () => Promise<{ success: boolean; state?: SettingsState }>;
 			installUpdate: () => Promise<{ success: boolean }>;

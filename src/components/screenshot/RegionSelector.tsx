@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { renderStyledCopy } from "@/editor/quickCompose";
 import { t } from "@/lib/i18n";
 import { bindingLabel, commandFor, useKeymap } from "@/lib/keymap";
 import { createFrameObjectUrl } from "@/lib/pngBytes";
-import { Check, X } from "lucide-react";
+import { Check, Copy, X } from "lucide-react";
 import {
 	type SelectionPoint as Point,
 	type SelectionHandle,
@@ -244,6 +245,8 @@ export function RegionSelector() {
 	keymapRef.current = keymap;
 	const scrollAvailableRef = useRef(false);
 	const scrollModeRef = useRef(false);
+	/** The session's double-click behaviour: copy the selection, or open the editor. */
+	const doubleClickCopyRef = useRef(false);
 	const [scrollMode, setScrollModeState] = useState(false);
 	const setScrollMode = useCallback((enabled: boolean) => {
 		scrollModeRef.current = enabled;
@@ -313,6 +316,7 @@ export function RegionSelector() {
 		setView(stateRef.current);
 		scrollAvailableRef.current = false;
 		scrollModeRef.current = false;
+		doubleClickCopyRef.current = false;
 		setScrollModeState(false);
 		if (clearActiveSession) activeSessionIdRef.current = null;
 		windowsRef.current = [];
@@ -352,6 +356,7 @@ export function RegionSelector() {
 			mimeType?: string;
 			scroll?: boolean;
 			scrollAvailable?: boolean;
+			doubleClickCopy?: boolean;
 		}) => {
 			if (
 				disposed ||
@@ -366,6 +371,7 @@ export function RegionSelector() {
 			clearRegionSession(false);
 			activeSessionIdRef.current = payload.sessionId;
 			scrollAvailableRef.current = Boolean(payload.scrollAvailable);
+			doubleClickCopyRef.current = Boolean(payload.doubleClickCopy);
 			setScrollMode(Boolean(payload.scroll && payload.scrollAvailable));
 			let imageLoadCancel: (() => void) | null = null;
 
@@ -471,12 +477,16 @@ export function RegionSelector() {
 
 	// ── Completion ────────────────────────────────────────────────────────────
 	/**
-	 * Opens the editor with `rect` (CSS pixels). The main process does the
+	 * Hands `rect` (CSS pixels) to the main process: "edit" opens the editor —
+	 * in scrolling mode it starts a scrolling capture instead — and "copy"
+	 * puts the capture straight onto the clipboard. The main process does the
 	 * cropping from the lossless frame, or captures a clicked window on its own.
-	 * In scrolling mode it starts a scrolling capture of `rect` instead.
+	 * For "copy" the overlay also renders the styled export (the editor's
+	 * background, frame and watermark) so the clipboard never holds a bare
+	 * crop.
 	 */
 	const submit = useCallback(
-		async (rect: SelectionRect, target: DetectedWindow | null) => {
+		async (rect: SelectionRect, target: DetectedWindow | null, intent: "edit" | "copy" = "edit") => {
 			const state = stateRef.current;
 			const image = sourceImageRef.current;
 			const sessionId = activeSessionIdRef.current;
@@ -492,16 +502,45 @@ export function RegionSelector() {
 				height: Math.min(image.naturalHeight - y, Math.round(rect.height * scaleY)),
 			};
 			if (pixels.width < MIN_SELECTION || pixels.height < MIN_SELECTION) return;
-			const scroll = scrollModeRef.current;
+			const scroll = intent === "copy" ? false : scrollModeRef.current;
 			state.submitting = true;
 			scheduleRender();
 
 			try {
+				// A straight copy skips the editor, so the styled export the editor
+				// would produce is rendered here and handed over with the selection.
+				let composedImageBytes: Uint8Array | undefined;
+				if (intent === "copy") {
+					try {
+						const crop = document.createElement("canvas");
+						crop.width = pixels.width;
+						crop.height = pixels.height;
+						const context = crop.getContext("2d");
+						if (context) {
+							context.drawImage(
+								image,
+								pixels.x,
+								pixels.y,
+								pixels.width,
+								pixels.height,
+								0,
+								0,
+								pixels.width,
+								pixels.height,
+							);
+							const unit = Math.min(4, Math.max(1, image.naturalWidth / window.innerWidth));
+							composedImageBytes = (await renderStyledCopy(crop, unit)) ?? undefined;
+						}
+					} catch (composeError) {
+						console.error("QuickShot could not render the styled copy", composeError);
+					}
+				}
 				const result = await window.electronAPI.screenshotRegionSelected({
 					sessionId,
-					action: scroll ? "scroll" : "edit",
+					action: intent === "copy" ? "copy" : scroll ? "scroll" : "edit",
 					rect: pixels,
-					windowId: scroll ? undefined : target?.id,
+					windowId: scroll || intent === "copy" ? undefined : target?.id,
+					composedImageBytes,
 				});
 				if (activeSessionIdRef.current !== sessionId || result.success) return;
 				if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
@@ -522,6 +561,12 @@ export function RegionSelector() {
 	const confirmSelection = useCallback(() => {
 		const selection = stateRef.current.selection;
 		if (selection) void submit(selection, null);
+	}, [submit]);
+
+	/** Copies the selected area straight to the clipboard, skipping the editor. */
+	const copySelection = useCallback(() => {
+		const selection = stateRef.current.selection;
+		if (selection) void submit(selection, null, "copy");
 	}, [submit]);
 
 	/** Drops the selection, back to choosing a window or drawing an area. */
@@ -655,7 +700,10 @@ export function RegionSelector() {
 	const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
 		const selection = stateRef.current.selection;
 		if (selection && selectionHandleAt(selection, { x: event.clientX, y: event.clientY }) === "move") {
-			confirmSelection();
+			// Most captures are pasted straight away, so the setting lets a
+			// double-click skip the editor; by default it opens QuickShot.
+			if (doubleClickCopyRef.current) copySelection();
+			else confirmSelection();
 		}
 	};
 
@@ -671,7 +719,7 @@ export function RegionSelector() {
 	// The buttons go under the selection, above it near the bottom, or inside when it fills the screen.
 	const actionsPosition = selection
 		? {
-				left: Math.min(Math.max(8, selection.x + selection.width - 200), window.innerWidth - 208),
+				left: Math.min(Math.max(8, selection.x + selection.width - 260), window.innerWidth - 268),
 				top:
 					selection.y + selection.height + 50 <= window.innerHeight
 						? selection.y + selection.height + 10
@@ -726,7 +774,7 @@ export function RegionSelector() {
 
 			{selection && actionsPosition && !view.submitting && !view.adjust && (
 				<div
-					className="absolute flex w-[200px] items-center justify-end gap-1"
+					className="absolute flex w-[260px] items-center justify-end gap-1"
 					style={actionsPosition}
 					onPointerDown={(event) => event.stopPropagation()}
 					onDoubleClick={(event) => event.stopPropagation()}
@@ -740,6 +788,16 @@ export function RegionSelector() {
 							className="flex h-7 w-7 cursor-default items-center justify-center rounded-[7px] text-white/80 hover:bg-white/10 hover:text-white"
 						>
 							<X size={15} strokeWidth={2} />
+						</button>
+						<button
+							type="button"
+							aria-label={t("region.copy")}
+							title={t("region.copy")}
+							onClick={copySelection}
+							className="flex h-7 cursor-default items-center gap-1.5 rounded-[7px] px-2.5 text-[12px] font-medium text-white/80 hover:bg-white/10 hover:text-white"
+						>
+							<Copy size={14} strokeWidth={2} />
+							{t("region.copy")}
 						</button>
 						<button
 							type="button"
