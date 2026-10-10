@@ -237,6 +237,15 @@ Builds installed with `npm run install:mac:local` skip the automatic checks, so 
 
 Issues and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
+## Contributors
+
+Thank you to the contributors who help improve QuickShot.
+
+| Contributor | Contributions |
+| --- | --- |
+| [@wlzh](https://github.com/wlzh) | Transparent icon corners ([#4](https://github.com/cclank/quickshot/pull/4)), capture overlay copy actions and a double-click setting ([#5](https://github.com/cclank/quickshot/pull/5)), idle window recycling ([#6](https://github.com/cclank/quickshot/pull/6)), and stable local signing requirements ([#7](https://github.com/cclank/quickshot/pull/7)). |
+| [@dcn-autotest-team](https://github.com/dcn-autotest-team) | Capture size rounding for fractional display scale factors ([#3](https://github.com/cclank/quickshot/pull/3)). |
+
 ## Project origins and wallpaper notice
 
 QuickShot's early implementation grew out of OpenScreen's screenshot work. The current resource loader and renderer build configuration have been reworked for QuickShot. We acknowledge the project's origins and thank OpenScreen's author, Siddharth Vaddem; the original code copyright and MIT terms are preserved in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

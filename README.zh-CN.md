@@ -208,6 +208,15 @@ WRANGLER=/path/to/wrangler node scripts/publish-update-feed.mjs vX.Y.Z
 
 欢迎提交 Issue 和 Pull Request，请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
+## 贡献者
+
+感谢以下贡献者为 QuickShot 带来的改进。
+
+| 贡献者 | 贡献 |
+| --- | --- |
+| [@wlzh](https://github.com/wlzh) | 图标透明边角（[#4](https://github.com/cclank/quickshot/pull/4)）、选区复制操作与双击选项（[#5](https://github.com/cclank/quickshot/pull/5)）、空闲窗口内存回收（[#6](https://github.com/cclank/quickshot/pull/6)）、本地签名要求修复（[#7](https://github.com/cclank/quickshot/pull/7)）。 |
+| [@dcn-autotest-team](https://github.com/dcn-autotest-team) | 修复非整数显示缩放下的截图尺寸取整（[#3](https://github.com/cclank/quickshot/pull/3)）。 |
+
 ## 项目来源与壁纸声明
 
 QuickShot 的早期实现由 OpenScreen 的截图相关工作发展而来。当前资源加载逻辑和界面构建配置已针对 QuickShot 重新实现与整理。我们保留项目来源记录，感谢 OpenScreen 原作者 Siddharth Vaddem，并在 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 中保留原代码的版权声明和 MIT 许可全文。
