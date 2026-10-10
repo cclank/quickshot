@@ -70,10 +70,6 @@
 				platform: "darwin",
 				language: parameters.get("lang") || undefined,
 				scrollCapture: {
-					movePanel: async (phase, x, y) => {
-						window.__quickshotScrollFixture.moves.push({ phase, x, y });
-						return { success: true };
-					},
 					getState: async () => ({ success: true, progress: state, previewBytes: await previewBytes(state.height) }),
 					finish: async () => {
 						window.__quickshotScrollFixture.finished += 1;

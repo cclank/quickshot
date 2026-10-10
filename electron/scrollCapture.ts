@@ -165,7 +165,7 @@ export function scrollPanelLayout(area: Rect, workAreas: readonly Rect[]): Rect 
 	return best!;
 }
 
-/** Keep a dragged panel's title and buttons on the destination display. */
+/** Keep a panel within the destination work area when choosing its initial position. */
 export function clampScrollPanelPosition(position: { x: number; y: number }, size: { width: number; height: number }, workArea: Rect) {
 	return {
 		x: Math.round(clamp(position.x, workArea.x + EDGE_MARGIN, workArea.x + Math.max(EDGE_MARGIN, workArea.width - size.width - EDGE_MARGIN))),

@@ -132,8 +132,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		getState: () => ipcRenderer.invoke("get-scroll-capture-state"),
 		finish: () => ipcRenderer.invoke("finish-scroll-capture"),
 		cancel: () => ipcRenderer.invoke("cancel-scroll-capture"),
-		movePanel: (phase: "start" | "move" | "end", x: number, y: number) =>
-			ipcRenderer.invoke("move-scroll-capture-panel", { phase, x, y }),
 		onProgress: (callback: (progress: unknown) => void) => {
 			const listener = (_event: Electron.IpcRendererEvent, progress: unknown) => callback(progress);
 			ipcRenderer.on("scroll-capture-progress", listener);

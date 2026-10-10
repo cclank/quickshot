@@ -37,7 +37,6 @@ import { findOpaqueBounds, getWindowCaptureArguments } from "./windowCapture";
 import {
 	type Rect as ScrollRect,
 	type ScrollProgress,
-	clampScrollPanelPosition,
 	parseScrollProgress,
 	scrollPanelLayout,
 	scrollMaxHeight,
@@ -3395,7 +3394,6 @@ type ScrollSession = {
 	finishing: boolean;
 	startedAt: number;
 	timer: NodeJS.Timeout | null;
-	panelDrag: { cursor: { x: number; y: number }; position: { x: number; y: number }; timer: NodeJS.Timeout } | null;
 };
 
 const SCROLL_START_TIMEOUT_MS = 5_000;
@@ -3468,7 +3466,6 @@ async function startScrollCapture(sessionId: number, rect: unknown): Promise<boo
 		finishing: false,
 		startedAt: Date.now(),
 		timer: null,
-		panelDrag: null,
 	};
 	scrollSession = session;
 	yieldForegroundForScroll();
@@ -3598,21 +3595,6 @@ function createScrollPanel(area: ScrollRect, display: Display) {
 	return panel;
 }
 
-function moveScrollPanel(session: ScrollSession, cursor: { x: number; y: number }) {
-	const panel = session.panel;
-	const drag = session.panelDrag;
-	if (!panel || panel.isDestroyed() || !drag) return;
-	const desired = { x: drag.position.x + cursor.x - drag.cursor.x, y: drag.position.y + cursor.y - drag.cursor.y };
-	const destination = screen.getDisplayNearestPoint({ x: Math.round(cursor.x), y: Math.round(cursor.y) }).workArea;
-	const position = clampScrollPanelPosition(desired, panel.getBounds(), destination);
-	panel.setPosition(position.x, position.y);
-}
-
-function endScrollPanelDrag(session: ScrollSession) {
-	if (session.panelDrag) clearInterval(session.panelDrag.timer);
-	session.panelDrag = null;
-}
-
 function sendScrollProgress(session: ScrollSession, withPreview: boolean) {
 	const panel = session.panel;
 	if (!panel || panel.isDestroyed()) return;
@@ -3724,7 +3706,6 @@ function stopScrollSession(reason: string) {
 
 function endScrollSession(session: ScrollSession) {
 	if (scrollSession !== session) return;
-	endScrollPanelDrag(session);
 	scrollSession = null;
 	if (session.timer) clearTimeout(session.timer);
 	for (const key of SCROLL_SHORTCUTS) {
@@ -4397,36 +4378,6 @@ function registerIpcHandlers() {
 		const session = scrollSession;
 		if (!session || !isTrustedWindowSender(event, session.panel)) return { success: false };
 		cancelScrollCapture("panel");
-		return { success: true };
-	});
-
-	ipcMain.handle("move-scroll-capture-panel", (event, payload: unknown) => {
-		const session = scrollSession;
-		const panel = session?.panel;
-		if (!session || !panel || panel.isDestroyed() || !isTrustedWindowSender(event, panel) || !payload || typeof payload !== "object") {
-			return { success: false };
-		}
-		const { phase, x, y } = payload as Record<string, unknown>;
-		if (phase === "end") {
-			if (typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y) && Math.abs(x) <= 1_000_000 && Math.abs(y) <= 1_000_000) moveScrollPanel(session, { x, y });
-			endScrollPanelDrag(session);
-			return { success: true };
-		}
-		if ((phase !== "start" && phase !== "move") || typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > 1_000_000 || Math.abs(y) > 1_000_000) {
-			return { success: false };
-		}
-		const bounds = panel.getBounds();
-		if (phase === "start") {
-			endScrollPanelDrag(session);
-			// A non-activating macOS panel may send only pointer down/up. Follow
-			// the system cursor while held, and apply the final pointer on release.
-			const timer = setInterval(() => moveScrollPanel(session, screen.getCursorScreenPoint()), 16);
-			timer.unref();
-			session.panelDrag = { cursor: { x, y }, position: { x: bounds.x, y: bounds.y }, timer };
-			return { success: true };
-		}
-		if (!session.panelDrag) return { success: false };
-		moveScrollPanel(session, { x, y });
 		return { success: true };
 	});
 

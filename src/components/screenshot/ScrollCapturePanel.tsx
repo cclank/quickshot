@@ -31,7 +31,6 @@ export function ScrollCapturePanel() {
 	const [lostShown, setLostShown] = useState(false);
 	const previewUrlRef = useRef<string | null>(null);
 	const previewBoxRef = useRef<HTMLDivElement>(null);
-	const dragPointerRef = useRef<number | null>(null);
 
 	const applyPreview = useCallback((bytes: Uint8Array | undefined) => {
 		if (!bytes) return;
@@ -87,29 +86,8 @@ export function ScrollCapturePanel() {
 		<div className="flex h-screen select-none p-2 text-white">
 			<div className="flex min-h-0 w-full flex-col rounded-[18px] border border-white/10 bg-[rgba(28,28,30,0.94)] p-3.5 shadow-[0_12px_32px_rgba(0,0,0,0.35)] backdrop-blur-xl">
 				<div
-					className="qs-no-drag flex cursor-grab touch-none items-center gap-1.5 active:cursor-grabbing"
+					className="qs-drag flex cursor-grab touch-none items-center gap-1.5 active:cursor-grabbing"
 					title={t("scroll.dragHint")}
-					onPointerDown={(event) => {
-						if (event.button !== 0 || !window.electronAPI.scrollCapture?.movePanel) return;
-						event.preventDefault();
-						dragPointerRef.current = event.pointerId;
-						event.currentTarget.setPointerCapture(event.pointerId);
-						void window.electronAPI.scrollCapture.movePanel("start", event.screenX, event.screenY);
-					}}
-					onPointerMove={(event) => {
-						if (dragPointerRef.current !== event.pointerId) return;
-						void window.electronAPI.scrollCapture?.movePanel?.("move", event.screenX, event.screenY);
-					}}
-					onPointerUp={(event) => {
-						if (dragPointerRef.current !== event.pointerId) return;
-						dragPointerRef.current = null;
-						event.currentTarget.releasePointerCapture(event.pointerId);
-						void window.electronAPI.scrollCapture?.movePanel?.("end", event.screenX, event.screenY);
-					}}
-					onPointerCancel={(event) => {
-						dragPointerRef.current = null;
-						void window.electronAPI.scrollCapture?.movePanel?.("end", event.screenX, event.screenY);
-					}}
 				>
 					<GripVertical size={12} className="shrink-0 text-white/40" aria-hidden="true" />
 					<span
