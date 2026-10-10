@@ -74,7 +74,8 @@ Get them from the [latest release](https://github.com/cclank/quickshot/releases/
 - **One shortcut, anywhere.** `⌘⇧X` on macOS, `Ctrl+Shift+X` on Windows, or click the tray icon.
 - **QuickShot selection** (default): the screen stays exactly as it is. Hover to ring the window under the pointer in a soft spectrum and click to capture just that window and open the editor. Or drag out an area: after you let go you can still move it, resize it by an edge or corner, or nudge it with the arrow keys, then press Return, double-click or click ✓ to open the editor (Esc starts over). On macOS a window is captured on its own, so overlapping windows are left out and rounded corners stay transparent.
 - **System selection** (optional on macOS, via the tray menu → Selection Style): the native crosshair, including `Space` to capture a single window.
-- The editor window is kept warm in the background, so it opens the moment you finish selecting.
+- The selection's **Copy** button copies the original capture and closes the overlay. In Settings, **Double-Click Copies Only** makes double-clicking a selection do the same; it is off by default. Opening the editor leaves your clipboard unchanged, and copying from the editor exports your current annotations and style.
+- The editor window is kept warm in the background. After ten minutes without a capture, hidden helper windows are released to save memory and rebuilt when needed.
 
 <p align="center">
   <img src="docs/images/selection.jpg" alt="QuickShot ringing the window under the pointer in a spectrum outline, with its name and size, over an unchanged screen" width="720" />

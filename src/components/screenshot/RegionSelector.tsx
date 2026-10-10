@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { renderStyledCopy } from "@/editor/quickCompose";
 import { t } from "@/lib/i18n";
 import { bindingLabel, commandFor, useKeymap } from "@/lib/keymap";
 import { createFrameObjectUrl } from "@/lib/pngBytes";
@@ -481,9 +480,7 @@ export function RegionSelector() {
 	 * in scrolling mode it starts a scrolling capture instead — and "copy"
 	 * puts the capture straight onto the clipboard. The main process does the
 	 * cropping from the lossless frame, or captures a clicked window on its own.
-	 * For "copy" the overlay also renders the styled export (the editor's
-	 * background, frame and watermark) so the clipboard never holds a bare
-	 * crop.
+	 * Quick copies use the original capture. Styling stays in the editor.
 	 */
 	const submit = useCallback(
 		async (rect: SelectionRect, target: DetectedWindow | null, intent: "edit" | "copy" = "edit") => {
@@ -507,40 +504,11 @@ export function RegionSelector() {
 			scheduleRender();
 
 			try {
-				// A straight copy skips the editor, so the styled export the editor
-				// would produce is rendered here and handed over with the selection.
-				let composedImageBytes: Uint8Array | undefined;
-				if (intent === "copy") {
-					try {
-						const crop = document.createElement("canvas");
-						crop.width = pixels.width;
-						crop.height = pixels.height;
-						const context = crop.getContext("2d");
-						if (context) {
-							context.drawImage(
-								image,
-								pixels.x,
-								pixels.y,
-								pixels.width,
-								pixels.height,
-								0,
-								0,
-								pixels.width,
-								pixels.height,
-							);
-							const unit = Math.min(4, Math.max(1, image.naturalWidth / window.innerWidth));
-							composedImageBytes = (await renderStyledCopy(crop, unit)) ?? undefined;
-						}
-					} catch (composeError) {
-						console.error("QuickShot could not render the styled copy", composeError);
-					}
-				}
 				const result = await window.electronAPI.screenshotRegionSelected({
 					sessionId,
 					action: intent === "copy" ? "copy" : scroll ? "scroll" : "edit",
 					rect: pixels,
-					windowId: scroll || intent === "copy" ? undefined : target?.id,
-					composedImageBytes,
+					windowId: scroll ? undefined : target?.id,
 				});
 				if (activeSessionIdRef.current !== sessionId || result.success) return;
 				if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
@@ -702,7 +670,7 @@ export function RegionSelector() {
 		if (selection && selectionHandleAt(selection, { x: event.clientX, y: event.clientY }) === "move") {
 			// Most captures are pasted straight away, so the setting lets a
 			// double-click skip the editor; by default it opens QuickShot.
-			if (doubleClickCopyRef.current) copySelection();
+			if (doubleClickCopyRef.current && !scrollModeRef.current) copySelection();
 			else confirmSelection();
 		}
 	};
@@ -789,16 +757,18 @@ export function RegionSelector() {
 						>
 							<X size={15} strokeWidth={2} />
 						</button>
-						<button
-							type="button"
-							aria-label={t("region.copy")}
-							title={t("region.copy")}
-							onClick={copySelection}
-							className="flex h-7 cursor-default items-center gap-1.5 rounded-[7px] px-2.5 text-[12px] font-medium text-white/80 hover:bg-white/10 hover:text-white"
-						>
-							<Copy size={14} strokeWidth={2} />
-							{t("region.copy")}
-						</button>
+						{!scrollMode && (
+							<button
+								type="button"
+								aria-label={t("region.copy")}
+								title={t("region.copy")}
+								onClick={copySelection}
+								className="flex h-7 cursor-default items-center gap-1.5 rounded-[7px] px-2.5 text-[12px] font-medium text-white/80 hover:bg-white/10 hover:text-white"
+							>
+								<Copy size={14} strokeWidth={2} />
+								{t("region.copy")}
+							</button>
+						)}
 						<button
 							type="button"
 							onClick={confirmSelection}

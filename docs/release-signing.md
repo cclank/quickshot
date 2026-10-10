@@ -1,19 +1,19 @@
 # macOS 发布签名
 
-macOS 把录屏权限记在应用的签名身份（designated requirement）上。ad-hoc 签名的身份绑定构建哈希，每次构建都会变，用户每次更新都得重新打开录屏权限。因此本机安装和公开发布统一使用自签名证书 `QuickShot Local Signing`（2026-10-09 创建，2036-10-06 到期），签名身份固定为：
+macOS 把录屏权限记在应用的签名身份（designated requirement）上。ad-hoc 签名的身份绑定构建哈希，每次构建都会变，更新后可能需要重新授权。本机安装已使用自签名证书 `QuickShot Local Signing`（2026-10-09 创建，2036-10-06 到期）。截至公开版 1.3.1，CI 尚未配置这张证书，公开包仍使用 ad-hoc 签名。以下配置步骤用于在决定启用 CI 签名时统一两种构建的身份：
 
 ```
 identifier "com.quickshot.app" and certificate leaf = H"04da0be632515e04ce46fe9be3f36a8ee76597c6"
 ```
 
-这个值写在 `scripts/mac-signing-policy.mjs` 的 `RELEASE_REQUIREMENT` 中。本机构建由 `scripts/sign-mac-local.mjs` 签名；发布构建由 CI 从 `CSC_LINK` 导入证书，再由 `scripts/mac-sign.mjs` 签名。macOS 把这张自签名证书判定为“不受信任”，electron-builder 默认会跳过它并退回 ad-hoc 签名，`mac-sign.mjs` 负责改用导入的证书。构建完成后，`scripts/check-mac-signature.mjs` 核对两个架构的应用，签名身份不符时发布失败。
+这个值写在 `scripts/mac-signing-policy.mjs` 的 `RELEASE_REQUIREMENT` 中。本机构建由 `scripts/sign-mac-local.mjs` 显式指定证书和 designated requirement 后签名。配置 `CSC_LINK` 后，发布构建由 CI 导入证书，再由 `scripts/mac-sign.mjs` 签名。macOS 把这张自签名证书判定为“不受信任”，electron-builder 默认会跳过它并退回 ad-hoc 签名，`mac-sign.mjs` 负责改用导入的证书。启用证书签名后，CI 会运行 `scripts/check-mac-signature.mjs` 核对两个架构的应用，签名身份不符时发布失败；未配置证书时，这项检查会跳过。
 
 ## 对公开版用户的影响
 
 - 第一个用证书签名的版本发布后，之后的每次更新都会保留录屏权限。
-- 从 ad-hoc 签名的旧版（1.2.0 及更早）升级到第一个证书签名版本时，用户还需要重新授权一次。
+- 从 ad-hoc 签名的旧版（包括 1.3.1）升级到第一个证书签名版本时，用户还需要重新授权一次。
 - 证书没有经过 Apple 公证，首次打开 DMG 里的应用仍会出现“无法验证开发者”提示，处理方式与以前相同。应用内自动更新会清除隔离属性，所以不会再出现这个提示。
-- 本机安装和公开版身份相同，可以互相覆盖安装，权限都会保留。
+- CI 启用同一本机证书并通过验签后，本机安装和公开版才能保持相同身份。当前两种构建的签名身份不同。
 
 ## 私钥保管
 
