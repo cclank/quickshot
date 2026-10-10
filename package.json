@@ -1,7 +1,7 @@
 {
 	"name": "quickshot",
 	"private": true,
-	"version": "1.3.1",
+	"version": "1.3.2",
 	"type": "module",
 	"description": "Fast, local-first screenshot tool for macOS and Windows with polished annotations and presentation-ready backgrounds",
 	"author": "岚叔 (https://github.com/cclank)",
