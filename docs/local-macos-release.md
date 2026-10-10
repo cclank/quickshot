@@ -25,7 +25,7 @@
 
 本机签名以打包时实际可用的身份为准。ad-hoc 签名的 designated requirement 绑定构建哈希，每次构建都会变化，系统会把新包当作另一个应用而要求重新授权。因此本机使用登录钥匙串中的自签名代码签名证书 `QuickShot Local Signing`（2026-10-09 创建并完成迁移），签名脚本显式指定 `identifier "com.quickshot.app" and certificate leaf = …`，跨构建保持不变；日常更新直接运行 `npm run install:mac:local`，签名兼容性校验通过后原位替换。
 
-截至公开版 1.3.1，CI 尚未配置固定证书，公开包仍使用 ad-hoc 签名。将公开版覆盖到本机构建上会改变签名身份，需要重新授权；本机构建带有 `local-build` 标记，会跳过自动更新检查。只有以后按 [发布签名配置](release-signing.md) 在 CI 启用同一证书并通过验签，才可以在两种构建间保持签名身份。
+截至公开版 1.3.3，CI 尚未配置固定证书，公开包仍使用 ad-hoc 签名。将公开版覆盖到本机构建上会改变签名身份，需要重新授权；本机构建带有 `local-build` 标记，会跳过自动更新检查。只有以后按 [发布签名配置](release-signing.md) 在 CI 启用同一证书并通过验签，才可以在两种构建间保持签名身份。
 
 在没有这张证书的机器上：签名脚本会报错停止。可以在「钥匙串访问 → 证书助理 → 创建证书」中创建同名的自签名根证书（类型选“代码签名”），再运行一次 `node scripts/install-electron-mac.mjs --migrate-signing`；这次迁移需要用户重新授权一次。只有用户明确接受每次重新授权时，才使用 `--accept-reauthorization` 安装 ad-hoc 包。遇到签名不兼容应停止安装并向用户说明，不能承诺绝不弹窗。
 
