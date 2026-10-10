@@ -1,24 +1,26 @@
 export async function decodeImageData(src: string): Promise<HTMLImageElement> {
 	const img = new Image();
-	img.decoding = "sync";
-	img.src = src;
-
-	if (img.complete && img.naturalWidth > 0) {
-		return img;
-	}
-
-	if (typeof img.decode === "function") {
-		try {
-			await img.decode();
-			return img;
-		} catch {
-			// fall through to load event
-		}
-	}
-
+	// Chromium can leave decode() pending for very tall images in a hidden
+	// editor. Loading supplies the dimensions; painting can decode once shown.
+	img.decoding = "async";
 	await new Promise<void>((resolve, reject) => {
-		img.onload = () => resolve();
-		img.onerror = () => reject(new Error("Failed to decode image"));
+		const cleanup = () => {
+			img.onload = null;
+			img.onerror = null;
+		};
+		const loaded = () => {
+			cleanup();
+			if (img.naturalWidth > 0 && img.naturalHeight > 0) resolve();
+			else reject(new Error("Failed to load image"));
+		};
+		img.onload = loaded;
+		img.onerror = () => {
+			cleanup();
+			reject(new Error("Failed to load image"));
+		};
+		// Install listeners first so cached images and early errors cannot be lost.
+		img.src = src;
+		if (img.complete) loaded();
 	});
 
 	return img;

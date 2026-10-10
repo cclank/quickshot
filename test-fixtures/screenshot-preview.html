@@ -129,6 +129,12 @@
 			async function getScreenshotBytes() {
 				if (!screenshotBytesPromise) {
 					screenshotBytesPromise = (async () => {
+						// PNG fixtures keep their original bytes, including long captures.
+						if (new URL(fixtureSource, window.location.href).pathname.endsWith(".png")) {
+							const response = await fetch(fixtureSource);
+							if (!response.ok) throw new Error("PNG fixture could not be loaded");
+							return new Uint8Array(await response.arrayBuffer());
+						}
 						const source = new Image();
 						source.src = fixtureSource;
 						await source.decode();

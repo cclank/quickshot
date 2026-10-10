@@ -4,6 +4,8 @@ import {
 	SCROLL_PANEL_SIZE,
 	parseScrollProgress,
 	placeScrollPanel,
+	scrollPanelLayout,
+	clampScrollPanelPosition,
 	scrollMaxHeight,
 	scrollRegionFromSelection,
 	scrollRingLayout,
@@ -66,15 +68,48 @@ describe("scrolling capture panel", () => {
 		});
 	});
 
-	it("tucks into the corner of an area that fills the screen", () => {
+	it("uses the screen edge when an area fills the screen", () => {
 		expect(placeScrollPanel({ x: 0, y: 0, width: 1512, height: 982 }, workArea)).toEqual({
-			x: 1504 - 16 - SCROLL_PANEL_SIZE.width,
-			y: 974 - 16 - SCROLL_PANEL_SIZE.height,
+			x: 1504 - SCROLL_PANEL_SIZE.width,
+			y: 974 - SCROLL_PANEL_SIZE.height,
 		});
 	});
 
 	it("stays on screen next to an area near the top", () => {
 		expect(placeScrollPanel({ x: 100, y: 0, width: 500, height: 300 }, workArea).y).toBe(41);
+	});
+
+	it("uses a free adjacent display before overlapping the capture", () => {
+		const bounds = scrollPanelLayout(display, [workArea, { x: -1280, y: 0, width: 1280, height: 800 }]);
+		expect(bounds.x + bounds.width).toBeLessThanOrEqual(0);
+		expect(bounds.width).toBe(SCROLL_PANEL_SIZE.width);
+	});
+
+	it("keeps the preview on a destination display separated by a desktop gap", () => {
+		const other = { x: 2000, y: -100, width: 1280, height: 800 };
+		const bounds = scrollPanelLayout(display, [workArea, other]);
+		expect(bounds.x).toBeGreaterThanOrEqual(other.x + 8);
+		expect(bounds.x + bounds.width).toBeLessThanOrEqual(other.x + other.width - 8);
+	});
+
+	it("fits a smaller preview in a free strip before overlapping", () => {
+		const area = { x: 0, y: 0, width: 900, height: 700 };
+		const bounds = scrollPanelLayout(area, [{ x: 0, y: 0, width: 1160, height: 800 }]);
+		expect(bounds.x).toBeGreaterThanOrEqual(area.width);
+		expect(bounds.width).toBe(220);
+	});
+
+	it("reduces overlap when the selected area leaves no free space", () => {
+		const bounds = scrollPanelLayout(display, [workArea]);
+		expect(bounds.width).toBe(220);
+		expect(bounds.height).toBe(300);
+		expect(bounds.x + bounds.width).toBeLessThanOrEqual(workArea.width);
+		expect(bounds.y + bounds.height).toBeLessThanOrEqual(workArea.y + workArea.height);
+	});
+
+	it("keeps dragged panels reachable on displays with negative coordinates", () => {
+		const destination = { x: -1280, y: -200, width: 1280, height: 800 };
+		expect(clampScrollPanelPosition({ x: -3000, y: 900 }, SCROLL_PANEL_SIZE, destination)).toEqual({ x: -1272, y: 172 });
 	});
 });
 

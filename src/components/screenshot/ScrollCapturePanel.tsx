@@ -1,4 +1,4 @@
-import { CornerDownLeft } from "lucide-react";
+import { CornerDownLeft, GripVertical } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LANGUAGE, t } from "@/lib/i18n";
 import { createFrameObjectUrl } from "@/lib/pngBytes";
@@ -31,6 +31,7 @@ export function ScrollCapturePanel() {
 	const [lostShown, setLostShown] = useState(false);
 	const previewUrlRef = useRef<string | null>(null);
 	const previewBoxRef = useRef<HTMLDivElement>(null);
+	const dragPointerRef = useRef<number | null>(null);
 
 	const applyPreview = useCallback((bytes: Uint8Array | undefined) => {
 		if (!bytes) return;
@@ -85,7 +86,32 @@ export function ScrollCapturePanel() {
 	return (
 		<div className="flex h-screen select-none p-2 text-white">
 			<div className="flex min-h-0 w-full flex-col rounded-[18px] border border-white/10 bg-[rgba(28,28,30,0.94)] p-3.5 shadow-[0_12px_32px_rgba(0,0,0,0.35)] backdrop-blur-xl">
-				<div className="qs-drag flex items-center gap-2">
+				<div
+					className="qs-no-drag flex cursor-grab touch-none items-center gap-1.5 active:cursor-grabbing"
+					title={t("scroll.dragHint")}
+					onPointerDown={(event) => {
+						if (event.button !== 0 || !window.electronAPI.scrollCapture?.movePanel) return;
+						event.preventDefault();
+						dragPointerRef.current = event.pointerId;
+						event.currentTarget.setPointerCapture(event.pointerId);
+						void window.electronAPI.scrollCapture.movePanel("start", event.screenX, event.screenY);
+					}}
+					onPointerMove={(event) => {
+						if (dragPointerRef.current !== event.pointerId) return;
+						void window.electronAPI.scrollCapture?.movePanel?.("move", event.screenX, event.screenY);
+					}}
+					onPointerUp={(event) => {
+						if (dragPointerRef.current !== event.pointerId) return;
+						dragPointerRef.current = null;
+						event.currentTarget.releasePointerCapture(event.pointerId);
+						void window.electronAPI.scrollCapture?.movePanel?.("end", event.screenX, event.screenY);
+					}}
+					onPointerCancel={(event) => {
+						dragPointerRef.current = null;
+						void window.electronAPI.scrollCapture?.movePanel?.("end", event.screenX, event.screenY);
+					}}
+				>
+					<GripVertical size={12} className="shrink-0 text-white/40" aria-hidden="true" />
 					<span
 						aria-hidden="true"
 						className={`h-2.5 w-2.5 shrink-0 rounded-full ${live ? "animate-pulse" : ""}`}
@@ -96,8 +122,9 @@ export function ScrollCapturePanel() {
 						{height > 0 ? `${height.toLocaleString(LANGUAGE === "zh" ? "zh-CN" : "en-US")} px` : ""}
 					</span>
 				</div>
-				<div className="qs-drag mt-0.5 h-4 text-right text-[11px] tabular-nums text-white/45">
-					{screens >= 1.05 ? t("scroll.screens", { count: screens.toFixed(1) }) : ""}
+				<div className="mt-0.5 flex h-4 justify-between text-[10px] tabular-nums text-white/45">
+					<span>{t("scroll.dragHint")}</span>
+					<span>{screens >= 1.05 ? t("scroll.screens", { count: screens.toFixed(1) }) : ""}</span>
 				</div>
 
 				<div

@@ -19,7 +19,7 @@
 			const held = parameters.get("status");
 			const frameHeight = 1800;
 			const width = 1600;
-			window.__quickshotScrollFixture = { finished: 0, cancelled: 0 };
+			window.__quickshotScrollFixture = { finished: 0, cancelled: 0, moves: [] };
 
 			// A fake article, drawn at the agent's preview width.
 			const page = document.createElement("canvas");
@@ -70,6 +70,10 @@
 				platform: "darwin",
 				language: parameters.get("lang") || undefined,
 				scrollCapture: {
+					movePanel: async (phase, x, y) => {
+						window.__quickshotScrollFixture.moves.push({ phase, x, y });
+						return { success: true };
+					},
 					getState: async () => ({ success: true, progress: state, previewBytes: await previewBytes(state.height) }),
 					finish: async () => {
 						window.__quickshotScrollFixture.finished += 1;

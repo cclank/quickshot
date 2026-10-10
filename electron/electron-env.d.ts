@@ -276,6 +276,7 @@ interface Window {
 			>;
 			finish: () => Promise<{ success: boolean }>;
 			cancel: () => Promise<{ success: boolean }>;
+			movePanel?: (phase: "start" | "move" | "end", x: number, y: number) => Promise<{ success: boolean }>;
 			onProgress: (callback: (progress: ScrollCaptureProgress) => void) => () => void;
 		};
 		/** The strip shown under System Settings while Screen Recording is off. */

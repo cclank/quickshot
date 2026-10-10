@@ -14,6 +14,7 @@ const SCROLL_MAX_PIXELS = 100_000_000;
 /** Smallest area worth scrolling, in pixels. */
 const SCROLL_MIN_SIZE = { width: 48, height: 64 };
 export const SCROLL_PANEL_SIZE = { width: 260, height: 420 };
+export const SCROLL_PANEL_COMPACT_SIZE = { width: 220, height: 300 };
 /** How far the ring's window reaches beyond the area, in points. */
 export const SCROLL_RING_OUTSET = 6;
 const EDGE_MARGIN = 8;
@@ -96,7 +97,8 @@ function clamp(value: number, low: number, high: number) {
 
 /**
  * Where the panel goes: beside the area when there is room, else below or
- * above it, else tucked into the area's lower right corner.
+ * above it. When all sides are occupied, use the screen edge with the least
+ * overlap instead of placing the whole panel inside the selection.
  */
 export function placeScrollPanel(
 	area: Rect,
@@ -120,12 +122,55 @@ export function placeScrollPanel(
 	} else if (area.y - gap - size.height >= top) {
 		position = { x: alignedX, y: area.y - gap - size.height };
 	} else {
-		position = {
-			x: clamp(Math.min(area.x + area.width, right) - size.width - 16, left, right - size.width),
-			y: clamp(Math.min(area.y + area.height, bottom) - size.height - 16, top, bottom - size.height),
-		};
+		const candidates = [
+			{ x: right - size.width, y: bottom - size.height },
+			{ x: right - size.width, y: top },
+			{ x: left, y: bottom - size.height },
+			{ x: left, y: top },
+		];
+		position = candidates.reduce((best, candidate) =>
+			panelOverlap(candidate, size, area) < panelOverlap(best, size, area) ? candidate : best,
+		);
 	}
-	return { x: Math.round(position.x), y: Math.round(position.y) };
+	return clampScrollPanelPosition(position, size, workArea);
+}
+
+function panelOverlap(position: { x: number; y: number }, size: { width: number; height: number }, area: Rect) {
+	const overlap = intersect({ ...position, ...size }, area);
+	return overlap.width * overlap.height;
+}
+
+/** Prefer a full preview outside the capture, including on an adjacent display.
+ * If there is no free space, a smaller panel covers less of the selection. */
+export function scrollPanelLayout(area: Rect, workAreas: readonly Rect[]): Rect {
+	const areas = workAreas.length ? workAreas : [area];
+	let best: Rect | null = null;
+	let bestOverlap = Infinity;
+	for (const preferred of [SCROLL_PANEL_SIZE, SCROLL_PANEL_COMPACT_SIZE]) {
+		for (const workArea of areas) {
+			const size = {
+				width: Math.max(1, Math.min(preferred.width, workArea.width - EDGE_MARGIN * 2)),
+				height: Math.max(1, Math.min(preferred.height, workArea.height - EDGE_MARGIN * 2)),
+			};
+			const position = placeScrollPanel(area, workArea, size);
+			const overlap = panelOverlap(position, size, area);
+			const bounds = { ...position, ...size };
+			if (overlap === 0) return bounds;
+			if (overlap < bestOverlap) {
+				best = bounds;
+				bestOverlap = overlap;
+			}
+		}
+	}
+	return best!;
+}
+
+/** Keep a dragged panel's title and buttons on the destination display. */
+export function clampScrollPanelPosition(position: { x: number; y: number }, size: { width: number; height: number }, workArea: Rect) {
+	return {
+		x: Math.round(clamp(position.x, workArea.x + EDGE_MARGIN, workArea.x + Math.max(EDGE_MARGIN, workArea.width - size.width - EDGE_MARGIN))),
+		y: Math.round(clamp(position.y, workArea.y + EDGE_MARGIN, workArea.y + Math.max(EDGE_MARGIN, workArea.height - size.height - EDGE_MARGIN))),
+	};
 }
 
 function intersect(a: Rect, b: Rect): Rect {
