@@ -38,6 +38,8 @@ type OverlayState = {
 	selection: SelectionRect | null;
 	adjust: Adjust | null;
 	submitting: boolean;
+	/** The image arrived fully captured (system crosshair): a locked result card, not a live selection. */
+	confirm: boolean;
 };
 
 /** A soft spectrum, closing back on its first colour so the ring is seamless. */
@@ -58,6 +60,7 @@ const IDLE_STATE: OverlayState = {
 	selection: null,
 	adjust: null,
 	submitting: false,
+	confirm: false,
 };
 
 function screenSize() {
@@ -195,27 +198,41 @@ function drawOverlay(canvas: HTMLCanvasElement, state: OverlayState) {
 		ring(dragRect(state.drag), OUTLINE.area, false);
 	} else if (state.selection) {
 		const rect = state.selection;
-		ring(rect, OUTLINE.area, !state.adjust);
-		// Handles at the corners, and mid-edge where there is room for them.
-		const xs = [rect.x, rect.x + rect.width / 2, rect.x + rect.width];
-		const ys = [rect.y, rect.y + rect.height / 2, rect.y + rect.height];
-		context.save();
-		context.fillStyle = "#fff";
-		context.strokeStyle = "rgba(0, 0, 0, 0.35)";
-		context.lineWidth = 1;
-		context.shadowColor = "rgba(0, 0, 0, 0.25)";
-		context.shadowBlur = 3;
-		for (const [column, x] of xs.entries()) {
-			for (const [row, y] of ys.entries()) {
-				if (column === 1 && row === 1) continue;
-				if ((column === 1 && rect.width < 40) || (row === 1 && rect.height < 40)) continue;
-				context.beginPath();
-				context.arc(x, y, HANDLE_RADIUS, 0, Math.PI * 2);
-				context.fill();
-				context.stroke();
+		if (state.confirm) {
+			// A system-crosshair result floats over a dimmed backdrop: veil
+			// everything, then punch a hole so the card shows through brightly.
+			context.save();
+			context.fillStyle = "rgba(0, 0, 0, 0.45)";
+			context.fillRect(0, 0, window.innerWidth, window.innerHeight);
+			context.globalCompositeOperation = "destination-out";
+			context.fillStyle = "rgba(0, 0, 0, 1)";
+			ringPath(context, rect, 20, 10);
+			context.fill();
+			context.restore();
+			ring(rect, OUTLINE.area, true);
+		} else {
+			ring(rect, OUTLINE.area, !state.adjust);
+			// Handles at the corners, and mid-edge where there is room for them.
+			const xs = [rect.x, rect.x + rect.width / 2, rect.x + rect.width];
+			const ys = [rect.y, rect.y + rect.height / 2, rect.y + rect.height];
+			context.save();
+			context.fillStyle = "#fff";
+			context.strokeStyle = "rgba(0, 0, 0, 0.35)";
+			context.lineWidth = 1;
+			context.shadowColor = "rgba(0, 0, 0, 0.25)";
+			context.shadowBlur = 3;
+			for (const [column, x] of xs.entries()) {
+				for (const [row, y] of ys.entries()) {
+					if (column === 1 && row === 1) continue;
+					if ((column === 1 && rect.width < 40) || (row === 1 && rect.height < 40)) continue;
+					context.beginPath();
+					context.arc(x, y, HANDLE_RADIUS, 0, Math.PI * 2);
+					context.fill();
+					context.stroke();
+				}
 			}
+			context.restore();
 		}
-		context.restore();
 	} else if (state.hoverWindow) {
 		ring(state.hoverWindow, OUTLINE.window, true);
 	}
@@ -246,8 +263,6 @@ export function RegionSelector() {
 	const scrollModeRef = useRef(false);
 	/** The session's double-click behaviour: copy the selection, or open the editor. */
 	const doubleClickCopyRef = useRef(false);
-	/** True when the image arrived fully captured (system crosshair) and just needs confirming. */
-	const confirmRef = useRef(false);
 	const [scrollMode, setScrollModeState] = useState(false);
 	const setScrollMode = useCallback((enabled: boolean) => {
 		scrollModeRef.current = enabled;
@@ -318,7 +333,6 @@ export function RegionSelector() {
 		scrollAvailableRef.current = false;
 		scrollModeRef.current = false;
 		doubleClickCopyRef.current = false;
-		confirmRef.current = false;
 		setScrollModeState(false);
 		if (clearActiveSession) activeSessionIdRef.current = null;
 		windowsRef.current = [];
@@ -376,7 +390,7 @@ export function RegionSelector() {
 			activeSessionIdRef.current = payload.sessionId;
 			scrollAvailableRef.current = Boolean(payload.scrollAvailable);
 			doubleClickCopyRef.current = Boolean(payload.doubleClickCopy);
-			confirmRef.current = Boolean(payload.confirm);
+			stateRef.current.confirm = Boolean(payload.confirm);
 			setScrollMode(Boolean(payload.scroll && payload.scrollAvailable));
 			let imageLoadCancel: (() => void) | null = null;
 
@@ -392,15 +406,24 @@ export function RegionSelector() {
 				if (cancelImageLoadRef.current === imageLoad.cancel) cancelImageLoadRef.current = null;
 				if (disposed || activeSessionIdRef.current !== payload.sessionId) return;
 				sizeOverlayCanvas();
-				if (confirmRef.current) {
-					// The image arrived fully captured (system crosshair): the whole
-					// picture starts selected, so the action buttons show at once.
+				if (stateRef.current.confirm) {
+					// The image arrived fully captured (system crosshair): float it
+					// as a locked card at natural size, action buttons ready.
 					const state = stateRef.current;
+					const naturalWidth = image.naturalWidth || window.innerWidth;
+					const naturalHeight = image.naturalHeight || window.innerHeight;
+					const scale = Math.min(
+						1,
+						(window.innerWidth - 64) / naturalWidth,
+						(window.innerHeight - 128) / naturalHeight,
+					);
+					const width = Math.max(MIN_SELECTION, Math.round(naturalWidth * scale));
+					const height = Math.max(MIN_SELECTION, Math.round(naturalHeight * scale));
 					state.selection = {
-						x: 0,
-						y: 0,
-						width: window.innerWidth,
-						height: window.innerHeight,
+						x: Math.round((window.innerWidth - width) / 2),
+						y: Math.round((window.innerHeight - height) / 2),
+						width,
+						height,
 					};
 					state.hoverWindow = null;
 					scheduleRender();
@@ -507,10 +530,13 @@ export function RegionSelector() {
 			const image = sourceImageRef.current;
 			const sessionId = activeSessionIdRef.current;
 			if (!image || sessionId === null || state.submitting) return;
-			const scaleX = image.naturalWidth / window.innerWidth;
-			const scaleY = image.naturalHeight / window.innerHeight;
-			const x = Math.max(0, Math.round(rect.x * scaleX));
-			const y = Math.max(0, Math.round(rect.y * scaleY));
+			// A confirm card shows the crop at its own size, so the mapping
+			// starts at the card instead of the window.
+			const card = state.confirm ? state.selection : null;
+			const scaleX = image.naturalWidth / (card ? card.width : window.innerWidth);
+			const scaleY = image.naturalHeight / (card ? card.height : window.innerHeight);
+			const x = Math.max(0, Math.round((rect.x - (card ? card.x : 0)) * scaleX));
+			const y = Math.max(0, Math.round((rect.y - (card ? card.y : 0)) * scaleY));
 			const pixels = {
 				x,
 				y,
@@ -571,7 +597,7 @@ export function RegionSelector() {
 			const state = stateRef.current;
 			if (event.key === "Escape") {
 				event.preventDefault();
-				if (state.selection && !state.submitting) clearSelection();
+				if (!state.confirm && state.selection && !state.submitting) clearSelection();
 				else void cancel();
 				return;
 			}
@@ -586,7 +612,7 @@ export function RegionSelector() {
 			const nudge = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[
 				event.key
 			];
-			if (nudge && state.selection && !state.adjust) {
+			if (nudge && state.selection && !state.adjust && !state.confirm) {
 				event.preventDefault();
 				const start = { x: 0, y: 0 };
 				state.selection = adjustSelection(state.selection, "move", start, { x: nudge[0], y: nudge[1] }, screenSize());
@@ -612,11 +638,14 @@ export function RegionSelector() {
 		const state = stateRef.current;
 		if (!imageReady || state.submitting) return;
 		if (event.button === 2) {
-			if (state.selection) clearSelection();
+			if (state.confirm) void cancel();
+			else if (state.selection) clearSelection();
 			else void cancel();
 			return;
 		}
 		if (event.button !== 0) return;
+		// The confirm card is locked; the action buttons handle everything.
+		if (state.confirm) return;
 		event.currentTarget.setPointerCapture(event.pointerId);
 		const point = { x: event.clientX, y: event.clientY };
 		state.pointer = point;
@@ -696,7 +725,14 @@ export function RegionSelector() {
 
 	// ── Render ────────────────────────────────────────────────────────────────
 	const image = sourceImageRef.current;
-	const pixelScale = image && image.naturalWidth > 0 ? image.naturalWidth / window.innerWidth : 1;
+	// A confirm session floats the crop as a locked card sized to itself.
+	const confirmCard = view.confirm ? view.selection : null;
+	const pixelScale =
+		image && image.naturalWidth > 0
+			? confirmCard
+				? image.naturalWidth / confirmCard.width
+				: image.naturalWidth / window.innerWidth
+			: 1;
 	const dragging = selectedArea(view);
 	const hovered = dragging ? null : view.hoverWindow;
 	const labelTarget = dragging ?? hovered;
@@ -743,7 +779,19 @@ export function RegionSelector() {
 				aria-hidden="true"
 				draggable={false}
 				className="pointer-events-none absolute inset-0 h-full w-full"
-				style={{ objectFit: "fill" }}
+				style={
+					confirmCard
+						? {
+								// The inline box overrides the full-bleed classes above.
+								left: confirmCard.x,
+								top: confirmCard.y,
+								width: confirmCard.width,
+								height: confirmCard.height,
+								borderRadius: 10,
+								boxShadow: "0 18px 48px rgba(0, 0, 0, 0.45)",
+							}
+						: { objectFit: "fill" }
+				}
 			/>
 			<canvas ref={overlayCanvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
 
