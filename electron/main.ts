@@ -250,6 +250,8 @@ type RegionCaptureSession = {
 	mimeType: FrameMimeType;
 	/** Opens the overlay in scrolling-capture mode. */
 	scroll: boolean;
+	/** The image is already captured (system crosshair); the overlay just confirms the action. */
+	confirm?: boolean;
 };
 
 type FrameMimeType = "image/png" | "image/jpeg";
@@ -1225,6 +1227,7 @@ function toIpcRegionCaptureSession(sessionData: RegionCaptureSession) {
 		scroll: sessionData.scroll,
 		scrollAvailable: isScrollCaptureAvailable(),
 		doubleClickCopy: appSettings.overlayDoubleClickCopy,
+		confirm: sessionData.confirm ?? false,
 	};
 }
 
@@ -3164,6 +3167,9 @@ async function triggerScreenshot(source = "unknown", options: CaptureOptions = {
 
 			activeCaptureDisplay = getCaptureDisplay();
 			if (deliverStitchPiece(imageBuffer)) return;
+			// End in the same confirm overlay as QuickShot selection, so the
+			// actions match whichever selector was used.
+			if (await openRegionConfirmForImage(imageBuffer)) return;
 			if (!openPreviewForImage(imageBuffer)) {
 				cancelActiveCapture();
 			}
@@ -3210,20 +3216,7 @@ async function triggerScreenshot(source = "unknown", options: CaptureOptions = {
 			"capture-session",
 			toIpcRegionCaptureSession(pendingRegionCaptureSession),
 		);
-		clearRegionReadyWatchdog();
-		regionReadyWatchdog = setTimeout(() => {
-			regionReadyWatchdog = null;
-			if (activeCaptureSessionId !== sessionId || capturePhase !== "preparing-region") return;
-			writeDiagnostic("region-selector-timeout", { sessionId });
-			cancelActiveCapture(false, false);
-			// Replace the overlay window; whatever stalled it should not stall the next capture.
-			const staleWindow = regionSelectorWindow;
-			regionSelectorWindow = null;
-			regionSelectorReady = false;
-			regionSelectorLoadPromise = null;
-			if (staleWindow && !staleWindow.isDestroyed()) staleWindow.destroy();
-			void ensureRegionSelector();
-		}, REGION_READY_TIMEOUT_MS);
+		armRegionReadyWatchdog(sessionId);
 		void windowsPromise.then((windows) => {
 			// Sent even when empty: the overlay then knows a click means the whole screen.
 			if (activeCaptureSessionId !== sessionId) return;
@@ -3275,6 +3268,61 @@ function clearRegionReadyWatchdog() {
 		clearTimeout(regionReadyWatchdog);
 		regionReadyWatchdog = null;
 	}
+}
+
+/** Same defence as armOverlayCaptureWatchdog, for the overlay's own readiness. */
+function armRegionReadyWatchdog(sessionId: number) {
+	clearRegionReadyWatchdog();
+	regionReadyWatchdog = setTimeout(() => {
+		regionReadyWatchdog = null;
+		if (activeCaptureSessionId !== sessionId || capturePhase !== "preparing-region") return;
+		writeDiagnostic("region-selector-timeout", { sessionId });
+		cancelActiveCapture(false, false);
+		// Replace the overlay window; whatever stalled it should not stall the next capture.
+		const staleWindow = regionSelectorWindow;
+		regionSelectorWindow = null;
+		regionSelectorReady = false;
+		regionSelectorLoadPromise = null;
+		if (staleWindow && !staleWindow.isDestroyed()) staleWindow.destroy();
+		void ensureRegionSelector();
+	}, REGION_READY_TIMEOUT_MS);
+}
+
+/**
+ * Hands an already-captured image (macOS's own crosshair) to the same confirm
+ * overlay QuickShot selection uses, so both selectors end identically: frozen
+ * picture, whole frame pre-selected, action buttons ready.
+ */
+async function openRegionConfirmForImage(imageBuffer: Buffer): Promise<boolean> {
+	const display = activeCaptureDisplay ?? getCaptureDisplay();
+	await ensureRegionSelector();
+	if (!regionSelectorWindow || !regionSelectorReady) return false;
+	syncRegionSelectorBounds(display);
+	const sessionId = ++nextCaptureSessionId;
+	activeCaptureSessionId = sessionId;
+	pendingRegionCaptureSession = {
+		sessionId,
+		imageBuffer,
+		mimeType: "image/png",
+		scroll: false,
+		confirm: true,
+	};
+	regionFrozenFrame = {
+		sessionId,
+		frame: {
+			buffer: imageBuffer,
+			mimeType: "image/png",
+			...(readPngDimensions(imageBuffer) ?? { width: 0, height: 0 }),
+			heldByAgent: false,
+		},
+	};
+	regionSelectorWindow.webContents.send(
+		"capture-session",
+		toIpcRegionCaptureSession(pendingRegionCaptureSession),
+	);
+	armRegionReadyWatchdog(sessionId);
+	writeDiagnostic("region-confirm-started", { sessionId });
+	return true;
 }
 
 /** Brings back the editor that was hidden for a stitch capture, unchanged. */

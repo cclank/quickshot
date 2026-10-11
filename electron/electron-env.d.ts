@@ -96,6 +96,8 @@ interface Window {
 				scrollAvailable?: boolean;
 				/** When true, double-clicking the selection only copies it. */
 				doubleClickCopy?: boolean;
+				/** The image arrived fully captured (system crosshair); the overlay just confirms. */
+				confirm?: boolean;
 			};
 		}>;
 		regionSelectorReady: (
@@ -230,6 +232,8 @@ interface Window {
 				scrollAvailable?: boolean;
 				/** When true, double-clicking the selection only copies it. */
 				doubleClickCopy?: boolean;
+				/** The image arrived fully captured (system crosshair); the overlay just confirms. */
+				confirm?: boolean;
 			}) => void,
 		) => () => void;
 		onPinnedInteractionRestored: (callback: () => void) => () => void;

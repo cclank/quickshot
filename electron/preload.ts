@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			scroll?: boolean;
 			scrollAvailable?: boolean;
 			doubleClickCopy?: boolean;
+			confirm?: boolean;
 		}) => void,
 	) => {
 		const listener = (
@@ -80,6 +81,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 				scroll?: boolean;
 				scrollAvailable?: boolean;
 				doubleClickCopy?: boolean;
+				confirm?: boolean;
 			},
 		) => callback(payload);
 		ipcRenderer.on("capture-session", listener);

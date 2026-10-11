@@ -246,6 +246,8 @@ export function RegionSelector() {
 	const scrollModeRef = useRef(false);
 	/** The session's double-click behaviour: copy the selection, or open the editor. */
 	const doubleClickCopyRef = useRef(false);
+	/** True when the image arrived fully captured (system crosshair) and just needs confirming. */
+	const confirmRef = useRef(false);
 	const [scrollMode, setScrollModeState] = useState(false);
 	const setScrollMode = useCallback((enabled: boolean) => {
 		scrollModeRef.current = enabled;
@@ -316,6 +318,7 @@ export function RegionSelector() {
 		scrollAvailableRef.current = false;
 		scrollModeRef.current = false;
 		doubleClickCopyRef.current = false;
+		confirmRef.current = false;
 		setScrollModeState(false);
 		if (clearActiveSession) activeSessionIdRef.current = null;
 		windowsRef.current = [];
@@ -356,6 +359,8 @@ export function RegionSelector() {
 			scroll?: boolean;
 			scrollAvailable?: boolean;
 			doubleClickCopy?: boolean;
+			/** The image arrived fully captured (system crosshair); the overlay just confirms. */
+			confirm?: boolean;
 		}) => {
 			if (
 				disposed ||
@@ -371,6 +376,7 @@ export function RegionSelector() {
 			activeSessionIdRef.current = payload.sessionId;
 			scrollAvailableRef.current = Boolean(payload.scrollAvailable);
 			doubleClickCopyRef.current = Boolean(payload.doubleClickCopy);
+			confirmRef.current = Boolean(payload.confirm);
 			setScrollMode(Boolean(payload.scroll && payload.scrollAvailable));
 			let imageLoadCancel: (() => void) | null = null;
 
@@ -386,6 +392,19 @@ export function RegionSelector() {
 				if (cancelImageLoadRef.current === imageLoad.cancel) cancelImageLoadRef.current = null;
 				if (disposed || activeSessionIdRef.current !== payload.sessionId) return;
 				sizeOverlayCanvas();
+				if (confirmRef.current) {
+					// The image arrived fully captured (system crosshair): the whole
+					// picture starts selected, so the action buttons show at once.
+					const state = stateRef.current;
+					state.selection = {
+						x: 0,
+						y: 0,
+						width: window.innerWidth,
+						height: window.innerHeight,
+					};
+					state.hoverWindow = null;
+					scheduleRender();
+				}
 				setImageReady(true);
 				const result = await window.electronAPI.regionSelectorReady(payload.sessionId);
 				void window.electronAPI.getCaptureWindows?.(payload.sessionId).then((response) => {
@@ -429,7 +448,7 @@ export function RegionSelector() {
 			unsubscribeWindows?.();
 			clearRegionSession();
 		};
-	}, [applyWindows, clearRegionSession, setScrollMode, sizeOverlayCanvas]);
+	}, [applyWindows, clearRegionSession, scheduleRender, setScrollMode, sizeOverlayCanvas]);
 
 	const cancel = useCallback(async () => {
 		const sessionId = activeSessionIdRef.current;
