@@ -32,6 +32,8 @@ import {
 	acceleratorLabel,
 	normalizeAccelerator,
 } from "../src/lib/accelerator";
+import { sanitizeAnnotations } from "../src/editor/annotationPayload";
+import type { Annotation } from "../src/editor/types";
 import { type AgentEvent, type AgentResponse, CaptureAgent } from "./captureAgent";
 import { type BundleStamp, bundleFromExecutable, shouldHandOver } from "./handOver";
 import { findOpaqueBounds, getWindowCaptureArguments } from "./windowCapture";
@@ -301,6 +303,8 @@ let screenshotPreviewWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let screenshotCroppedBuffer: Buffer | null = null;
 let screenshotCroppedScaleFactor = 1;
+/** Marks the overlay drew, handed to the editor so they stay editable. */
+let screenshotCroppedAnnotations: Annotation[] = [];
 let sparePreviewWindow: BrowserWindow | null = null;
 let sparePreviewTimer: NodeJS.Timeout | null = null;
 let appSettings: AppSettings = { ...DEFAULT_APP_SETTINGS };
@@ -2209,7 +2213,7 @@ function recycleIdleWindows() {
 	}
 }
 
-function openPreviewForImage(imageBuffer: Buffer): boolean {
+function openPreviewForImage(imageBuffer: Buffer, annotations: Annotation[] = []): boolean {
 	if (!isValidCapturePngPayload(imageBuffer)) {
 		writeDiagnostic("preview-image-rejected");
 		return false;
@@ -2251,6 +2255,7 @@ function openPreviewForImage(imageBuffer: Buffer): boolean {
 			clearPreviewReadyTimer();
 			screenshotPreviewWindow = null;
 			screenshotCroppedBuffer = null;
+			screenshotCroppedAnnotations = [];
 		}
 		if (pendingPreviewSessionId === sessionId) {
 			pendingPreviewSessionId = null;
@@ -2284,6 +2289,7 @@ function openPreviewForImage(imageBuffer: Buffer): boolean {
 	activeCaptureSessionId = sessionId;
 	screenshotCroppedBuffer = imageBuffer;
 	screenshotCroppedScaleFactor = scaleFactor;
+	screenshotCroppedAnnotations = annotations;
 	capturePhase = "opening-preview";
 	pendingPreviewSessionId = sessionId;
 	const replacedEditor = screenshotPreviewWindow;
@@ -4332,6 +4338,8 @@ function registerIpcHandlers() {
 				windowId?: number;
 				/** With `windowId`: the window in frozen-frame pixels, cropped if the window capture fails. */
 				rect?: { x: number; y: number; width: number; height: number };
+				/** The marks drawn over the selection, for the editor to keep editing. */
+				annotations?: unknown[];
 			},
 		) => {
 			if (
@@ -4399,14 +4407,16 @@ function registerIpcHandlers() {
 			if (!croppedImageBuffer) {
 				return { success: false, error: "invalid image data" };
 			}
-			// Copies hand out the styled export the overlay rendered from the same
-			// pixels. A window captured on its own looks different from the frozen
-			// frame, so its composition would wrap the wrong image.
-			const clipboardImageBuffer =
+			// Quick actions hand out the styled export the overlay rendered from the
+			// same pixels, falling back to the baked crop. A window captured on its
+			// own looks different from the frozen frame, so its composition would
+			// wrap the wrong image.
+			const actionImageBuffer =
 				!capturedWindowInstead && composedImageBuffer ? composedImageBuffer : croppedImageBuffer;
 			if (action === "edit") {
+				const annotations = sanitizeAnnotations(payload.annotations);
 				if (deliverStitchPiece(croppedImageBuffer)) return { success: true };
-				if (!openPreviewForImage(croppedImageBuffer)) {
+				if (!openPreviewForImage(croppedImageBuffer, annotations)) {
 					return { success: false, error: "preview unavailable" };
 				}
 				overlayAwaitingEditor = true;
@@ -4421,10 +4431,10 @@ function registerIpcHandlers() {
 			writeDiagnostic("region-quick-action", { action });
 			try {
 				if (action === "copy") {
-					clipboard.writeImage(nativeImage.createFromBuffer(clipboardImageBuffer));
+					clipboard.writeImage(nativeImage.createFromBuffer(actionImageBuffer));
 				} else if (action === "save") {
-					await writeQuickSaveScreenshot(croppedImageBuffer);
-				} else if (action === "pin" && !createPinnedScreenshotWindow(croppedImageBuffer)) {
+					await writeQuickSaveScreenshot(actionImageBuffer);
+				} else if (action === "pin" && !createPinnedScreenshotWindow(actionImageBuffer)) {
 					return { success: false, error: "pin-limit" };
 				}
 				if (payload.sessionId === activeCaptureSessionId) cancelActiveCapture(false);
@@ -4491,6 +4501,7 @@ function registerIpcHandlers() {
 			success: true,
 			imageBytes: toIpcPngBytes(screenshotCroppedBuffer),
 			scaleFactor: screenshotCroppedScaleFactor,
+			annotations: screenshotCroppedAnnotations,
 		};
 	});
 
@@ -4512,6 +4523,7 @@ function registerIpcHandlers() {
 		activeCaptureSessionId = null;
 		activeCaptureDisplay = null;
 		screenshotCroppedBuffer = null;
+		screenshotCroppedAnnotations = [];
 		capturePhase = "idle";
 		writeDiagnostic("preview-ready", { sessionId });
 		scheduleSparePreviewWindow();

@@ -70,6 +70,8 @@ Get them from the [latest release](https://github.com/cclank/quickshot/releases/
 
 ## Features
 
+Before confirming a region, the overlay exposes the annotation toolbar: choose tools, adjust styles, undo/redo, copy, download, or continue in the editor. Marks remain editable when sent to the editor, while copy and download include the current marks in the exported PNG.
+
 ### Capture
 
 - **One shortcut, anywhere.** `⌘⇧X` on macOS, `Ctrl+Shift+X` on Windows, or click the tray icon.

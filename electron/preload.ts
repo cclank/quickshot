@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		action?: "edit" | "copy" | "save" | "pin" | "scroll";
 		windowId?: number;
 		rect?: { x: number; y: number; width: number; height: number };
+		/** Marks drawn over the selection, for the editor to keep editing. */
+		annotations?: unknown[];
 	}) => ipcRenderer.invoke("screenshot-region-selected", payload),
 	getPreviewSession: (sessionId: number) =>
 		ipcRenderer.invoke("get-preview-session", sessionId),

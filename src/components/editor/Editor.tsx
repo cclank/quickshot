@@ -5,6 +5,7 @@ import {
 	parseBackground,
 } from "@/editor/backgrounds";
 import { duplicateAnnotation, translateAnnotation } from "@/editor/annotations";
+import { sanitizeAnnotations } from "@/editor/annotationPayload";
 import { combineCrops, cropAnnotations, normalizeCrop, renderCroppedSource } from "@/editor/crop";
 import {
 	type StyleSettings,
@@ -164,8 +165,8 @@ function mergeEditing(annotations: Annotation[], editing: EditingText | null) {
 /** Crops, marks and stitches form one undo history; source pixels stay intact. */
 type EditorDoc = { annotations: Annotation[]; stitch: Stitch; crop: Rect | null };
 
-function createDoc(pieces: StitchPiece[] = []): EditorDoc {
-	return { annotations: [], stitch: { pieces, settings: loadStitchSettings() }, crop: null };
+function createDoc(pieces: StitchPiece[] = [], annotations: Annotation[] = []): EditorDoc {
+	return { annotations, stitch: { pieces, settings: loadStitchSettings() }, crop: null };
 }
 
 let pieceCounter = 0;
@@ -265,7 +266,9 @@ export function Editor() {
 				setInspectorOpen(loadInspectorOpen());
 				const scaleFactor = Number(payload.scaleFactor);
 				setUnit(Number.isFinite(scaleFactor) ? Math.min(4, Math.max(1, scaleFactor)) : 1);
-				setHistory(createHistory(createDoc([{ id: createPieceId(), image: decoded, scale: 1 }])));
+				// Marks drawn in the capture overlay arrive cropped, ready to edit.
+				const incoming = sanitizeAnnotations(payload.annotations);
+				setHistory(createHistory(createDoc([{ id: createPieceId(), image: decoded, scale: 1 }], incoming)));
 			} catch (error) {
 				console.error("QuickShot editor failed to load the capture", error);
 				if (!cancelled) window.close();

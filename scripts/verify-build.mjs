@@ -8,9 +8,10 @@ const electronDistRoot = path.join(projectRoot, "dist-electron");
 
 // Budgets leave headroom over the current build so regressions stand out.
 const limits = {
-	// Includes editor crop and viewport controls, with no new runtime dependencies.
-	rendererBytes: 380_000,
-	rendererGzipBytes: 120_000,
+	// Includes capture-overlay annotations sharing the editor's drawing surface.
+	// The 1.3.7 build measures about 392 kB / 121 kB gzip; no runtime dependencies added.
+	rendererBytes: 405_000,
+	rendererGzipBytes: 125_000,
 	mainBytes: 140_000,
 	preloadBytes: 5_000,
 	cssBytes: 42_000,

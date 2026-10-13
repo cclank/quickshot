@@ -61,6 +61,12 @@
 					document.documentElement.dataset.lastAction = payload.action;
 					document.documentElement.dataset.lastRect = JSON.stringify(payload.rect ?? null);
 					document.documentElement.dataset.lastWindowId = String(payload.windowId ?? "");
+					document.documentElement.dataset.lastAnnotationCount = String(
+						Array.isArray(payload.annotations) ? payload.annotations.length : 0,
+					);
+					document.documentElement.dataset.lastAnnotationKinds = Array.isArray(payload.annotations)
+						? payload.annotations.map((mark) => mark?.kind).join(",")
+						: "";
 					const composed = payload.composedImageBytes;
 					document.documentElement.dataset.lastComposedBytes =
 						composed instanceof Uint8Array ? String(composed.byteLength) : "";
@@ -74,6 +80,20 @@
 						download.textContent = "下载快速复制的 PNG";
 						download.href = URL.createObjectURL(new Blob([composed], { type: "image/png" }));
 						download.download = "QuickShot-quick-copy-fixture.png";
+						download.style.cssText = "position:fixed;right:16px;bottom:10px;z-index:100;background:#2563eb;color:white;padding:8px 12px;border-radius:8px;font:12px sans-serif";
+						document.body.append(download);
+					}
+					const cropped = payload.croppedImageBytes;
+					if (cropped instanceof Uint8Array) {
+						document.documentElement.dataset.lastCroppedBytes = String(cropped.byteLength);
+						const dimensions = new DataView(cropped.buffer, cropped.byteOffset, cropped.byteLength);
+						document.documentElement.dataset.croppedWidth = String(dimensions.getUint32(16, false));
+						document.documentElement.dataset.croppedHeight = String(dimensions.getUint32(20, false));
+						const download = document.createElement("a");
+						download.dataset.fixtureExport = "true";
+						download.textContent = `下载${payload.action}的 PNG`;
+						download.href = URL.createObjectURL(new Blob([cropped], { type: "image/png" }));
+						download.download = `QuickShot-${payload.action}-fixture.png`;
 						download.style.cssText = "position:fixed;right:16px;bottom:10px;z-index:100;background:#2563eb;color:white;padding:8px 12px;border-radius:8px;font:12px sans-serif";
 						document.body.append(download);
 					}

@@ -120,11 +120,15 @@ interface Window {
 			windowId?: number;
 			/** The selection in frozen-frame pixels; the main process crops it. */
 			rect?: { x: number; y: number; width: number; height: number };
+			/** Marks drawn over the selection, for the editor to keep editing. */
+			annotations?: unknown[];
 		}) => Promise<{ success: boolean; error?: string }>;
 		getPreviewSession: (sessionId: number) => Promise<{
 			success: boolean;
 			imageBytes?: Uint8Array;
 			scaleFactor?: number;
+			/** Marks drawn in the capture overlay, to keep editing in the editor. */
+			annotations?: unknown[];
 		}>;
 		previewSessionReady: (
 			sessionId: number,
