@@ -12,4 +12,3 @@
 - 界面调整先用 `npm run dev:ui` 和 `test-fixtures/` 夹具验证。需要运行开发版 Electron 时，必须设置 `QUICKSHOT_USER_DATA_DIR` 指向独立目录并设 `QUICKSHOT_ENABLE_DEV_SHORTCUT=0`，否则开发版会与已安装应用共用数据目录和单实例锁；用 `QUICKSHOT_DEV_CAPTURE_FILE` 代替真实屏幕，避免触发录屏授权。
 - 界面文案统一经过 `src/lib/i18n.ts` 的 `t()` 或 `electron/i18n.ts` 的 `mt()`，中英文同时补齐。
 - 源码与已安装包的区别见 `docs/source-of-truth.md`。
-- GitHub 凭据由本机 `~/.config/wlzh/git-credential-helper` 从 `~/.config/wlzh/github_token` 提供；需要访问 `origin` 时优先使用 Git credential helper，不要索要或回显 token，也不要把 token 写入仓库、remote URL、提交或日志。
