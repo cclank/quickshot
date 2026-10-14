@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, rmSync } from "node:fs";
 import { statSync } from "original-fs";
 import os from "node:os";
 import path from "node:path";
@@ -2544,6 +2544,23 @@ async function setOverlayStyledCopy(enabled: boolean) {
 	writeDiagnostic("overlay-styled-copy-changed", { enabled });
 	await persistAppSettings();
 }
+async function setSaveDirectory(saveDirectory: string | null) {
+	if (appSettings.saveDirectory === saveDirectory) return;
+	appSettings = { ...appSettings, saveDirectory };
+	writeDiagnostic("save-directory-changed", { saveDirectory });
+	await persistAppSettings();
+	notifySettingsWindow();
+}
+
+async function validateSaveDirectory(directory: string): Promise<boolean> {
+	try {
+		if (!statSync(directory).isDirectory()) return false;
+		accessSync(directory, fsConstants.W_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
 
 /**
  * macOS remembers a hidden menu bar item in the app's own defaults (the
@@ -2809,6 +2826,9 @@ function settingsState() {
 			enabled: ENABLE_CAPTURE_SHORTCUT,
 		},
 		language: appSettings.language,
+		saveDirectory: appSettings.saveDirectory,
+		effectiveSaveDirectory: effectiveScreenshotDirectory(),
+		saveDirectoryStatus: saveDirectoryStatus(),
 		macCaptureMode: appSettings.macCaptureMode,
 		overlayDoubleClickCopy: appSettings.overlayDoubleClickCopy,
 		trayClickCaptures: appSettings.trayClickCaptures,
@@ -3138,8 +3158,23 @@ function explainHiddenMenuBarIcon(reason: string) {
 		.catch(() => {});
 }
 
+function effectiveScreenshotDirectory() {
+	return appSettings.saveDirectory ?? app.getPath("downloads");
+}
+
+function saveDirectoryStatus(): "default" | "valid" | "missing" | "unwritable" {
+	if (!appSettings.saveDirectory) return "default";
+	try {
+		if (!statSync(appSettings.saveDirectory).isDirectory()) return "missing";
+		accessSync(appSettings.saveDirectory, fsConstants.W_OK);
+		return "valid";
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unwritable";
+	}
+}
+
 function buildDefaultScreenshotPath() {
-	return nextScreenshotPath(app.getPath("downloads"));
+	return nextScreenshotPath(effectiveScreenshotDirectory());
 }
 
 async function writeQuickSaveScreenshot(pngBuffer: Buffer): Promise<string> {
@@ -4173,6 +4208,27 @@ function registerIpcHandlers() {
 		return { success: true, state: settingsState() };
 	});
 
+	ipcMain.handle("settings-choose-save-directory", async (event) => {
+		const win = settingsWindow;
+		if (!win || !isTrustedWindowSender(event, win)) return { success: false };
+		const result = await dialog.showOpenDialog(win, {
+			title: mt("dialog.chooseSaveDirectory"),
+			defaultPath: saveDirectoryStatus() === "missing" ? app.getPath("downloads") : effectiveScreenshotDirectory(),
+			properties: ["openDirectory"],
+		});
+		if (result.canceled || !result.filePaths[0]) return { success: false, canceled: true };
+		if (!(await validateSaveDirectory(result.filePaths[0]))) {
+			return { success: false, error: mt("dialog.saveDirectoryInvalid") };
+		}
+		await setSaveDirectory(result.filePaths[0]);
+		return { success: true, state: settingsState() };
+	});
+
+	ipcMain.handle("settings-reset-save-directory", async (event) => {
+		if (!isTrustedWindowSender(event, settingsWindow)) return { success: false };
+		await setSaveDirectory(null);
+		return { success: true, state: settingsState() };
+	});
 	ipcMain.handle("settings-set-capture-mode", async (event, mode: unknown) => {
 		if (!isTrustedWindowSender(event, settingsWindow) || (mode !== "overlay" && mode !== "system")) {
 			return { success: false };
