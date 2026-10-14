@@ -1,7 +1,7 @@
 import { Check, Copy, Download, Redo2, Undo2, X } from "lucide-react";
 import { type CSSProperties, memo } from "react";
 import type { AnnotationKind, Tool } from "@/editor/types";
-import { TOOL_ORDER, type ToolStyle } from "@/editor/presets";
+import { CAPTURE_TOOL_ORDER, type ToolStyle } from "@/editor/presets";
 import { TOOL_ICONS } from "@/components/editor/icons";
 import { ContextBar } from "@/components/editor/ContextBar";
 import { Divider, IconButton, Tooltip } from "@/components/editor/ui";
@@ -117,7 +117,7 @@ export const OverlayToolbar = memo(function OverlayToolbar({
 				aria-label={t("toolbar.tools")}
 				className="flex w-max shrink-0 items-center gap-0.5 rounded-[11px] bg-[var(--qs-field)] p-[3px] shadow-[inset_0_0_0_1px_var(--qs-border)]"
 			>
-				{TOOL_ORDER.map((value) => {
+				{CAPTURE_TOOL_ORDER.map((value) => {
 					const Icon = TOOL_ICONS[value];
 					return (
 						<IconButton

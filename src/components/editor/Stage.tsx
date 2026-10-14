@@ -298,7 +298,10 @@ export const Stage = forwardRef<StageHandle, StageProps>(function Stage({
 		const shown = { x: visible.x / scale - layout.image.x - 32 * unit,
 			y: visible.y / scale - layout.image.y - 32 * unit,
 			w: visible.w / scale + 64 * unit, h: visible.h / scale + 64 * unit };
-		drawAnnotations(context, renderList.filter((mark) => rectsOverlap(getVisualBounds(mark, measureTextAnnotation), shown)), env, editingId);
+		const visibleAnnotations = renderList.some((mark) => mark.kind === "magnifier")
+			? renderList
+			: renderList.filter((mark) => rectsOverlap(getVisualBounds(mark, measureTextAnnotation), shown));
+		drawAnnotations(context, visibleAnnotations, env, editingId);
 		context.restore();
 	}, [dpr, editingId, getScratch, image, layout, renderList, scale, unit, visible]);
 
@@ -531,7 +534,12 @@ export const Stage = forwardRef<StageHandle, StageProps>(function Stage({
 					if (Math.abs(dx) > Math.abs(dy)) offsetY = 0;
 					else offsetX = 0;
 				}
-				scheduleLive(translateAnnotation(gesture.original, offsetX, offsetY));
+				const moved = translateAnnotation(gesture.original, offsetX, offsetY);
+				scheduleLive(
+					gesture.original.kind === "magnifier" && moved.kind === "magnifier"
+						? { ...moved, sourceX: gesture.original.sourceX, sourceY: gesture.original.sourceY }
+						: moved,
+				);
 				break;
 			}
 			case "resize":

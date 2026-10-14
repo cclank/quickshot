@@ -33,6 +33,8 @@ const COMMAND_LABELS: Record<KeymapCommand, MessageKey> = {
 	"tool.text": "tool.text",
 	"tool.counter": "tool.counter",
 	"tool.redact": "tool.redact",
+	"tool.magnifier": "tool.magnifier",
+	"tool.spotlight": "tool.spotlight",
 	copy: "action.copyImage",
 	copyAndClose: "action.copyAndClose",
 	quickSave: "action.quickSave",

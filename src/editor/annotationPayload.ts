@@ -29,6 +29,8 @@ const TOOL_KINDS = new Set([
 	"text",
 	"counter",
 	"redact",
+	"magnifier",
+	"spotlight",
 ]);
 
 function bounded(value: unknown, limit: number): number | null {
@@ -132,6 +134,29 @@ function parseAnnotation(value: unknown): Annotation | null {
 			const strength = bounded(record.strength, SIZE_LIMIT);
 			if (x === null || y === null || w === null || h === null || !mode || strength === null) return null;
 			return { id, kind: "redact", x, y, w, h, mode, strength };
+		}
+		case "magnifier": {
+			const x = bounded(record.x, COORD_LIMIT);
+			const y = bounded(record.y, COORD_LIMIT);
+			const w = bounded(record.w, COORD_LIMIT);
+			const h = bounded(record.h, COORD_LIMIT);
+			const sourceX = bounded(record.sourceX, COORD_LIMIT);
+			const sourceY = bounded(record.sourceY, COORD_LIMIT);
+			const zoom = bounded(record.zoom, 8);
+			const color = parseColor(record.color);
+			const width = bounded(record.width, SIZE_LIMIT);
+			if ([x, y, w, h, sourceX, sourceY, zoom, width].some((item) => item === null) || !color) return null;
+			return { id, kind: "magnifier", x: x!, y: y!, w: w!, h: h!, sourceX: sourceX!, sourceY: sourceY!, zoom: Math.max(1, zoom!), color, width: width! };
+		}
+		case "spotlight": {
+			const x = bounded(record.x, COORD_LIMIT);
+			const y = bounded(record.y, COORD_LIMIT);
+			const w = bounded(record.w, COORD_LIMIT);
+			const h = bounded(record.h, COORD_LIMIT);
+			const opacity = bounded(record.opacity, 1);
+			const shape = parseEnum(record.shape, ["rect", "ellipse"] as const);
+			if ([x, y, w, h, opacity].some((item) => item === null) || !shape) return null;
+			return { id, kind: "spotlight", x: x!, y: y!, w: w!, h: h!, shape, opacity: Math.max(0, opacity!) };
 		}
 		default:
 			return null;

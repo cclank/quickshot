@@ -82,6 +82,31 @@ export function createDraft(
 				width,
 				fill: style.fill,
 			};
+		case "magnifier":
+			return {
+				id,
+				kind: "magnifier",
+				x: point.x,
+				y: point.y,
+				w: 0,
+				h: 0,
+				sourceX: point.x,
+				sourceY: point.y,
+				zoom: [1.5, 2, 3][style.strokeSize],
+				color: style.color,
+				width,
+			};
+		case "spotlight":
+			return {
+				id,
+				kind: "spotlight",
+				x: point.x,
+				y: point.y,
+				w: 0,
+				h: 0,
+				shape: style.spotlightShape,
+				opacity: [0.35, 0.5, 0.65][style.strokeSize],
+			};
 		case "redact":
 			return {
 				id,
@@ -165,6 +190,14 @@ export function updateDraft(
 		case "redact": {
 			const target = constrain ? constrainSquare(anchor, point) : point;
 			return { ...draft, ...rectFromPoints(anchor, target) };
+		}
+		case "magnifier":
+		case "spotlight": {
+			const target = constrain ? constrainSquare(anchor, point) : point;
+			const rect = rectFromPoints(anchor, target);
+			return draft.kind === "magnifier"
+				? { ...draft, ...rect, sourceX: rect.x + rect.w / 2, sourceY: rect.y + rect.h / 2 }
+				: { ...draft, ...rect };
 		}
 		case "arrow":
 		case "line":

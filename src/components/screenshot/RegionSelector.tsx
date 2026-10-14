@@ -36,7 +36,7 @@ import { clipAnnotationsToCrop } from "@/editor/overlayAnnotations";
 import {
 	DEFAULT_TOOL_STYLE,
 	type ToolStyle,
-	TOOL_ORDER,
+	CAPTURE_TOOL_ORDER,
 	normalizeToolStyle,
 } from "@/editor/presets";
 import { loadTool, loadToolStyle, saveTool, saveToolStyle } from "@/editor/persistence";
@@ -139,7 +139,7 @@ function screenSize() {
 
 function loadOverlayTool(): Tool {
 	const stored = readStoredJson(TOOL_KEY);
-	return TOOL_ORDER.includes(stored as Tool) ? (stored as Tool) : "arrow";
+	return CAPTURE_TOOL_ORDER.includes(stored as Tool) ? (stored as Tool) : "arrow";
 }
 
 function saveOverlayTool(tool: Tool) {
@@ -919,7 +919,7 @@ export function RegionSelector() {
 				const command = commandFor(keymapRef.current, event, "editor");
 				if (command?.startsWith("tool.")) {
 					const next = command.slice("tool.".length) as Tool;
-					if (TOOL_ORDER.includes(next)) {
+					if (CAPTURE_TOOL_ORDER.includes(next)) {
 						event.preventDefault();
 						setTool(next);
 						return;

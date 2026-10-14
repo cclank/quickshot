@@ -11,9 +11,11 @@ import type {
 	ArrowAnnotation,
 	CounterAnnotation,
 	EllipseAnnotation,
+	MagnifierAnnotation,
 	Point,
 	RectAnnotation,
 	RedactAnnotation,
+	SpotlightAnnotation,
 	TextAnnotation,
 } from "./types";
 
@@ -24,6 +26,8 @@ export type AnnotationRenderEnv = {
 	/** Device pixels per image pixel. Shadows and filters ignore the canvas transform. */
 	pixelScale: number;
 	scratch: () => HTMLCanvasElement;
+	/** Redactions are replayed inside magnifiers so sampled pixels stay covered. */
+	redactions?: readonly RedactAnnotation[];
 };
 
 function applySoftShadow(
@@ -350,6 +354,55 @@ function drawBlur(
 	ctx.restore();
 }
 
+function drawMagnifier(
+	ctx: CanvasRenderingContext2D,
+	annotation: MagnifierAnnotation,
+	env: AnnotationRenderEnv,
+) {
+	const rect = normalizeRect(annotation);
+	if (rect.w <= 0 || rect.h <= 0) return;
+	const sourceWidth = rect.w / annotation.zoom;
+	const sourceHeight = rect.h / annotation.zoom;
+	const sx = Math.max(0, Math.min(env.sourceWidth - sourceWidth, annotation.sourceX - sourceWidth / 2));
+	const sy = Math.max(0, Math.min(env.sourceHeight - sourceHeight, annotation.sourceY - sourceHeight / 2));
+	ctx.beginPath();
+	ctx.ellipse(rect.x + rect.w / 2, rect.y + rect.h / 2, rect.w / 2, rect.h / 2, 0, 0, Math.PI * 2);
+	ctx.save();
+	ctx.clip();
+	ctx.imageSmoothingEnabled = true;
+	ctx.imageSmoothingQuality = "high";
+	ctx.drawImage(env.source, sx, sy, sourceWidth, sourceHeight, rect.x, rect.y, rect.w, rect.h);
+	if (env.redactions?.length) {
+		ctx.translate(rect.x - sx * annotation.zoom, rect.y - sy * annotation.zoom);
+		ctx.scale(annotation.zoom, annotation.zoom);
+		const redactionEnv = { ...env, pixelScale: env.pixelScale * annotation.zoom, redactions: undefined };
+		for (const redaction of env.redactions) {
+			if (redaction.mode === "blur") drawBlur(ctx, redaction, redactionEnv);
+			else drawPixelate(ctx, redaction, redactionEnv);
+		}
+	}
+	ctx.restore();
+	ctx.beginPath();
+	ctx.ellipse(rect.x + rect.w / 2, rect.y + rect.h / 2, rect.w / 2, rect.h / 2, 0, 0, Math.PI * 2);
+	applySoftShadow(ctx, env, annotation.width, 0.38);
+	ctx.lineWidth = annotation.width;
+	ctx.strokeStyle = annotation.color;
+	ctx.stroke();
+}
+
+function drawSpotlight(ctx: CanvasRenderingContext2D, annotation: SpotlightAnnotation, env: AnnotationRenderEnv) {
+	const rect = normalizeRect(annotation);
+	ctx.beginPath();
+	ctx.rect(0, 0, env.sourceWidth, env.sourceHeight);
+	if (annotation.shape === "ellipse") {
+		ctx.ellipse(rect.x + rect.w / 2, rect.y + rect.h / 2, rect.w / 2, rect.h / 2, 0, 0, Math.PI * 2);
+	} else {
+		ctx.roundRect(rect.x, rect.y, rect.w, rect.h, Math.min(10, rect.w / 8, rect.h / 8));
+	}
+	ctx.fillStyle = `rgba(0, 0, 0, ${annotation.opacity})`;
+	ctx.fill("evenodd");
+}
+
 export function drawAnnotation(
 	ctx: CanvasRenderingContext2D,
 	annotation: Annotation,
@@ -405,6 +458,12 @@ export function drawAnnotation(
 				if (annotation.mode === "blur") drawBlur(ctx, annotation, env);
 				else drawPixelate(ctx, annotation, env);
 				break;
+			case "magnifier":
+				drawMagnifier(ctx, annotation, env);
+				break;
+			case "spotlight":
+				drawSpotlight(ctx, annotation, env);
+				break;
 		}
 	} finally {
 		ctx.restore();
@@ -417,8 +476,12 @@ export function drawAnnotations(
 	env: AnnotationRenderEnv,
 	skipId?: string | null,
 ) {
+	const redactions = annotations.filter(
+		(annotation): annotation is RedactAnnotation => annotation.kind === "redact",
+	);
+	const magnifierEnv = redactions.length > 0 ? { ...env, redactions } : env;
 	for (const annotation of annotations) {
 		if (annotation.id === skipId) continue;
-		drawAnnotation(ctx, annotation, env);
+		drawAnnotation(ctx, annotation, annotation.kind === "magnifier" ? magnifierEnv : env);
 	}
 }

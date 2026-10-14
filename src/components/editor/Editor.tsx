@@ -23,16 +23,20 @@ import {
 import {
 	loadInspectorOpen,
 	loadSavedDefaultStyle,
+	loadStylePresets,
+	normalizeStylePresets,
 	loadStitchSettings,
 	loadStyleSettings,
 	loadTool,
 	loadToolStyle,
 	saveInspectorOpen,
+	saveStylePresets,
 	saveDefaultStyle,
 	saveStitchSettings,
 	saveStyleSettings,
 	saveTool,
 	saveToolStyle,
+	type StylePreset,
 } from "@/editor/persistence";
 import {
 	DEFAULT_TOOL_STYLE,
@@ -188,9 +192,11 @@ async function sourceToPngBlob(source: SourceImage, fallback: Blob | null) {
 }
 
 export function Editor() {
+	const importInputRef = useRef<HTMLInputElement>(null);
 	const [unit, setUnit] = useState(1);
 	const [settings, setSettings] = useState<StyleSettings>(loadStyleSettings);
 	const [savedDefault, setSavedDefault] = useState<StyleSettings | null>(loadSavedDefaultStyle);
+	const [stylePresets, setStylePresets] = useState<StylePreset[]>(loadStylePresets);
 	const [toolStyle, setToolStyle] = useState<ToolStyle>(loadToolStyle);
 	const [tool, setToolState] = useState<Tool>(loadTool);
 	const keymap = useKeymap();
@@ -593,6 +599,40 @@ export function Editor() {
 		);
 	}, [showToast, styleDefaults]);
 
+	const updateStylePresets = useCallback((next: StylePreset[]) => {
+		const normalized = normalizeStylePresets(next);
+		setStylePresets(normalized);
+		saveStylePresets(normalized);
+	}, []);
+
+	const createStylePreset = useCallback((inputName: string) => {
+		const name = inputName.trim().replace(/\s+/g, " ").slice(0, 32);
+		if (!name) return;
+		const preset: StylePreset = {
+			id: `preset-${crypto.randomUUID()}`,
+			name,
+			settings,
+		};
+		updateStylePresets([...stylePresets, preset]);
+		showToast("success", t("toast.presetSaved"), name);
+	}, [settings, showToast, stylePresets, updateStylePresets]);
+
+	const applyStylePreset = useCallback((preset: StylePreset) => {
+		setSettings(preset.settings);
+		showToast("success", t("toast.presetApplied"), preset.name);
+	}, [showToast]);
+
+	const renameStylePreset = useCallback((preset: StylePreset, inputName: string) => {
+		const name = inputName.trim().replace(/\s+/g, " ").slice(0, 32);
+		if (!name || name === preset.name) return;
+		updateStylePresets(stylePresets.map((item) => item.id === preset.id ? { ...item, name } : item));
+	}, [stylePresets, updateStylePresets]);
+
+	const deleteStylePreset = useCallback((preset: StylePreset) => {
+		if (!window.confirm(t("inspector.presetDeleteConfirm", { name: preset.name }))) return;
+		updateStylePresets(stylePresets.filter((item) => item.id !== preset.id));
+	}, [stylePresets, updateStylePresets]);
+
 	const renderPng = useCallback(
 		async (purpose: "export" | "pin") => {
 			if (!image || !layout) return null;
@@ -888,6 +928,18 @@ export function Editor() {
 		if (result && !result.success) showToast("error", t("stitch.failed"), t("toast.retry"));
 	}, [cancelCrop, finishText, showToast]);
 
+	const addImportedFiles = useCallback(async (files: File[]) => {
+		for (const file of files.filter((item) => item.type.startsWith("image/"))) {
+			const url = URL.createObjectURL(file);
+			try {
+				addPiece(await decodeImageData(url), unit);
+			} catch {
+				URL.revokeObjectURL(url);
+				showToast("error", t("stitch.failed"), t("toast.retry"));
+			}
+		}
+	}, [addPiece, showToast, unit]);
+
 	useEffect(() => {
 		const unsubscribe = window.electronAPI.onStitchPiece?.((payload) => {
 			void (async () => {
@@ -908,16 +960,6 @@ export function Editor() {
 	// Images pasted or dropped onto the editor are stitched in too.
 	useEffect(() => {
 		if (!image) return;
-		const addFiles = async (files: File[]) => {
-			for (const file of files) {
-				const url = URL.createObjectURL(file);
-				try {
-					addPiece(await decodeImageData(url), unit);
-				} catch {
-					URL.revokeObjectURL(url);
-				}
-			}
-		};
 		const imageFiles = (list: FileList | undefined | null) =>
 			[...(list ?? [])].filter((file) => file.type.startsWith("image/"));
 		const handlePaste = (event: ClipboardEvent) => {
@@ -925,7 +967,7 @@ export function Editor() {
 			const files = imageFiles(event.clipboardData?.files);
 			if (files.length === 0) return;
 			event.preventDefault();
-			void addFiles(files);
+			void addImportedFiles(files);
 		};
 		const handleDragOver = (event: DragEvent) => {
 			if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
@@ -933,7 +975,7 @@ export function Editor() {
 		const handleDrop = (event: DragEvent) => {
 			event.preventDefault();
 			const files = imageFiles(event.dataTransfer?.files);
-			if (files.length > 0) void addFiles(files);
+			if (files.length > 0) void addImportedFiles(files);
 		};
 		window.addEventListener("paste", handlePaste);
 		window.addEventListener("dragover", handleDragOver);
@@ -943,7 +985,7 @@ export function Editor() {
 			window.removeEventListener("dragover", handleDragOver);
 			window.removeEventListener("drop", handleDrop);
 		};
-	}, [addPiece, image, unit]);
+	}, [addImportedFiles, image]);
 
 	// ── Keyboard ──────────────────────────────────────────────────────────────
 	useEffect(() => {
@@ -1149,6 +1191,17 @@ export function Editor() {
 
 	return (
 		<div className="relative flex h-screen flex-col overflow-hidden bg-[var(--qs-bg)] text-[var(--qs-text)] select-none">
+			<input
+				ref={importInputRef}
+				type="file"
+				accept="image/png,image/jpeg,image/webp,image/gif"
+				multiple
+				className="hidden"
+				onChange={(event) => {
+					void addImportedFiles([...(event.target.files ?? [])]);
+					event.target.value = "";
+				}}
+			/>
 			<Toolbar
 				tool={tool}
 				onToolChange={setTool}
@@ -1168,6 +1221,7 @@ export function Editor() {
 				inspectorOpen={inspectorOpen}
 				onToggleInspector={toggleInspector}
 				onStitch={() => void captureForStitch()}
+				onImport={() => importInputRef.current?.click()}
 				styleBar={styleBarFloats ? null : contextBar}
 				styleBarProbes={styleBarProbes}
 				onStyleBarModeChange={setStyleBarMode}
@@ -1210,6 +1264,11 @@ export function Editor() {
 				{inspectorOpen && !cropActive && (
 					<Inspector
 						settings={settings}
+						presets={stylePresets}
+						onApplyPreset={applyStylePreset}
+						onCreatePreset={createStylePreset}
+						onRenamePreset={renameStylePreset}
+						onDeletePreset={deleteStylePreset}
 						onChange={updateSettings}
 						onWatermarkChange={updateWatermark}
 						outputSize={outputSize}

@@ -3,6 +3,7 @@ import {
 	Crop,
 	Download,
 	FolderDown,
+	FolderOpen,
 	ImagePlus,
 	Minus,
 	PanelRightClose,
@@ -41,6 +42,7 @@ type ToolbarProps = {
 	onToggleInspector: () => void;
 	/** Takes another capture and stitches it onto this one. */
 	onStitch: () => void;
+	onImport: () => void;
 	cropActive: boolean;
 	onCrop: () => void;
 	/** The current tool's style controls, shown next to the tools when they fit. */
@@ -76,6 +78,7 @@ export const Toolbar = memo(function Toolbar({
 	inspectorOpen,
 	onToggleInspector,
 	onStitch,
+	onImport,
 	cropActive,
 	onCrop,
 	styleBar,
@@ -210,6 +213,14 @@ export const Toolbar = memo(function Toolbar({
 			</div>
 
 			<div ref={trailingRef} className="ml-auto flex w-max shrink-0 items-center gap-0.5">
+				<IconButton
+					data-quickshot-action="import-image"
+					label={t("action.importImage")}
+					onClick={onImport}
+					disabled={!ready}
+				>
+					<FolderOpen size={16} strokeWidth={1.75} />
+				</IconButton>
 				<IconButton
 					data-quickshot-action="stitch"
 					label={t("action.stitch")}

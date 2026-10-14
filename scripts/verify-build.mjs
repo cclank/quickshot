@@ -12,7 +12,8 @@ const limits = {
 	// The 1.3.7 build measures about 392 kB / 121 kB gzip; no runtime dependencies added.
 	rendererBytes: 405_000,
 	rendererGzipBytes: 125_000,
-	mainBytes: 140_000,
+	// Focus-annotation payload validation adds two bounded IPC schemas.
+	mainBytes: 142_000,
 	preloadBytes: 5_000,
 	cssBytes: 42_000,
 	distBytes: 19_000_000,

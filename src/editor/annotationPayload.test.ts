@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { sanitizeAnnotations } from "./annotationPayload";
 
 describe("sanitizeAnnotations", () => {
+	it("accepts focus annotations with bounded settings", () => {
+		const result = sanitizeAnnotations([
+			{ id: "mag", kind: "magnifier", x: 1, y: 2, w: 80, h: 60, sourceX: 40, sourceY: 30, zoom: 2, color: "#ff3b30", width: 4 },
+			{ id: "spot", kind: "spotlight", x: 5, y: 6, w: 90, h: 70, shape: "ellipse", opacity: 0.5 },
+		]);
+		expect(result).toHaveLength(2);
+		expect(result[0]).toMatchObject({ kind: "magnifier", zoom: 2, color: "#FF3B30" });
+		expect(result[1]).toMatchObject({ kind: "spotlight", shape: "ellipse", opacity: 0.5 });
+	});
+
 	it("keeps a well-formed rectangle and uppercases its colour", () => {
 		const [mark] = sanitizeAnnotations([
 			{ id: "a1", kind: "rect", x: 1, y: 2, w: 30, h: 40, color: "#ff3b30", width: 4, fill: "none" },
