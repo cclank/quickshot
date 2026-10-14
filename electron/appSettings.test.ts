@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_APP_SETTINGS, normalizeAppSettings } from "./appSettings";
 
 describe("normalizeAppSettings", () => {
+	it("follows the system Downloads folder by default", () => {
+		expect(DEFAULT_APP_SETTINGS.saveDirectory).toBe(null);
+		expect(normalizeAppSettings({}).saveDirectory).toBe(null);
+	});
+
+	it("keeps a non-empty custom save directory", () => {
+		expect(normalizeAppSettings({ saveDirectory: "/tmp/quickshot" }).saveDirectory).toBe("/tmp/quickshot");
+	});
+
+	it("rejects empty and non-string save directories", () => {
+		for (const saveDirectory of ["", "   ", 42, {}, null]) {
+			expect(normalizeAppSettings({ saveDirectory }).saveDirectory).toBe(null);
+		}
+	});
+
 	it("keeps the overlay double-click copy off by default", () => {
 		expect(DEFAULT_APP_SETTINGS.overlayDoubleClickCopy).toBe(false);
 		expect(normalizeAppSettings({}).overlayDoubleClickCopy).toBe(false);

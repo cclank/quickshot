@@ -20,6 +20,8 @@ export type ShortcutSettings = {
 };
 
 export type AppSettings = {
+	/** Optional override for quick saves; null follows the system Downloads folder. */
+	saveDirectory: string | null;
 	/** macOS only: the system crosshair, or QuickShot's frozen-screen overlay. */
 	macCaptureMode: MacCaptureMode;
 	language: LanguagePreference;
@@ -44,6 +46,7 @@ export type AppSettings = {
 export const ONBOARDING_VERSION = 1;
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
+	saveDirectory: null,
 	// The overlay recognises windows under the pointer; the system crosshair
 	// stays available from the tray menu.
 	macCaptureMode: "overlay",
@@ -92,6 +95,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
 	const input =
 		value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 	return {
+		saveDirectory:
+			typeof input.saveDirectory === "string" && input.saveDirectory.trim().length > 0
+				? input.saveDirectory
+				: DEFAULT_APP_SETTINGS.saveDirectory,
 		macCaptureMode:
 			input.macCaptureMode === "overlay" || input.macCaptureMode === "system"
 				? input.macCaptureMode

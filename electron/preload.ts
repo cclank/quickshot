@@ -111,6 +111,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			ipcRenderer.invoke("settings-set-shortcut", kind, value),
 		setRecording: (recording: boolean) => ipcRenderer.invoke("settings-recording", recording),
 		setLanguage: (language: "auto" | "zh" | "en") => ipcRenderer.invoke("settings-set-language", language),
+		chooseSaveDirectory: () => ipcRenderer.invoke("settings-choose-save-directory"),
+		resetSaveDirectory: () => ipcRenderer.invoke("settings-reset-save-directory"),
 		setCaptureMode: (mode: "overlay" | "system") => ipcRenderer.invoke("settings-set-capture-mode", mode),
 		setOverlayDoubleClickCopy: (enabled: boolean) =>
 			ipcRenderer.invoke("settings-set-overlay-double-click-copy", enabled),

@@ -35,6 +35,9 @@ interface SettingsState {
 		enabled: boolean;
 	};
 	language: "auto" | "zh" | "en";
+	saveDirectory: string | null;
+	effectiveSaveDirectory: string;
+	saveDirectoryStatus: "default" | "valid" | "missing" | "unwritable";
 	macCaptureMode: "overlay" | "system";
 	overlayDoubleClickCopy: boolean;
 	trayClickCaptures: boolean;
@@ -268,6 +271,13 @@ interface Window {
 			) => Promise<{ success: boolean; error?: string; state?: SettingsState }>;
 			setRecording: (recording: boolean) => Promise<{ success: boolean }>;
 			setLanguage: (language: "auto" | "zh" | "en") => Promise<{ success: boolean; state?: SettingsState }>;
+			chooseSaveDirectory: () => Promise<{
+				success: boolean;
+				canceled?: boolean;
+				error?: string;
+				state?: SettingsState;
+			}>;
+			resetSaveDirectory: () => Promise<{ success: boolean; state?: SettingsState }>;
 			setCaptureMode: (mode: "overlay" | "system") => Promise<{ success: boolean; state?: SettingsState }>;
 			setOverlayDoubleClickCopy: (enabled: boolean) => Promise<{ success: boolean; state?: SettingsState }>;
 			setTrayClickCaptures: (enabled: boolean) => Promise<{ success: boolean; state?: SettingsState }>;
