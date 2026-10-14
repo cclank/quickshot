@@ -1,5 +1,5 @@
 import { Check, Copy, Download, Redo2, Undo2, X } from "lucide-react";
-import { type CSSProperties, memo } from "react";
+import { type CSSProperties, memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AnnotationKind, Tool } from "@/editor/types";
 import { CAPTURE_TOOL_ORDER, type ToolStyle } from "@/editor/presets";
 import { TOOL_ICONS } from "@/components/editor/icons";
@@ -7,10 +7,11 @@ import { ContextBar } from "@/components/editor/ContextBar";
 import { Divider, IconButton, Tooltip } from "@/components/editor/ui";
 import { t } from "@/lib/i18n";
 import { type KeymapCommand, bindingLabel, useKeymap } from "@/lib/keymap";
+import { getFloatingToolbarPosition, type SelectionRect } from "@/lib/selectionGeometry";
 
 /**
  * The capture overlay's editing bar. It floats over the frozen screenshot at
- * the bottom of the screen, so it carries its own dark palette instead of the
+ * beside the current selection, so it carries its own dark palette instead of the
  * editor's theme variables: the ten tools, the current tool's style controls,
  * undo and redo, and the capture actions.
  */
@@ -39,6 +40,7 @@ const DARK_VARS = {
 } as CSSProperties;
 
 export type OverlayToolbarProps = {
+	selection: SelectionRect;
 	tool: Tool;
 	onToolChange: (tool: Tool) => void;
 	style: ToolStyle;
@@ -61,6 +63,7 @@ export type OverlayToolbarProps = {
 };
 
 export const OverlayToolbar = memo(function OverlayToolbar({
+	selection,
 	tool,
 	onToolChange,
 	style,
@@ -81,15 +84,53 @@ export const OverlayToolbar = memo(function OverlayToolbar({
 	onConfirm,
 }: OverlayToolbarProps) {
 	const keymap = useKeymap();
+	const toolbarRef = useRef<HTMLDivElement>(null);
+	const [layout, setLayout] = useState(() => ({
+		toolbar: { width: Math.min(920, Math.max(0, window.innerWidth - 32)), height: 52 },
+		viewport: { width: window.innerWidth, height: window.innerHeight },
+	}));
+	useLayoutEffect(() => {
+		const toolbar = toolbarRef.current;
+		if (!toolbar) return;
+		const update = () => {
+			const rect = toolbar.getBoundingClientRect();
+			const next = {
+				toolbar: { width: rect.width, height: rect.height },
+				viewport: { width: window.innerWidth, height: window.innerHeight },
+			};
+			setLayout((current) =>
+				current.toolbar.width === next.toolbar.width &&
+				current.toolbar.height === next.toolbar.height &&
+				current.viewport.width === next.viewport.width &&
+				current.viewport.height === next.viewport.height
+					? current
+					: next,
+			);
+		};
+		update();
+		const observer = new ResizeObserver(update);
+		observer.observe(toolbar);
+		window.addEventListener("resize", update);
+		return () => {
+			observer.disconnect();
+			window.removeEventListener("resize", update);
+		};
+	}, []);
+	const position = useMemo(
+		() => getFloatingToolbarPosition(selection, layout.toolbar, layout.viewport),
+		[layout, selection],
+	);
 	const keys = (command: KeymapCommand) =>
 		keymap[command] ? bindingLabel(keymap[command]) : undefined;
 
 	return (
 		<div
+			ref={toolbarRef}
 			role="toolbar"
 			aria-label={t("overlay.editingBar")}
-			className="pointer-events-auto absolute bottom-5 left-1/2 flex max-w-[calc(100vw-32px)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-[14px] border border-white/12 bg-[rgba(16,18,23,0.88)] p-1.5 text-white shadow-[0_16px_44px_rgba(0,0,0,0.46)] backdrop-blur-xl"
-			style={DARK_VARS}
+			data-placement={position.placement}
+			className="pointer-events-auto absolute flex max-w-[calc(100vw-32px)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-[14px] border border-white/12 bg-[rgba(16,18,23,0.88)] p-1.5 text-white shadow-[0_16px_44px_rgba(0,0,0,0.46)] backdrop-blur-xl"
+			style={{ ...DARK_VARS, left: position.left, top: position.top }}
 			onPointerDown={(event) => event.stopPropagation()}
 			onDoubleClick={(event) => event.stopPropagation()}
 		>

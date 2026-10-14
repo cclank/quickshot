@@ -1487,6 +1487,7 @@ export function RegionSelector() {
 
 			{selection && !view.submitting && !view.adjust && (
 				<OverlayToolbar
+					selection={selection}
 					tool={tool}
 					onToolChange={setTool}
 					style={effectiveStyle}

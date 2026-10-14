@@ -70,7 +70,7 @@ Get them from the [latest release](https://github.com/cclank/quickshot/releases/
 
 ## Features
 
-Before confirming a region, the overlay exposes the annotation toolbar: choose tools, adjust styles, undo/redo, copy, download, or continue in the editor. Marks remain editable when sent to the editor, while copy and download include the current marks in the exported PNG.
+Before confirming a region, the overlay places the annotation toolbar against the selection's bottom edge, flipping it above selections near the screen bottom. Choose tools, adjust styles, undo/redo, copy, download, or continue in the editor. Marks remain editable when sent to the editor, while copy and download include the current marks in the exported PNG.
 
 ### Capture
 
