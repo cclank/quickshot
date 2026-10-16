@@ -38,6 +38,7 @@
 						scroll: parameters.get("scroll") === "on",
 						scrollAvailable: parameters.has("scroll"),
 						doubleClickCopy: parameters.has("doubleClickCopy"),
+						detectedWindowClickCopy: parameters.has("detectedWindowClickCopy"),
 						styledCopy: !parameters.has("noStyledCopy"),
 					},
 				}),
@@ -46,10 +47,12 @@
 				// Front-to-back mock windows laid over the sample screen.
 				getCaptureWindows: async () => ({
 					success: true,
-					windows: [
-						{ id: 102, x: Math.round(innerWidth * 0.73), y: Math.round(innerHeight * 0.38), width: Math.round(innerWidth * 0.25), height: Math.round(innerHeight * 0.45), app: "Calendar", title: "" },
-						{ id: 101, x: Math.round(innerWidth * 0.2), y: Math.round(innerHeight * 0.14), width: Math.round(innerWidth * 0.78), height: Math.round(innerHeight * 0.84), app: "Northwind", title: "Overview" },
-					],
+					windows: parameters.has("fullWindow")
+						? [{ id: 103, x: 0, y: 0, width: innerWidth, height: innerHeight, app: "Full Screen App", title: "Dashboard" }]
+						: [
+								{ id: 102, x: Math.round(innerWidth * 0.73), y: Math.round(innerHeight * 0.38), width: Math.round(innerWidth * 0.25), height: Math.round(innerHeight * 0.45), app: "Calendar", title: "" },
+								{ id: 101, x: Math.round(innerWidth * 0.2), y: Math.round(innerHeight * 0.14), width: Math.round(innerWidth * 0.78), height: Math.round(innerHeight * 0.84), app: "Northwind", title: "Overview" },
+							],
 				}),
 				cancelCaptureSession: async () => {
 					window.__quickshotRegionFixture.actions.push("cancel");

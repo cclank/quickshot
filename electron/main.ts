@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, rmSync } from "node:fs";
 import { statSync } from "original-fs";
 import os from "node:os";
 import path from "node:path";
@@ -253,6 +253,8 @@ type RegionCaptureSession = {
 	mimeType: FrameMimeType;
 	/** Opens the overlay in scrolling-capture mode. */
 	scroll: boolean;
+	/** Settings captured with this session, so a delayed renderer cannot see newer values. */
+	detectedWindowClickCopy: boolean;
 };
 
 type FrameMimeType = "image/png" | "image/jpeg";
@@ -1230,6 +1232,7 @@ function toIpcRegionCaptureSession(sessionData: RegionCaptureSession) {
 		scroll: sessionData.scroll,
 		scrollAvailable: isScrollCaptureAvailable(),
 		doubleClickCopy: appSettings.overlayDoubleClickCopy,
+		detectedWindowClickCopy: sessionData.detectedWindowClickCopy,
 		styledCopy: appSettings.overlayStyledCopy,
 	};
 }
@@ -2452,7 +2455,12 @@ function refreshTrayMenu() {
 
 function usesOverlaySelection() {
 	return (
-		process.platform !== "darwin" || appSettings.macCaptureMode === "overlay"
+		process.platform !== "darwin" ||
+		appSettings.macCaptureMode === "overlay" ||
+		// The native crosshair cannot expose the detected window metadata or host
+		// QuickShot's annotation toolbar. When this workflow is enabled, use the
+		// same frozen-frame overlay so the full interaction stays available.
+		appSettings.overlayDetectedWindowClickCopy
 	);
 }
 
@@ -2536,6 +2544,13 @@ async function setOverlayDoubleClickCopy(enabled: boolean) {
 	await persistAppSettings();
 }
 
+async function setOverlayDetectedWindowClickCopy(enabled: boolean) {
+	if (appSettings.overlayDetectedWindowClickCopy === enabled) return;
+	appSettings = { ...appSettings, overlayDetectedWindowClickCopy: enabled };
+	writeDiagnostic("overlay-detected-window-click-copy-changed", { enabled });
+	await persistAppSettings();
+}
+
 async function setTrayClickCaptures(enabled: boolean) {
 	if (appSettings.trayClickCaptures === enabled) return;
 	appSettings = { ...appSettings, trayClickCaptures: enabled };
@@ -2549,6 +2564,23 @@ async function setOverlayStyledCopy(enabled: boolean) {
 	appSettings = { ...appSettings, overlayStyledCopy: enabled };
 	writeDiagnostic("overlay-styled-copy-changed", { enabled });
 	await persistAppSettings();
+}
+async function setSaveDirectory(saveDirectory: string | null) {
+	if (appSettings.saveDirectory === saveDirectory) return;
+	appSettings = { ...appSettings, saveDirectory };
+	writeDiagnostic("save-directory-changed", { saveDirectory });
+	await persistAppSettings();
+	notifySettingsWindow();
+}
+
+async function validateSaveDirectory(directory: string): Promise<boolean> {
+	try {
+		if (!statSync(directory).isDirectory()) return false;
+		accessSync(directory, fsConstants.W_OK);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -2815,8 +2847,12 @@ function settingsState() {
 			enabled: ENABLE_CAPTURE_SHORTCUT,
 		},
 		language: appSettings.language,
+		saveDirectory: appSettings.saveDirectory,
+		effectiveSaveDirectory: effectiveScreenshotDirectory(),
+		saveDirectoryStatus: saveDirectoryStatus(),
 		macCaptureMode: appSettings.macCaptureMode,
 		overlayDoubleClickCopy: appSettings.overlayDoubleClickCopy,
+		overlayDetectedWindowClickCopy: appSettings.overlayDetectedWindowClickCopy,
 		trayClickCaptures: appSettings.trayClickCaptures,
 		overlayStyledCopy: appSettings.overlayStyledCopy,
 		launchAtLogin: app.getLoginItemSettings().openAtLogin,
@@ -3144,8 +3180,23 @@ function explainHiddenMenuBarIcon(reason: string) {
 		.catch(() => {});
 }
 
+function effectiveScreenshotDirectory() {
+	return appSettings.saveDirectory ?? app.getPath("downloads");
+}
+
+function saveDirectoryStatus(): "default" | "valid" | "missing" | "unwritable" {
+	if (!appSettings.saveDirectory) return "default";
+	try {
+		if (!statSync(appSettings.saveDirectory).isDirectory()) return "missing";
+		accessSync(appSettings.saveDirectory, fsConstants.W_OK);
+		return "valid";
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unwritable";
+	}
+}
+
 function buildDefaultScreenshotPath() {
-	return nextScreenshotPath(app.getPath("downloads"));
+	return nextScreenshotPath(effectiveScreenshotDirectory());
 }
 
 async function writeQuickSaveScreenshot(pngBuffer: Buffer): Promise<string> {
@@ -3243,6 +3294,7 @@ async function triggerScreenshot(source = "unknown", options: CaptureOptions = {
 			imageBuffer: frame.buffer,
 			mimeType: frame.mimeType,
 			scroll,
+			detectedWindowClickCopy: appSettings.overlayDetectedWindowClickCopy,
 		};
 		regionFrozenFrame = { sessionId, frame };
 		regionSelectorWindow.webContents.send(
@@ -4179,6 +4231,27 @@ function registerIpcHandlers() {
 		return { success: true, state: settingsState() };
 	});
 
+	ipcMain.handle("settings-choose-save-directory", async (event) => {
+		const win = settingsWindow;
+		if (!win || !isTrustedWindowSender(event, win)) return { success: false };
+		const result = await dialog.showOpenDialog(win, {
+			title: mt("dialog.chooseSaveDirectory"),
+			defaultPath: saveDirectoryStatus() === "missing" ? app.getPath("downloads") : effectiveScreenshotDirectory(),
+			properties: ["openDirectory"],
+		});
+		if (result.canceled || !result.filePaths[0]) return { success: false, canceled: true };
+		if (!(await validateSaveDirectory(result.filePaths[0]))) {
+			return { success: false, error: mt("dialog.saveDirectoryInvalid") };
+		}
+		await setSaveDirectory(result.filePaths[0]);
+		return { success: true, state: settingsState() };
+	});
+
+	ipcMain.handle("settings-reset-save-directory", async (event) => {
+		if (!isTrustedWindowSender(event, settingsWindow)) return { success: false };
+		await setSaveDirectory(null);
+		return { success: true, state: settingsState() };
+	});
 	ipcMain.handle("settings-set-capture-mode", async (event, mode: unknown) => {
 		if (!isTrustedWindowSender(event, settingsWindow) || (mode !== "overlay" && mode !== "system")) {
 			return { success: false };
@@ -4190,6 +4263,12 @@ function registerIpcHandlers() {
 	ipcMain.handle("settings-set-overlay-double-click-copy", async (event, enabled: unknown) => {
 		if (!isTrustedWindowSender(event, settingsWindow) || typeof enabled !== "boolean") return { success: false };
 		await setOverlayDoubleClickCopy(enabled);
+		return { success: true, state: settingsState() };
+	});
+
+	ipcMain.handle("settings-set-overlay-detected-window-click-copy", async (event, enabled: unknown) => {
+		if (!isTrustedWindowSender(event, settingsWindow) || typeof enabled !== "boolean") return { success: false };
+		await setOverlayDetectedWindowClickCopy(enabled);
 		return { success: true, state: settingsState() };
 	});
 

@@ -83,6 +83,7 @@ import {
 type Drag = { anchor: Point2; current: Point2; moved: boolean };
 /** A selection being moved or resized: what was grabbed, where, and the selection then. */
 type Adjust = { handle: SelectionHandle; start: Point2; origin: SelectionRect };
+type SelectionTarget = { target: DetectedWindow | null; detectedWindow: boolean; pristine: boolean };
 
 type OverlayState = {
 	pointer: Point2 | null;
@@ -371,7 +372,9 @@ export function RegionSelector() {
 	const scrollModeRef = useRef(false);
 	/** The session's double-click behaviour: copy the selection, or open the editor. */
 	const doubleClickCopyRef = useRef(false);
+	const detectedWindowClickCopyRef = useRef(false);
 	const styledCopyRef = useRef(false);
+	const selectionTargetRef = useRef<SelectionTarget | null>(null);
 	const [scrollMode, setScrollModeState] = useState(false);
 	const setScrollMode = useCallback((enabled: boolean) => {
 		scrollModeRef.current = enabled;
@@ -411,6 +414,7 @@ export function RegionSelector() {
 	}, []);
 
 	const commit = useCallback((next: Annotation[], options?: { coalesceKey?: string }) => {
+		if (selectionTargetRef.current) selectionTargetRef.current.pristine = false;
 		setHistory((current) => {
 			const present = current.present;
 			if (next === present) return current;
@@ -602,6 +606,8 @@ export function RegionSelector() {
 		scrollAvailableRef.current = false;
 		scrollModeRef.current = false;
 		doubleClickCopyRef.current = false;
+		detectedWindowClickCopyRef.current = false;
+		selectionTargetRef.current = null;
 		styledCopyRef.current = false;
 		setScrollModeState(false);
 		if (clearActiveSession) activeSessionIdRef.current = null;
@@ -655,6 +661,7 @@ export function RegionSelector() {
 			scroll?: boolean;
 			scrollAvailable?: boolean;
 			doubleClickCopy?: boolean;
+			detectedWindowClickCopy?: boolean;
 			styledCopy?: boolean;
 		}) => {
 			if (
@@ -671,6 +678,7 @@ export function RegionSelector() {
 			activeSessionIdRef.current = payload.sessionId;
 			scrollAvailableRef.current = Boolean(payload.scrollAvailable);
 			doubleClickCopyRef.current = Boolean(payload.doubleClickCopy);
+			detectedWindowClickCopyRef.current = Boolean(payload.detectedWindowClickCopy);
 			styledCopyRef.current = Boolean(payload.styledCopy);
 			setScrollMode(Boolean(payload.scroll && payload.scrollAvailable));
 			let imageLoadCancel: (() => void) | null = null;
@@ -842,7 +850,7 @@ export function RegionSelector() {
 					sessionId,
 					action: intent === "edit" ? (scroll ? "scroll" : "edit") : intent,
 					rect: pixels,
-					windowId: scroll || intent !== "edit" ? undefined : target?.id,
+					windowId: scroll ? undefined : target?.id,
 					croppedImageBytes,
 					composedImageBytes,
 					annotations: annotationsPayload,
@@ -865,21 +873,32 @@ export function RegionSelector() {
 	const confirmSelection = useCallback(() => {
 		finishEditing();
 		const selection = stateRef.current.selection;
-		if (selection) void submit(selection, null);
+		if (selection) {
+			const origin = selectionTargetRef.current;
+			// Once marks or bounds change, keep the frozen pixels and editable marks
+			// together instead of replacing them with a fresh window capture.
+			void submit(selection, origin?.pristine ? origin.target : null);
+		}
 	}, [finishEditing, submit]);
 
 	/** Copies the selection straight to the clipboard, marks included. */
 	const copySelection = useCallback(() => {
 		finishEditing();
 		const selection = stateRef.current.selection;
-		if (selection) void submit(selection, null, "copy");
+		if (selection) {
+			const origin = selectionTargetRef.current;
+			void submit(selection, origin?.pristine ? origin.target : null, "copy");
+		}
 	}, [finishEditing, submit]);
 
 	/** Saves the selection straight to Downloads, marks included. */
 	const saveSelection = useCallback(() => {
 		finishEditing();
 		const selection = stateRef.current.selection;
-		if (selection) void submit(selection, null, "save");
+		if (selection) {
+			const origin = selectionTargetRef.current;
+			void submit(selection, origin?.pristine ? origin.target : null, "save");
+		}
 	}, [finishEditing, submit]);
 
 	/** Drops the selection and its marks, back to choosing a window or drawing an area. */
@@ -888,6 +907,7 @@ export function RegionSelector() {
 		clearAnnotations();
 		const state = stateRef.current;
 		state.selection = null;
+		selectionTargetRef.current = null;
 		state.adjust = null;
 		state.hoverWindow = state.pointer ? hoverTargetAt(state.pointer) : null;
 		scheduleRender();
@@ -954,6 +974,7 @@ export function RegionSelector() {
 				}
 				const start = { x: 0, y: 0 };
 				state.selection = adjustSelection(state.selection, "move", start, { x: nudge[0], y: nudge[1] }, screenSize());
+				if (selectionTargetRef.current) selectionTargetRef.current.pristine = false;
 				scheduleRender();
 				return;
 			}
@@ -1220,13 +1241,19 @@ export function RegionSelector() {
 		const drag = state.drag;
 		if (state.adjust) {
 			const { origin, handle, start } = state.adjust;
-			state.selection = adjustSelection(origin, handle, start, point, screenSize());
+			const next = adjustSelection(origin, handle, start, point, screenSize());
+			if (selectionTargetRef.current && (
+				next.x !== origin.x || next.y !== origin.y ||
+				next.width !== origin.width || next.height !== origin.height
+			)) selectionTargetRef.current.pristine = false;
+			state.selection = next;
 		} else if (drag) {
 			drag.current = point;
 			if (!drag.moved && Math.hypot(point.x - drag.anchor.x, point.y - drag.anchor.y) >= CLICK_SLOP) {
 				drag.moved = true;
 				state.hoverWindow = null;
 				state.selection = null;
+				selectionTargetRef.current = null;
 			}
 		} else if (!state.selection) {
 			state.hoverWindow = hoverTargetAt(point);
@@ -1304,11 +1331,23 @@ export function RegionSelector() {
 		}
 		// A click captures the window under the pointer, or the whole screen.
 		const target = findWindowAt(windowsRef.current, drag.anchor);
+		if (target && detectedWindowClickCopyRef.current && !scrollModeRef.current) {
+			state.selection = { x: target.x, y: target.y, width: target.width, height: target.height };
+			state.hoverWindow = null;
+			selectionTargetRef.current = { target, detectedWindow: true, pristine: true };
+			// Keep the same neutral selection tool used by the existing area flow;
+			// the shared double-click setting decides whether the next double-click
+			// copies or opens the editor.
+			setToolState("select");
+			scheduleRender();
+			return;
+		}
 		void submit(target ?? { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }, target);
 	};
 
 	const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
 		const state = stateRef.current;
+		if (state.submitting) return;
 		const selection = state.selection;
 		if (!selection) return;
 		if (selectionHandleAt(selection, { x: event.clientX, y: event.clientY }) !== "move") return;
@@ -1418,6 +1457,8 @@ export function RegionSelector() {
 			className="fixed inset-0 select-none overflow-hidden"
 			data-quickshot-annotations={annotations.length}
 			data-quickshot-tool={tool}
+			data-quickshot-selection-origin={selectionTargetRef.current?.detectedWindow ? "window" : selection ? "area" : "none"}
+			data-quickshot-pristine={selectionTargetRef.current?.pristine ?? false}
 			style={{
 				cursor,
 				background: imageReady ? "transparent" : "rgba(0,0,0,0.001)",

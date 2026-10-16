@@ -10,10 +10,12 @@ const electronDistRoot = path.join(projectRoot, "dist-electron");
 const limits = {
 	// Includes capture-overlay annotations sharing the editor's drawing surface.
 	// The 1.3.7 build measures about 392 kB / 121 kB gzip; no runtime dependencies added.
-	rendererBytes: 405_000,
-	rendererGzipBytes: 125_000,
-	// Focus-annotation payload validation adds two bounded IPC schemas.
-	mainBytes: 142_000,
+	// Includes the settings window's default save-directory controls and the
+	// detected-window click-copy toggle.
+	rendererBytes: 410_000,
+	rendererGzipBytes: 126_000,
+	// Configurable screenshot save-directory IPC, validation and window-click setting.
+	mainBytes: 144_000,
 	preloadBytes: 5_000,
 	cssBytes: 42_000,
 	distBytes: 19_000_000,

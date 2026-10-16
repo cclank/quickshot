@@ -129,6 +129,7 @@ export const OverlayToolbar = memo(function OverlayToolbar({
 			role="toolbar"
 			aria-label={t("overlay.editingBar")}
 			data-placement={position.placement}
+			data-quickshot-overlay-toolbar="true"
 			className="pointer-events-auto absolute flex max-w-[calc(100vw-32px)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-[14px] border border-white/12 bg-[rgba(16,18,23,0.88)] p-1.5 text-white shadow-[0_16px_44px_rgba(0,0,0,0.46)] backdrop-blur-xl"
 			style={{ ...DARK_VARS, left: position.left, top: position.top }}
 			onPointerDown={(event) => event.stopPropagation()}
