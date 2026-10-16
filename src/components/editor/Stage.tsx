@@ -25,23 +25,21 @@ import {
 } from "@/editor/annotations";
 import { contrastColor } from "@/editor/color";
 import type { CompositionLayout, StyleSettings } from "@/editor/composition";
-import {
-	clampPointToRect,
-	constrainSquare,
-	distance,
-	rectFromPoints,
-	simplifyPath,
-	snapAngle,
-} from "@/editor/geometry";
+import { clampPointToRect } from "@/editor/geometry";
 import { rectsOverlap } from "@/editor/crop";
 import {
-	COUNTER_SIZES,
-	HIGHLIGHTER_SIZES,
-	REDACT_STRENGTHS,
-	STROKE_SIZES,
-	TEXT_SIZES,
-	type ToolStyle,
-} from "@/editor/presets";
+	createCounterDraft,
+	createDraft,
+	createTextDraft,
+	finalizeDraft,
+	grabbableAnnotations,
+	handlesActive,
+	positionTextDraft,
+	replaceAnnotation,
+	toolCursor,
+	updateDraft,
+} from "@/editor/drawing";
+import type { ToolStyle } from "@/editor/presets";
 import { type AnnotationRenderEnv, drawAnnotations } from "@/editor/renderAnnotations";
 import { renderComposition } from "@/editor/renderComposition";
 import { type SourceImage, sourceSize } from "@/editor/stitchSource";
@@ -61,6 +59,7 @@ import type {
 import { calculateCanvasBackingSize } from "@/lib/canvasBacking";
 import { t } from "@/lib/i18n";
 import { adjustSelection, getClampedSelectionRect, selectionCursor, selectionHandleAt, type SelectionHandle, type SelectionRect } from "@/lib/selectionGeometry";
+import { AnnotationSelectionOverlay, AnnotationTextEditor } from "./AnnotationSurface";
 import { CropOverlay } from "./CropOverlay";
 import { ViewControls } from "./ViewControls";
 import { useStageView } from "./useStageView";
@@ -110,120 +109,10 @@ type Gesture =
 const HIT_TOLERANCE_CSS = 6;
 const HANDLE_RADIUS_CSS = 4.5;
 const MOVE_THRESHOLD_CSS = 3;
-/**
- * Drawing tools can pick up existing annotations of their own kind, so boxes
- * stay adjustable with the rectangle tool while an arrow can still start on a
- * box's edge.
- */
-const GRAB_TOOLS = new Set<Tool>(["rect", "ellipse", "arrow", "line", "text", "counter"]);
-
-/** Whether the current tool may drag the selected annotation's handles. */
-function handlesActive(tool: Tool, selected: Annotation | null): selected is Annotation {
-	if (!selected) return false;
-	if (tool === "select") return true;
-	return tool === selected.kind && selected.kind !== "pen" && selected.kind !== "highlighter";
-}
-
-function grabbableAnnotations(
-	annotations: Annotation[],
-	tool: Tool,
-	selectedId: string | null,
-) {
-	if (tool === "select") return annotations;
-	if (!GRAB_TOOLS.has(tool)) return [];
-	return annotations.filter((item) => item.kind === tool || item.id === selectedId);
-}
 /** Above the canvas when the style bar floats over it, and when it does not. */
 export const STAGE_TOP_MARGIN = { floating: 64, clear: 28 } as const;
 const MAX_BACKING_DIMENSION = 8192;
 const MAX_BACKING_PIXELS = 24_000_000;
-
-function toolCursor(tool: Tool) {
-	if (tool === "select") return "default";
-	if (tool === "text") return "text";
-	return "crosshair";
-}
-
-function createDraft(tool: Tool, point: Point, style: ToolStyle, unit: number): Annotation | null {
-	const id = createAnnotationId();
-	const width = STROKE_SIZES[style.strokeSize] * unit;
-	switch (tool) {
-		case "rect":
-		case "ellipse":
-			return { id, kind: tool, x: point.x, y: point.y, w: 0, h: 0, color: style.color, width, fill: style.fill };
-		case "redact":
-			return {
-				id,
-				kind: "redact",
-				x: point.x,
-				y: point.y,
-				w: 0,
-				h: 0,
-				mode: style.redactMode,
-				strength: REDACT_STRENGTHS[style.redactMode][style.strokeSize] * unit,
-			};
-		case "arrow":
-		case "line":
-			return { id, kind: tool, from: point, to: point, color: style.color, width };
-		case "pen":
-			return { id, kind: "pen", points: [point], color: style.color, width };
-		case "highlighter":
-			return {
-				id,
-				kind: "highlighter",
-				points: [point],
-				color: style.color,
-				width: HIGHLIGHTER_SIZES[style.strokeSize] * unit,
-			};
-		default:
-			return null;
-	}
-}
-
-function updateDraft(
-	draft: Annotation,
-	anchor: Point,
-	point: Point,
-	constrain: boolean,
-	minStep: number,
-	samples: Point[],
-): Annotation {
-	switch (draft.kind) {
-		case "rect":
-		case "ellipse":
-		case "redact": {
-			const target = constrain ? constrainSquare(anchor, point) : point;
-			return { ...draft, ...rectFromPoints(anchor, target) };
-		}
-		case "arrow":
-		case "line":
-			return { ...draft, to: constrain ? snapAngle(anchor, point) : point };
-		case "pen":
-		case "highlighter": {
-			if (constrain) {
-				return { ...draft, points: [anchor, snapAngle(anchor, point)] };
-			}
-			const points = draft.points;
-			for (const sample of samples) {
-				if (distance(points[points.length - 1], sample) >= minStep) points.push(sample);
-			}
-			return { ...draft, points };
-		}
-		default:
-			return draft;
-	}
-}
-
-function finalizeDraft(draft: Annotation, unit: number): Annotation {
-	if (draft.kind === "pen" || draft.kind === "highlighter") {
-		return { ...draft, points: simplifyPath(draft.points, 0.35 * unit) };
-	}
-	return draft;
-}
-
-function replaceAnnotation(list: readonly Annotation[], next: Annotation) {
-	return list.map((item) => (item.id === next.id ? next : item));
-}
 
 export const Stage = forwardRef<StageHandle, StageProps>(function Stage({
 	image,
@@ -409,7 +298,10 @@ export const Stage = forwardRef<StageHandle, StageProps>(function Stage({
 		const shown = { x: visible.x / scale - layout.image.x - 32 * unit,
 			y: visible.y / scale - layout.image.y - 32 * unit,
 			w: visible.w / scale + 64 * unit, h: visible.h / scale + 64 * unit };
-		drawAnnotations(context, renderList.filter((mark) => rectsOverlap(getVisualBounds(mark, measureTextAnnotation), shown)), env, editingId);
+		const visibleAnnotations = renderList.some((mark) => mark.kind === "magnifier")
+			? renderList
+			: renderList.filter((mark) => rectsOverlap(getVisualBounds(mark, measureTextAnnotation), shown));
+		drawAnnotations(context, visibleAnnotations, env, editingId);
 		context.restore();
 	}, [dpr, editingId, getScratch, image, layout, renderList, scale, unit, visible]);
 
@@ -558,36 +450,15 @@ export const Stage = forwardRef<StageHandle, StageProps>(function Stage({
 		const origin = clampPointToRect(point, imageBounds);
 
 		if (tool === "text") {
-			const size = TEXT_SIZES[toolStyle.textSize] * unit;
-			const draft: TextAnnotation = {
-				id: createAnnotationId(),
-				kind: "text",
-				x: 0,
-				y: 0,
-				text: "",
-				color: toolStyle.color,
-				size,
-				style: toolStyle.textStyle,
-			};
+			const draft = createTextDraft({ x: 0, y: 0 }, toolStyle, unit);
 			const box = measureTextAnnotation(draft);
-			onBeginText(
-				{ ...draft, x: origin.x - box.padX, y: origin.y - box.lineHeight / 2 - box.padY },
-				true,
-			);
+			onBeginText(positionTextDraft(draft, origin, box), true);
 			event.preventDefault();
 			return;
 		}
 
 		if (tool === "counter") {
-			const counter: Annotation = {
-				id: createAnnotationId(),
-				kind: "counter",
-				x: origin.x,
-				y: origin.y,
-				value: nextCounterValue(annotations),
-				color: toolStyle.color,
-				size: COUNTER_SIZES[toolStyle.strokeSize] * unit,
-			};
+			const counter = createCounterDraft(origin, nextCounterValue(annotations), toolStyle, unit);
 			const coalesceKey = `place:${counter.id}`;
 			onCommit([...annotations, counter], { coalesceKey });
 			onSelect(counter.id);
@@ -663,7 +534,12 @@ export const Stage = forwardRef<StageHandle, StageProps>(function Stage({
 					if (Math.abs(dx) > Math.abs(dy)) offsetY = 0;
 					else offsetX = 0;
 				}
-				scheduleLive(translateAnnotation(gesture.original, offsetX, offsetY));
+				const moved = translateAnnotation(gesture.original, offsetX, offsetY);
+				scheduleLive(
+					gesture.original.kind === "magnifier" && moved.kind === "magnifier"
+						? { ...moved, sourceX: gesture.original.sourceX, sourceY: gesture.original.sourceY }
+						: moved,
+				);
 				break;
 			}
 			case "resize":
@@ -826,7 +702,7 @@ export const Stage = forwardRef<StageHandle, StageProps>(function Stage({
 							height: visible.h,
 						}}
 					/>
-					<SelectionOverlay
+					<AnnotationSelectionOverlay
 						width={stageWidth}
 						height={stageHeight}
 						selected={editing || cropActive ? null : shownSelection}
@@ -836,7 +712,7 @@ export const Stage = forwardRef<StageHandle, StageProps>(function Stage({
 					/>
 					{cropActive && <CropOverlay crop={crop} layout={layout} scale={scale} />}
 					{editing && layout && (
-						<TextEditor
+						<AnnotationTextEditor
 							key={editing.annotation.id}
 							annotation={editing.annotation}
 							left={(layout.image.x + editing.annotation.x) * scale}
@@ -857,184 +733,3 @@ export const Stage = forwardRef<StageHandle, StageProps>(function Stage({
 		</div>
 	);
 });
-
-function SelectionOverlay({
-	width,
-	height,
-	selected,
-	hovered,
-	toCss,
-	scale,
-}: {
-	width: number;
-	height: number;
-	selected: Annotation | null;
-	hovered: Annotation | null;
-	toCss: (point: Point) => Point;
-	scale: number;
-}) {
-	const outline = (annotation: Annotation, key: string, emphasis: boolean) => {
-		if (annotation.kind === "arrow" || annotation.kind === "line") {
-			const from = toCss(annotation.from);
-			const to = toCss(annotation.to);
-			return (
-				<line
-					key={key}
-					x1={from.x}
-					y1={from.y}
-					x2={to.x}
-					y2={to.y}
-					stroke="var(--qs-select)"
-					strokeOpacity={emphasis ? 0.9 : 0.55}
-					strokeWidth={1}
-					strokeDasharray={emphasis ? undefined : "3 3"}
-				/>
-			);
-		}
-		if (annotation.kind === "counter") {
-			const center = toCss(annotation);
-			return (
-				<circle
-					key={key}
-					cx={center.x}
-					cy={center.y}
-					r={annotation.size * scale + 3}
-					fill="none"
-					stroke="var(--qs-select)"
-					strokeOpacity={emphasis ? 0.95 : 0.6}
-					strokeWidth={1.25}
-				/>
-			);
-		}
-		const bounds =
-			annotation.kind === "text" || annotation.kind === "redact"
-				? getAnnotationBounds(annotation, measureTextAnnotation)
-				: getVisualBounds(annotation, measureTextAnnotation);
-		const topLeft = toCss({ x: bounds.x, y: bounds.y });
-		return (
-			<rect
-				key={key}
-				x={topLeft.x - 0.5}
-				y={topLeft.y - 0.5}
-				width={bounds.w * scale + 1}
-				height={bounds.h * scale + 1}
-				fill="none"
-				stroke="var(--qs-select)"
-				strokeOpacity={emphasis ? 0.9 : 0.55}
-				strokeWidth={1}
-				strokeDasharray={emphasis ? undefined : "3 3"}
-				rx={annotation.kind === "text" ? 3 : 0}
-			/>
-		);
-	};
-
-	return (
-		<svg
-			className="pointer-events-none absolute left-0 top-0 overflow-visible"
-			width={width}
-			height={height}
-			aria-hidden="true"
-		>
-			{hovered && outline(hovered, `hover-${hovered.id}`, false)}
-			{selected && (
-				<g>
-					{outline(selected, `sel-${selected.id}`, true)}
-					{getHandles(selected, measureTextAnnotation).map((handle) => {
-						const point = toCss(handle);
-						return (
-							<circle
-								key={handle.id}
-								cx={point.x}
-								cy={point.y}
-								r={HANDLE_RADIUS_CSS}
-								fill="#fff"
-								stroke="var(--qs-select)"
-								strokeWidth={1.5}
-								style={{ filter: "drop-shadow(0 1px 1.5px rgba(0,0,0,0.35))" }}
-							/>
-						);
-					})}
-				</g>
-			)}
-		</svg>
-	);
-}
-
-function TextEditor({
-	annotation,
-	left,
-	top,
-	scale,
-	onChange,
-	onFinish,
-}: {
-	annotation: TextAnnotation;
-	left: number;
-	top: number;
-	scale: number;
-	onChange: (text: string) => void;
-	onFinish: () => void;
-}) {
-	const ref = useRef<HTMLTextAreaElement>(null);
-	const box = measureTextAnnotation(annotation);
-	const pill = annotation.style === "pill";
-	const textColor = pill ? contrastColor(annotation.color) : annotation.color;
-
-	useEffect(() => {
-		const element = ref.current;
-		if (!element) return;
-		element.focus({ preventScroll: true });
-		const end = element.value.length;
-		element.setSelectionRange(end, end);
-	}, []);
-
-	return (
-		<textarea
-			ref={ref}
-			value={annotation.text}
-			spellCheck={false}
-			autoCorrect="off"
-			autoCapitalize="off"
-			rows={1}
-			wrap="off"
-			aria-label={t("tool.text")}
-			onChange={(event) => onChange(event.target.value)}
-			onPointerDown={(event) => event.stopPropagation()}
-			onDoubleClick={(event) => event.stopPropagation()}
-			onKeyDown={(event) => {
-				event.stopPropagation();
-				const composing = event.nativeEvent.isComposing || event.keyCode === 229;
-				if (composing) return;
-				if ((event.key === "Enter" && !event.shiftKey) || event.key === "Escape") {
-					event.preventDefault();
-					onFinish();
-				}
-			}}
-			onBlur={onFinish}
-			className="absolute z-10 m-0 resize-none overflow-hidden border-0 outline-none"
-			style={{
-				left,
-				top,
-				// Leave room for the caret and the next glyph so the field never scrolls.
-				width: box.w * scale + Math.max(12, annotation.size * scale * 0.9),
-				height: box.h * scale,
-				padding: `${box.padY * scale}px ${box.padX * scale}px`,
-				font: `${ANNOTATION_FONT_WEIGHT} ${annotation.size * scale}px ${ANNOTATION_FONT_FAMILY}`,
-				lineHeight: `${box.lineHeight * scale}px`,
-				color: textColor,
-				caretColor: textColor,
-				whiteSpace: "pre",
-				background: pill ? annotation.color : "transparent",
-				borderRadius: pill ? Math.min(box.h / 2, annotation.size * 0.5) * scale : 3,
-				boxShadow:
-					"0 0 0 1px var(--qs-select), 0 0 0 4px color-mix(in srgb, var(--qs-select) 18%, transparent)",
-				textShadow:
-					annotation.style === "plain"
-						? `0 ${annotation.size * 0.04 * scale}px ${annotation.size * 0.16 * scale}px rgba(0,0,0,0.38)`
-						: annotation.style === "outline"
-							? `0 0 ${Math.max(1, annotation.size * 0.1 * scale)}px ${contrastColor(annotation.color)}`
-							: undefined,
-			}}
-		/>
-	);
-}

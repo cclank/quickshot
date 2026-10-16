@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, rmSync } from "node:fs";
 import { statSync } from "original-fs";
 import os from "node:os";
 import path from "node:path";
@@ -32,6 +32,8 @@ import {
 	acceleratorLabel,
 	normalizeAccelerator,
 } from "../src/lib/accelerator";
+import { sanitizeAnnotations } from "../src/editor/annotationPayload";
+import type { Annotation } from "../src/editor/types";
 import { type AgentEvent, type AgentResponse, CaptureAgent } from "./captureAgent";
 import { type BundleStamp, bundleFromExecutable, shouldHandOver } from "./handOver";
 import { findOpaqueBounds, getWindowCaptureArguments } from "./windowCapture";
@@ -251,6 +253,10 @@ type RegionCaptureSession = {
 	mimeType: FrameMimeType;
 	/** Opens the overlay in scrolling-capture mode. */
 	scroll: boolean;
+	/** Settings captured with this session, so a delayed renderer cannot see newer values. */
+	detectedWindowClickCopy: boolean;
+	doubleClickCopy: boolean;
+	styledCopy: boolean;
 };
 
 type FrameMimeType = "image/png" | "image/jpeg";
@@ -301,6 +307,8 @@ let screenshotPreviewWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let screenshotCroppedBuffer: Buffer | null = null;
 let screenshotCroppedScaleFactor = 1;
+/** Marks the overlay drew, handed to the editor so they stay editable. */
+let screenshotCroppedAnnotations: Annotation[] = [];
 let sparePreviewWindow: BrowserWindow | null = null;
 let sparePreviewTimer: NodeJS.Timeout | null = null;
 let appSettings: AppSettings = { ...DEFAULT_APP_SETTINGS };
@@ -1225,8 +1233,9 @@ function toIpcRegionCaptureSession(sessionData: RegionCaptureSession) {
 		mimeType: sessionData.mimeType,
 		scroll: sessionData.scroll,
 		scrollAvailable: isScrollCaptureAvailable(),
-		doubleClickCopy: appSettings.overlayDoubleClickCopy,
-		styledCopy: appSettings.overlayStyledCopy,
+		doubleClickCopy: sessionData.doubleClickCopy,
+		detectedWindowClickCopy: sessionData.detectedWindowClickCopy,
+		styledCopy: sessionData.styledCopy,
 	};
 }
 
@@ -2209,7 +2218,7 @@ function recycleIdleWindows() {
 	}
 }
 
-function openPreviewForImage(imageBuffer: Buffer): boolean {
+function openPreviewForImage(imageBuffer: Buffer, annotations: Annotation[] = []): boolean {
 	if (!isValidCapturePngPayload(imageBuffer)) {
 		writeDiagnostic("preview-image-rejected");
 		return false;
@@ -2251,6 +2260,7 @@ function openPreviewForImage(imageBuffer: Buffer): boolean {
 			clearPreviewReadyTimer();
 			screenshotPreviewWindow = null;
 			screenshotCroppedBuffer = null;
+			screenshotCroppedAnnotations = [];
 		}
 		if (pendingPreviewSessionId === sessionId) {
 			pendingPreviewSessionId = null;
@@ -2284,6 +2294,7 @@ function openPreviewForImage(imageBuffer: Buffer): boolean {
 	activeCaptureSessionId = sessionId;
 	screenshotCroppedBuffer = imageBuffer;
 	screenshotCroppedScaleFactor = scaleFactor;
+	screenshotCroppedAnnotations = annotations;
 	capturePhase = "opening-preview";
 	pendingPreviewSessionId = sessionId;
 	const replacedEditor = screenshotPreviewWindow;
@@ -2446,7 +2457,12 @@ function refreshTrayMenu() {
 
 function usesOverlaySelection() {
 	return (
-		process.platform !== "darwin" || appSettings.macCaptureMode === "overlay"
+		process.platform !== "darwin" ||
+		appSettings.macCaptureMode === "overlay" ||
+		// The native crosshair cannot expose the detected window metadata or host
+		// QuickShot's annotation toolbar. When this workflow is enabled, use the
+		// same frozen-frame overlay so the full interaction stays available.
+		appSettings.overlayDetectedWindowClickCopy
 	);
 }
 
@@ -2530,6 +2546,13 @@ async function setOverlayDoubleClickCopy(enabled: boolean) {
 	await persistAppSettings();
 }
 
+async function setOverlayDetectedWindowClickCopy(enabled: boolean) {
+	if (appSettings.overlayDetectedWindowClickCopy === enabled) return;
+	appSettings = { ...appSettings, overlayDetectedWindowClickCopy: enabled };
+	writeDiagnostic("overlay-detected-window-click-copy-changed", { enabled });
+	await persistAppSettings();
+}
+
 async function setTrayClickCaptures(enabled: boolean) {
 	if (appSettings.trayClickCaptures === enabled) return;
 	appSettings = { ...appSettings, trayClickCaptures: enabled };
@@ -2543,6 +2566,23 @@ async function setOverlayStyledCopy(enabled: boolean) {
 	appSettings = { ...appSettings, overlayStyledCopy: enabled };
 	writeDiagnostic("overlay-styled-copy-changed", { enabled });
 	await persistAppSettings();
+}
+async function setSaveDirectory(saveDirectory: string | null) {
+	if (appSettings.saveDirectory === saveDirectory) return;
+	appSettings = { ...appSettings, saveDirectory };
+	writeDiagnostic("save-directory-changed", { saveDirectory });
+	await persistAppSettings();
+	notifySettingsWindow();
+}
+
+async function validateSaveDirectory(directory: string): Promise<boolean> {
+	try {
+		if (!statSync(directory).isDirectory()) return false;
+		accessSync(directory, fsConstants.W_OK);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -2809,8 +2849,12 @@ function settingsState() {
 			enabled: ENABLE_CAPTURE_SHORTCUT,
 		},
 		language: appSettings.language,
+		saveDirectory: appSettings.saveDirectory,
+		effectiveSaveDirectory: effectiveScreenshotDirectory(),
+		saveDirectoryStatus: saveDirectoryStatus(),
 		macCaptureMode: appSettings.macCaptureMode,
 		overlayDoubleClickCopy: appSettings.overlayDoubleClickCopy,
+		overlayDetectedWindowClickCopy: appSettings.overlayDetectedWindowClickCopy,
 		trayClickCaptures: appSettings.trayClickCaptures,
 		overlayStyledCopy: appSettings.overlayStyledCopy,
 		launchAtLogin: app.getLoginItemSettings().openAtLogin,
@@ -3138,8 +3182,23 @@ function explainHiddenMenuBarIcon(reason: string) {
 		.catch(() => {});
 }
 
+function effectiveScreenshotDirectory() {
+	return appSettings.saveDirectory ?? app.getPath("downloads");
+}
+
+function saveDirectoryStatus(): "default" | "valid" | "missing" | "unwritable" {
+	if (!appSettings.saveDirectory) return "default";
+	try {
+		if (!statSync(appSettings.saveDirectory).isDirectory()) return "missing";
+		accessSync(appSettings.saveDirectory, fsConstants.W_OK);
+		return "valid";
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unwritable";
+	}
+}
+
 function buildDefaultScreenshotPath() {
-	return nextScreenshotPath(app.getPath("downloads"));
+	return nextScreenshotPath(effectiveScreenshotDirectory());
 }
 
 async function writeQuickSaveScreenshot(pngBuffer: Buffer): Promise<string> {
@@ -3237,6 +3296,9 @@ async function triggerScreenshot(source = "unknown", options: CaptureOptions = {
 			imageBuffer: frame.buffer,
 			mimeType: frame.mimeType,
 			scroll,
+			detectedWindowClickCopy: appSettings.overlayDetectedWindowClickCopy,
+			doubleClickCopy: appSettings.overlayDoubleClickCopy,
+			styledCopy: appSettings.overlayStyledCopy,
 		};
 		regionFrozenFrame = { sessionId, frame };
 		regionSelectorWindow.webContents.send(
@@ -4173,6 +4235,27 @@ function registerIpcHandlers() {
 		return { success: true, state: settingsState() };
 	});
 
+	ipcMain.handle("settings-choose-save-directory", async (event) => {
+		const win = settingsWindow;
+		if (!win || !isTrustedWindowSender(event, win)) return { success: false };
+		const result = await dialog.showOpenDialog(win, {
+			title: mt("dialog.chooseSaveDirectory"),
+			defaultPath: saveDirectoryStatus() === "missing" ? app.getPath("downloads") : effectiveScreenshotDirectory(),
+			properties: ["openDirectory"],
+		});
+		if (result.canceled || !result.filePaths[0]) return { success: false, canceled: true };
+		if (!(await validateSaveDirectory(result.filePaths[0]))) {
+			return { success: false, error: mt("dialog.saveDirectoryInvalid") };
+		}
+		await setSaveDirectory(result.filePaths[0]);
+		return { success: true, state: settingsState() };
+	});
+
+	ipcMain.handle("settings-reset-save-directory", async (event) => {
+		if (!isTrustedWindowSender(event, settingsWindow)) return { success: false };
+		await setSaveDirectory(null);
+		return { success: true, state: settingsState() };
+	});
 	ipcMain.handle("settings-set-capture-mode", async (event, mode: unknown) => {
 		if (!isTrustedWindowSender(event, settingsWindow) || (mode !== "overlay" && mode !== "system")) {
 			return { success: false };
@@ -4184,6 +4267,12 @@ function registerIpcHandlers() {
 	ipcMain.handle("settings-set-overlay-double-click-copy", async (event, enabled: unknown) => {
 		if (!isTrustedWindowSender(event, settingsWindow) || typeof enabled !== "boolean") return { success: false };
 		await setOverlayDoubleClickCopy(enabled);
+		return { success: true, state: settingsState() };
+	});
+
+	ipcMain.handle("settings-set-overlay-detected-window-click-copy", async (event, enabled: unknown) => {
+		if (!isTrustedWindowSender(event, settingsWindow) || typeof enabled !== "boolean") return { success: false };
+		await setOverlayDetectedWindowClickCopy(enabled);
 		return { success: true, state: settingsState() };
 	});
 
@@ -4306,6 +4395,24 @@ function registerIpcHandlers() {
 		return { success: true as const, windows: captureWindows.windows };
 	});
 
+	ipcMain.handle("capture-detected-window", async (event, sessionId: number, windowId: number) => {
+		if (
+			process.platform !== "darwin" ||
+			DEV_CAPTURE_FILE ||
+			!isTrustedWindowSender(event, regionSelectorWindow) ||
+			!Number.isInteger(sessionId) ||
+			!Number.isInteger(windowId) ||
+			captureWindows?.sessionId !== sessionId ||
+			!captureWindows.windows.some((window) => window.id === windowId) ||
+			sessionId !== activeCaptureSessionId
+		) {
+			return { success: false as const };
+		}
+		const image = await captureMacWindowImage(windowId);
+		if (!image || sessionId !== activeCaptureSessionId) return { success: false as const };
+		return { success: true as const, imageBytes: toIpcPngBytes(image) };
+	});
+
 	ipcMain.handle("cancel-capture-session", (event, sessionId: number) => {
 		if (
 			!isTrustedWindowSender(event, regionSelectorWindow) ||
@@ -4332,6 +4439,8 @@ function registerIpcHandlers() {
 				windowId?: number;
 				/** With `windowId`: the window in frozen-frame pixels, cropped if the window capture fails. */
 				rect?: { x: number; y: number; width: number; height: number };
+				/** The marks drawn over the selection, for the editor to keep editing. */
+				annotations?: unknown[];
 			},
 		) => {
 			if (
@@ -4399,14 +4508,16 @@ function registerIpcHandlers() {
 			if (!croppedImageBuffer) {
 				return { success: false, error: "invalid image data" };
 			}
-			// Copies hand out the styled export the overlay rendered from the same
-			// pixels. A window captured on its own looks different from the frozen
-			// frame, so its composition would wrap the wrong image.
-			const clipboardImageBuffer =
+			// Quick actions hand out the styled export the overlay rendered from the
+			// same pixels, falling back to the baked crop. A window captured on its
+			// own looks different from the frozen frame, so its composition would
+			// wrap the wrong image.
+			const actionImageBuffer =
 				!capturedWindowInstead && composedImageBuffer ? composedImageBuffer : croppedImageBuffer;
 			if (action === "edit") {
+				const annotations = sanitizeAnnotations(payload.annotations);
 				if (deliverStitchPiece(croppedImageBuffer)) return { success: true };
-				if (!openPreviewForImage(croppedImageBuffer)) {
+				if (!openPreviewForImage(croppedImageBuffer, annotations)) {
 					return { success: false, error: "preview unavailable" };
 				}
 				overlayAwaitingEditor = true;
@@ -4421,10 +4532,10 @@ function registerIpcHandlers() {
 			writeDiagnostic("region-quick-action", { action });
 			try {
 				if (action === "copy") {
-					clipboard.writeImage(nativeImage.createFromBuffer(clipboardImageBuffer));
+					clipboard.writeImage(nativeImage.createFromBuffer(actionImageBuffer));
 				} else if (action === "save") {
-					await writeQuickSaveScreenshot(croppedImageBuffer);
-				} else if (action === "pin" && !createPinnedScreenshotWindow(croppedImageBuffer)) {
+					await writeQuickSaveScreenshot(actionImageBuffer);
+				} else if (action === "pin" && !createPinnedScreenshotWindow(actionImageBuffer)) {
 					return { success: false, error: "pin-limit" };
 				}
 				if (payload.sessionId === activeCaptureSessionId) cancelActiveCapture(false);
@@ -4491,6 +4602,7 @@ function registerIpcHandlers() {
 			success: true,
 			imageBytes: toIpcPngBytes(screenshotCroppedBuffer),
 			scaleFactor: screenshotCroppedScaleFactor,
+			annotations: screenshotCroppedAnnotations,
 		};
 	});
 
@@ -4512,6 +4624,7 @@ function registerIpcHandlers() {
 		activeCaptureSessionId = null;
 		activeCaptureDisplay = null;
 		screenshotCroppedBuffer = null;
+		screenshotCroppedAnnotations = [];
 		capturePhase = "idle";
 		writeDiagnostic("preview-ready", { sessionId });
 		scheduleSparePreviewWindow();

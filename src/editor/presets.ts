@@ -31,6 +31,7 @@ export type ToolStyle = {
 	textSize: TextSizeIndex;
 	textStyle: TextStyle;
 	redactMode: RedactMode;
+	spotlightShape: "rect" | "ellipse";
 };
 
 export const DEFAULT_TOOL_STYLE: ToolStyle = {
@@ -40,6 +41,7 @@ export const DEFAULT_TOOL_STYLE: ToolStyle = {
 	textSize: 1,
 	textStyle: "plain",
 	redactMode: "pixelate",
+	spotlightShape: "ellipse",
 };
 
 export const TOOL_ORDER: Tool[] = [
@@ -53,7 +55,13 @@ export const TOOL_ORDER: Tool[] = [
 	"text",
 	"counter",
 	"redact",
+	"magnifier",
+	"spotlight",
 ];
+
+export const CAPTURE_TOOL_ORDER: Tool[] = TOOL_ORDER.filter(
+	(tool) => tool !== "magnifier" && tool !== "spotlight",
+);
 
 export const TOOL_SHORTCUTS: Record<Tool, string> = {
 	select: "V",
@@ -66,6 +74,8 @@ export const TOOL_SHORTCUTS: Record<Tool, string> = {
 	text: "T",
 	counter: "N",
 	redact: "M",
+	magnifier: "G",
+	spotlight: "F",
 };
 
 export function normalizeToolStyle(value: unknown): ToolStyle {
@@ -92,6 +102,11 @@ export function normalizeToolStyle(value: unknown): ToolStyle {
 			input.redactMode,
 			["pixelate", "blur"] as const,
 			DEFAULT_TOOL_STYLE.redactMode,
+		),
+		spotlightShape: pick(
+			input.spotlightShape,
+			["rect", "ellipse"] as const,
+			DEFAULT_TOOL_STYLE.spotlightShape,
 		),
 	};
 }
