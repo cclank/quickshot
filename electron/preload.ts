@@ -173,6 +173,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	},
 	getCaptureWindows: (sessionId: number) =>
 		ipcRenderer.invoke("get-capture-windows", sessionId),
+	captureDetectedWindow: (sessionId: number, windowId: number) =>
+		ipcRenderer.invoke("capture-detected-window", sessionId, windowId),
 	onCaptureWindows: (
 		callback: (payload: { sessionId: number; windows: unknown[] }) => void,
 	) => {

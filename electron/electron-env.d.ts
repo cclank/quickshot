@@ -256,6 +256,9 @@ interface Window {
 		getCaptureWindows?: (sessionId: number) => Promise<
 			{ success: true; windows: DetectedWindow[] } | { success: false }
 		>;
+		captureDetectedWindow?: (sessionId: number, windowId: number) => Promise<
+			{ success: true; imageBytes: Uint8Array } | { success: false }
+		>;
 		/** The welcome guide window. */
 		onboarding?: {
 			getState: () => Promise<{

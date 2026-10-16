@@ -310,6 +310,28 @@ async function canvasToPngBytes(canvas: HTMLCanvasElement): Promise<Uint8Array |
 	return new Uint8Array(await blob.arrayBuffer());
 }
 
+async function imageBytesToCanvas(bytes: Uint8Array): Promise<HTMLCanvasElement | null> {
+	const image = new Image();
+	const objectUrl = createFrameObjectUrl(bytes, "image/png");
+	const loading = loadImageElement(image, objectUrl);
+	try {
+		await loading.promise;
+	} catch {
+		return null;
+	} finally {
+		loading.cancel();
+		URL.revokeObjectURL(objectUrl);
+	}
+	if (image.naturalWidth <= 0 || image.naturalHeight <= 0) return null;
+	const canvas = document.createElement("canvas");
+	canvas.width = image.naturalWidth;
+	canvas.height = image.naturalHeight;
+	const context = canvas.getContext("2d");
+	if (!context) return null;
+	context.drawImage(image, 0, 0);
+	return canvas;
+}
+
 /**
  * The selected pixels with the overlay's marks already painted in, in frozen
  * frame pixels. Copy, save and pin all hand out this composed image.
@@ -824,13 +846,34 @@ export function RegionSelector() {
 				let croppedImageBytes: Uint8Array | undefined;
 				let composedImageBytes: Uint8Array | undefined;
 				let annotationsPayload: Annotation[] | undefined;
+				let actionWindowId = target?.id;
+
+				if ((intent === "copy" || intent === "save") && target?.id && list.length === 0) {
+					const cleanWindow = await window.electronAPI.captureDetectedWindow?.(sessionId, target.id);
+					if (cleanWindow?.success) {
+						const cleanCanvas = await imageBytesToCanvas(cleanWindow.imageBytes);
+						if (cleanCanvas) {
+							croppedImageBytes = (await canvasToPngBytes(cleanCanvas)) ?? undefined;
+							if (styledCopyRef.current) {
+								try {
+									composedImageBytes = (await renderStyledCopy(cleanCanvas, Math.min(4, Math.max(1, cleanCanvas.width / Math.max(1, rect.width))))) ?? undefined;
+								} catch (error) {
+									console.error("QuickShot could not render the styled window copy", error);
+								}
+							}
+							cleanCanvas.width = 0;
+							cleanCanvas.height = 0;
+							actionWindowId = undefined;
+						}
+					}
+				}
 
 				if (intent === "edit") {
 					// The editor receives the raw crop plus the marks, so they stay editable.
 					if (!target?.id && list.length > 0) {
 						annotationsPayload = clipAnnotationsToCrop(list, crop, measureTextAnnotation);
 					}
-				} else if (!target?.id || list.length > 0) {
+				} else if (!croppedImageBytes && (!target?.id || list.length > 0)) {
 					const baked = bakeAnnotatedCrop(image, crop, list);
 					if (baked) {
 						croppedImageBytes = (await canvasToPngBytes(baked)) ?? undefined;
@@ -850,7 +893,7 @@ export function RegionSelector() {
 					sessionId,
 					action: intent === "edit" ? (scroll ? "scroll" : "edit") : intent,
 					rect: pixels,
-					windowId: scroll ? undefined : target?.id,
+					windowId: scroll ? undefined : actionWindowId,
 					croppedImageBytes,
 					composedImageBytes,
 					annotations: annotationsPayload,

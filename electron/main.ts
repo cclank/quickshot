@@ -255,6 +255,8 @@ type RegionCaptureSession = {
 	scroll: boolean;
 	/** Settings captured with this session, so a delayed renderer cannot see newer values. */
 	detectedWindowClickCopy: boolean;
+	doubleClickCopy: boolean;
+	styledCopy: boolean;
 };
 
 type FrameMimeType = "image/png" | "image/jpeg";
@@ -1231,9 +1233,9 @@ function toIpcRegionCaptureSession(sessionData: RegionCaptureSession) {
 		mimeType: sessionData.mimeType,
 		scroll: sessionData.scroll,
 		scrollAvailable: isScrollCaptureAvailable(),
-		doubleClickCopy: appSettings.overlayDoubleClickCopy,
+		doubleClickCopy: sessionData.doubleClickCopy,
 		detectedWindowClickCopy: sessionData.detectedWindowClickCopy,
-		styledCopy: appSettings.overlayStyledCopy,
+		styledCopy: sessionData.styledCopy,
 	};
 }
 
@@ -3295,6 +3297,8 @@ async function triggerScreenshot(source = "unknown", options: CaptureOptions = {
 			mimeType: frame.mimeType,
 			scroll,
 			detectedWindowClickCopy: appSettings.overlayDetectedWindowClickCopy,
+			doubleClickCopy: appSettings.overlayDoubleClickCopy,
+			styledCopy: appSettings.overlayStyledCopy,
 		};
 		regionFrozenFrame = { sessionId, frame };
 		regionSelectorWindow.webContents.send(
@@ -4389,6 +4393,24 @@ function registerIpcHandlers() {
 			return { success: false as const };
 		}
 		return { success: true as const, windows: captureWindows.windows };
+	});
+
+	ipcMain.handle("capture-detected-window", async (event, sessionId: number, windowId: number) => {
+		if (
+			process.platform !== "darwin" ||
+			DEV_CAPTURE_FILE ||
+			!isTrustedWindowSender(event, regionSelectorWindow) ||
+			!Number.isInteger(sessionId) ||
+			!Number.isInteger(windowId) ||
+			captureWindows?.sessionId !== sessionId ||
+			!captureWindows.windows.some((window) => window.id === windowId) ||
+			sessionId !== activeCaptureSessionId
+		) {
+			return { success: false as const };
+		}
+		const image = await captureMacWindowImage(windowId);
+		if (!image || sessionId !== activeCaptureSessionId) return { success: false as const };
+		return { success: true as const, imageBytes: toIpcPngBytes(image) };
 	});
 
 	ipcMain.handle("cancel-capture-session", (event, sessionId: number) => {
