@@ -51,7 +51,7 @@
 | | |
 | --- | --- |
 | **Hover a window, click, done** | The screen stays exactly as it is. The window under the pointer lights up in a spectrum outline; click to capture just that window, drag for any area, or click the desktop for the full screen. |
-| **Ten annotation tools, one key each** | Boxes, arrows, numbered steps, text, highlighter and blur, all still editable after you draw them. |
+| **Twelve annotation tools, one key each** | Boxes, arrows, numbered steps, text, highlighter, redaction, magnifier and spotlight, all still editable after you draw them. |
 | **Presentation-ready in one click** | Gradients, window frames, rounded corners, soft shadows, aspect ratios and your own signature. Set a style as the default and every new capture starts that way. |
 | **Stitch several captures** | Add another capture with `Mod+Shift+A`, or paste and drop images, then lay them out vertically, horizontally or in a grid. |
 | **Pin and read** | Float a capture above everything, or pull out its text with on-device OCR. Smart Redact covers user and host names, emails, IPs and keys in one step. |
@@ -70,12 +70,15 @@ Get them from the [latest release](https://github.com/cclank/quickshot/releases/
 
 ## Features
 
+Before confirming a region, the overlay places the annotation toolbar against the selection's bottom edge, flipping it above selections near the screen bottom. Choose tools, adjust styles, undo/redo, copy, download, or continue in the editor. Marks remain editable when sent to the editor, while copy and download include the current marks in the exported PNG.
+
 ### Capture
 
 - **One shortcut, anywhere.** `⌘⇧X` on macOS, `Ctrl+Shift+X` on Windows, or click the tray icon.
 - **QuickShot selection** (default): the screen stays exactly as it is. Hover to ring the window under the pointer in a soft spectrum and click to capture just that window and open the editor. Or drag out an area: after you let go you can still move it, resize it by an edge or corner, or nudge it with the arrow keys, then press Return, double-click or click ✓ to open the editor (Esc starts over). On macOS a window is captured on its own, so overlapping windows are left out and rounded corners stay transparent.
 - **System selection** (optional on macOS, via the tray menu → Selection Style): the native crosshair, including `Space` to capture a single window.
 - The selection's **Copy** button uses your saved background, frame, shadow and watermark, then closes the overlay. **Styled Quick Copies** is on by default; turn it off in Settings to copy the original capture. Clicking a detected window still opens the editor. **Double-Click Copies Only** makes double-clicking a selection copy it directly and is off by default. Opening the editor leaves your clipboard unchanged, and copying from the editor exports your current annotations and style.
+- Turn on **Copy Detected Windows Without Opening the Editor** in Settings to click an automatically detected application window, select its full bounds, and reuse the complete selection toolbar: annotations, styles, undo/redo, copy, save, cancel, and the button to open the main editor. Later single clicks only select or adjust; double-click copying follows **Double-Click Copies Only**. Ordinary drags, desktop clicks and other targets keep their current behavior. On macOS System Selection, this setting uses the same QuickShot overlay so the complete toolbar remains available; turn it off to keep the native crosshair.
 - On macOS, turn off **Left-Click Tray Captures** in Settings to open the menu without starting a capture. The menu's capture item and keyboard shortcut remain available, including when using menu-bar managers such as Bartender or Ice.
 - On multi-display setups, selection follows the pointer's display. The overlay refreshes its position before appearing; disconnecting that display or changing its resolution during preparation cancels the stale capture so its pixels cannot be stretched onto another screen.
 - The editor window is kept warm in the background. After ten minutes without a capture, hidden helper windows are released to save memory and rebuilt when needed.
@@ -86,9 +89,10 @@ Get them from the [latest release](https://github.com/cclank/quickshot/releases/
 
 ### Annotate
 
-Ten tools, each on a single key: **select, rectangle, ellipse, arrow, line, pen, highlighter, text, numbered steps, and redaction** (pixelate or blur).
+Twelve tools, each on a single key: **select, rectangle, ellipse, arrow, line, pen, highlighter, text, numbered steps, redaction** (pixelate or blur), **magnifier, and spotlight**.
 
 - Every annotation stays editable. Select it to move, resize, recolor, restyle, duplicate or delete it.
+- Magnifiers support 1.5×, 2× and 3× zoom with an adjustable border, and keep sampling the original area when moved. Spotlights offer rectangular or elliptical focus areas and three dimming strengths. Magnifiers preserve existing redactions.
 - **Smart Redact** (`Mod+Shift+M`, or the button in the redact tool's bar) reads the capture's text on-device and covers, in one step, this computer's user and host names (in `user@host` prompts and `ls -l` owners), the user folder in paths like `/Users/name`, emails, IP and MAC addresses, and common keys such as `sk-…`, `ghp_…` and `AKIA…` or the value in `KEY=value`. One undo removes it all. It is an aid, so check the result before you share.
 - Hold `Shift` for squares, circles and 45° lines. Drawing tools pick up existing marks of the same kind, so an arrow can still start on the edge of a box.
 - Text supports plain, background and outline styles, multiple lines, and Chinese/Japanese input methods.
@@ -140,7 +144,7 @@ Screenshots, and any text in them, never leave your computer. There is no accoun
 | Anywhere | `Mod+Shift+L` | Restore interaction with click-through pins |
 | Selecting | Click / drag | Capture the window under the pointer / an area, then edit |
 | Selecting | Right-click / `Esc` | Cancel |
-| Editor | `V` `R` `O` `A` `L` `P` `H` `T` `N` `M` | Select, rectangle, ellipse, arrow, line, pen, highlighter, text, counter, redact |
+| Editor | `V` `R` `O` `A` `L` `P` `H` `T` `N` `M` `G` `F` | Select, rectangle, ellipse, arrow, line, pen, highlighter, text, counter, redact, magnifier, spotlight |
 | Editor | `Mod+Z` / `Mod+Shift+Z` | Undo / redo |
 | Editor | `Mod+C` | Copy the final image and close the editor (Settings can keep it open) |
 | Editor | `Mod+Enter` | Copy and close, always |

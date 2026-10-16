@@ -4,6 +4,7 @@ import {
 	clampSelectionPoint,
 	findWindowAt,
 	getClampedSelectionRect,
+	getFloatingToolbarPosition,
 	selectionCursor,
 	selectionHandleAt,
 } from "./selectionGeometry";
@@ -45,6 +46,32 @@ describe("selection geometry", () => {
 		expect(findWindowAt(windows, { x: 150, y: 120 })?.id).toBe("front");
 		expect(findWindowAt(windows, { x: 10, y: 10 })?.id).toBe("back");
 		expect(findWindowAt(windows, { x: 5000, y: 10 })).toBeNull();
+	});
+});
+
+describe("floating selection toolbar", () => {
+	const toolbar = { width: 600, height: 64 };
+	const viewport = { width: 1200, height: 800 };
+
+	it("follows the selection bottom edge when space is available", () => {
+		expect(getFloatingToolbarPosition({ x: 200, y: 120, width: 500, height: 300 }, toolbar, viewport)).toEqual({
+			left: 450,
+			top: 428,
+			placement: "below",
+		});
+	});
+
+	it("moves above selections near the viewport bottom", () => {
+		expect(getFloatingToolbarPosition({ x: 300, y: 650, width: 400, height: 120 }, toolbar, viewport)).toEqual({
+			left: 500,
+			top: 578,
+			placement: "above",
+		});
+	});
+
+	it("keeps wide toolbars inside the horizontal viewport edges", () => {
+		expect(getFloatingToolbarPosition({ x: 0, y: 100, width: 80, height: 100 }, toolbar, viewport).left).toBe(316);
+		expect(getFloatingToolbarPosition({ x: 1120, y: 100, width: 80, height: 100 }, toolbar, viewport).left).toBe(884);
 	});
 });
 

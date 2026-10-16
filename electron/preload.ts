@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		action?: "edit" | "copy" | "save" | "pin" | "scroll";
 		windowId?: number;
 		rect?: { x: number; y: number; width: number; height: number };
+		/** Marks drawn over the selection, for the editor to keep editing. */
+		annotations?: unknown[];
 	}) => ipcRenderer.invoke("screenshot-region-selected", payload),
 	getPreviewSession: (sessionId: number) =>
 		ipcRenderer.invoke("get-preview-session", sessionId),
@@ -71,6 +73,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			scroll?: boolean;
 			scrollAvailable?: boolean;
 			doubleClickCopy?: boolean;
+			detectedWindowClickCopy?: boolean;
 			styledCopy?: boolean;
 		}) => void,
 	) => {
@@ -83,6 +86,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 				scroll?: boolean;
 				scrollAvailable?: boolean;
 				doubleClickCopy?: boolean;
+				detectedWindowClickCopy?: boolean;
 				styledCopy?: boolean;
 			},
 		) => callback(payload);
@@ -111,9 +115,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
 			ipcRenderer.invoke("settings-set-shortcut", kind, value),
 		setRecording: (recording: boolean) => ipcRenderer.invoke("settings-recording", recording),
 		setLanguage: (language: "auto" | "zh" | "en") => ipcRenderer.invoke("settings-set-language", language),
+		chooseSaveDirectory: () => ipcRenderer.invoke("settings-choose-save-directory"),
+		resetSaveDirectory: () => ipcRenderer.invoke("settings-reset-save-directory"),
 		setCaptureMode: (mode: "overlay" | "system") => ipcRenderer.invoke("settings-set-capture-mode", mode),
 		setOverlayDoubleClickCopy: (enabled: boolean) =>
 			ipcRenderer.invoke("settings-set-overlay-double-click-copy", enabled),
+		setOverlayDetectedWindowClickCopy: (enabled: boolean) =>
+			ipcRenderer.invoke("settings-set-overlay-detected-window-click-copy", enabled),
 		setTrayClickCaptures: (enabled: boolean) =>
 			ipcRenderer.invoke("settings-set-tray-click-captures", enabled),
 		setOverlayStyledCopy: (enabled: boolean) =>
@@ -165,6 +173,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	},
 	getCaptureWindows: (sessionId: number) =>
 		ipcRenderer.invoke("get-capture-windows", sessionId),
+	captureDetectedWindow: (sessionId: number, windowId: number) =>
+		ipcRenderer.invoke("capture-detected-window", sessionId, windowId),
 	onCaptureWindows: (
 		callback: (payload: { sessionId: number; windows: unknown[] }) => void,
 	) => {
