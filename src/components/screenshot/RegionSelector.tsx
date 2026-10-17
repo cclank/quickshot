@@ -85,6 +85,7 @@ type Drag = { anchor: Point2; current: Point2; moved: boolean };
 /** A selection being moved or resized: what was grabbed, where, and the selection then. */
 type Adjust = { handle: SelectionHandle; start: Point2; origin: SelectionRect };
 type SelectionTarget = { target: DetectedWindow | null; detectedWindow: boolean; pristine: boolean };
+type SelectionIntent = "edit" | "ocr" | "copy" | "save" | "pin";
 
 type OverlayState = {
 	pointer: Point2 | null;
@@ -815,7 +816,7 @@ export function RegionSelector() {
 	 * along for the editor to keep editing.
 	 */
 	const submit = useCallback(
-		async (rect: SelectionRect, target: DetectedWindow | null, intent: "edit" | "copy" | "save" | "pin" = "edit") => {
+		async (rect: SelectionRect, target: DetectedWindow | null, intent: SelectionIntent = "edit") => {
 			const state = stateRef.current;
 			const image = sourceImageRef.current;
 			const sessionId = activeSessionIdRef.current;
@@ -869,7 +870,7 @@ export function RegionSelector() {
 					}
 				}
 
-				if (intent === "edit") {
+				if (intent === "edit" || intent === "ocr") {
 					// The editor receives the raw crop plus the marks, so they stay editable.
 					if (!target?.id && list.length > 0) {
 						annotationsPayload = clipAnnotationsToCrop(list, crop, measureTextAnnotation);
@@ -913,37 +914,24 @@ export function RegionSelector() {
 		[scheduleRender],
 	);
 
-	/** Opens the selection in the editor, carrying the marks along. */
-	const confirmSelection = useCallback(() => {
+	/** Completes the current selection through one of the overlay actions. */
+	const submitCurrentSelection = useCallback((intent: SelectionIntent) => {
 		finishEditing();
 		const selection = stateRef.current.selection;
 		if (selection) {
 			const origin = selectionTargetRef.current;
-			// Once marks or bounds change, keep the frozen pixels and editable marks
-			// together instead of replacing them with a fresh window capture.
-			void submit(selection, origin?.pristine ? origin.target : null);
+			void submit(selection, origin?.pristine ? origin.target : null, intent);
 		}
 	}, [finishEditing, submit]);
+
+	/** Opens the selection in the editor, carrying the marks along. */
+	const confirmSelection = useCallback(() => submitCurrentSelection("edit"), [submitCurrentSelection]);
 
 	/** Copies the selection straight to the clipboard, marks included. */
-	const copySelection = useCallback(() => {
-		finishEditing();
-		const selection = stateRef.current.selection;
-		if (selection) {
-			const origin = selectionTargetRef.current;
-			void submit(selection, origin?.pristine ? origin.target : null, "copy");
-		}
-	}, [finishEditing, submit]);
+	const copySelection = useCallback(() => submitCurrentSelection("copy"), [submitCurrentSelection]);
 
 	/** Saves the selection straight to Downloads, marks included. */
-	const saveSelection = useCallback(() => {
-		finishEditing();
-		const selection = stateRef.current.selection;
-		if (selection) {
-			const origin = selectionTargetRef.current;
-			void submit(selection, origin?.pristine ? origin.target : null, "save");
-		}
-	}, [finishEditing, submit]);
+	const saveSelection = useCallback(() => submitCurrentSelection("save"), [submitCurrentSelection]);
 
 	/** Drops the selection and its marks, back to choosing a window or drawing an area. */
 	const clearSelection = useCallback(() => {
@@ -1589,6 +1577,7 @@ export function RegionSelector() {
 					scrollMode={scrollMode}
 					onCancel={() => void cancel()}
 					onCopy={copySelection}
+					onOcr={() => submitCurrentSelection("ocr")}
 					onSave={saveSelection}
 					onConfirm={confirmSelection}
 				/>

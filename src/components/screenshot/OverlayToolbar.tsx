@@ -1,4 +1,4 @@
-import { Copy, Download, Redo2, Undo2, X } from "lucide-react";
+import { Copy, Download, Redo2, ScanText, Undo2, X } from "lucide-react";
 import { type CSSProperties, memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AnnotationKind, Tool } from "@/editor/types";
 import { CAPTURE_TOOL_ORDER, type ToolStyle } from "@/editor/presets";
@@ -7,6 +7,7 @@ import { ContextBar } from "@/components/editor/ContextBar";
 import { Divider, IconButton, Tooltip } from "@/components/editor/ui";
 import { t } from "@/lib/i18n";
 import { type KeymapCommand, bindingLabel, useKeymap } from "@/lib/keymap";
+import { SUPPORTS_OCR } from "@/lib/platform";
 import { getFloatingToolbarPosition, type SelectionRect } from "@/lib/selectionGeometry";
 
 /**
@@ -60,6 +61,7 @@ export type OverlayToolbarProps = {
 	scrollMode: boolean;
 	onCancel: () => void;
 	onCopy: () => void;
+	onOcr: () => void;
 	onSave: () => void;
 	onConfirm: () => void;
 };
@@ -82,6 +84,7 @@ export const OverlayToolbar = memo(function OverlayToolbar({
 	scrollMode,
 	onCancel,
 	onCopy,
+	onOcr,
 	onSave,
 	onConfirm,
 }: OverlayToolbarProps) {
@@ -211,6 +214,15 @@ export const OverlayToolbar = memo(function OverlayToolbar({
 							shortcut="Enter"
 						/>
 					</button>
+					{SUPPORTS_OCR && !scrollMode && (
+						<IconButton
+							label={t("action.ocr")}
+							onClick={onOcr}
+							disabled={busy}
+						>
+							<ScanText size={16} strokeWidth={1.75} />
+						</IconButton>
+					)}
 					<IconButton
 						label={t("action.quickSave")}
 						shortcut={keys("quickSave")}

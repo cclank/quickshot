@@ -70,7 +70,7 @@ Get them from the [latest release](https://github.com/cclank/quickshot/releases/
 
 ## Features
 
-Before confirming a region, the overlay places a stable action bar against the selection's bottom edge, flipping it above selections near the screen bottom. Cancel stays on the left; annotation tools, undo and redo stay in the middle; Edit, Save and the emphasized Copy action stay on the right. Tool-specific color, size and fill controls use a separate row, so changing tools does not move the output actions. Marks remain editable when sent to the editor, while copy and save include the current marks in the exported PNG.
+Before confirming a region, the overlay places a stable action bar against the selection's bottom edge, flipping it above selections near the screen bottom. Cancel stays on the left; annotation tools, undo and redo stay in the middle; Edit, Extract Text, Save and the emphasized Copy action stay on the right. Extract Text opens the editor with its local OCR panel already running on the original selected pixels. Tool-specific color, size and fill controls use a separate row, so changing tools does not move the output actions. Marks remain editable when sent to the editor, while copy and save include the current marks in the exported PNG.
 
 ### Capture
 

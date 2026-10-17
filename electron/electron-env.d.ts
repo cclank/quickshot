@@ -121,7 +121,7 @@ interface Window {
 			/** The styled export for clipboard copies, rendered by the overlay. */
 			composedImageBytes?: Uint8Array;
 			/** "scroll" starts a scrolling capture of `rect`. */
-			action?: "edit" | "copy" | "save" | "pin" | "scroll";
+			action?: "edit" | "ocr" | "copy" | "save" | "pin" | "scroll";
 			/** A clicked window, captured on its own by the main process. */
 			windowId?: number;
 			/** The selection in frozen-frame pixels; the main process crops it. */
@@ -135,6 +135,8 @@ interface Window {
 			scaleFactor?: number;
 			/** Marks drawn in the capture overlay, to keep editing in the editor. */
 			annotations?: unknown[];
+			/** Open the editor's text extraction panel for this capture. */
+			openOcr?: boolean;
 		}>;
 		previewSessionReady: (
 			sessionId: number,

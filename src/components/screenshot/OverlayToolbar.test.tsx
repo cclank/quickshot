@@ -3,6 +3,12 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { DEFAULT_TOOL_STYLE } from "@/editor/presets";
 import { OverlayToolbar, type OverlayToolbarProps } from "./OverlayToolbar";
 
+vi.mock("@/lib/platform", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/platform")>()),
+	PLATFORM: "darwin",
+	SUPPORTS_OCR: true,
+}));
+
 beforeAll(() => {
 	vi.stubGlobal("window", {
 		innerWidth: 1440,
@@ -35,6 +41,7 @@ function renderToolbar(overrides: Partial<OverlayToolbarProps> = {}) {
 			scrollMode={false}
 			onCancel={noop}
 			onCopy={noop}
+			onOcr={noop}
 			onSave={noop}
 			onConfirm={noop}
 			{...overrides}
@@ -43,18 +50,20 @@ function renderToolbar(overrides: Partial<OverlayToolbarProps> = {}) {
 }
 
 describe("capture overlay toolbar", () => {
-	it("keeps cancel, edit, save and copy in a stable order with copy as the primary action", () => {
+	it("keeps cancel, edit, OCR, save and copy in a stable order with copy as the primary action", () => {
 		const html = renderToolbar();
 		const cancel = html.indexOf('aria-label="Cancel capture"');
 		const editText = html.indexOf(">Edit<");
 		const save = html.indexOf('aria-label="Save to Downloads"');
+		const ocr = html.indexOf('aria-label="Extract text"');
 		const copyText = html.indexOf(">Copy<");
 		const edit = html.lastIndexOf("<button", editText);
 		const copy = html.lastIndexOf("<button", copyText);
 
 		expect(cancel).toBeGreaterThan(-1);
 		expect(cancel).toBeLessThan(edit);
-		expect(edit).toBeLessThan(save);
+		expect(edit).toBeLessThan(ocr);
+		expect(ocr).toBeLessThan(save);
 		expect(save).toBeLessThan(copy);
 		expect(html.slice(copy, html.indexOf("</button>", copy))).toContain("bg-[var(--qs-primary)]");
 		expect(html.slice(edit, html.indexOf("</button>", edit))).not.toContain("bg-[var(--qs-primary)]");
@@ -71,6 +80,7 @@ describe("capture overlay toolbar", () => {
 		const scrollText = html.indexOf(">Start scrolling<");
 		const edit = html.lastIndexOf("<button", scrollText);
 		expect(html).not.toContain(">Copy<");
+		expect(html).not.toContain('aria-label="Extract text"');
 		expect(html.slice(edit, html.indexOf("</button>", edit))).toContain("bg-[var(--qs-primary)]");
 	});
 });

@@ -270,6 +270,7 @@ export function Editor() {
 				setToolStyle(loadToolStyle());
 				setToolState(loadTool());
 				setInspectorOpen(loadInspectorOpen());
+				setOcrOpen(payload.openOcr === true);
 				const scaleFactor = Number(payload.scaleFactor);
 				setUnit(Number.isFinite(scaleFactor) ? Math.min(4, Math.max(1, scaleFactor)) : 1);
 				// Marks drawn in the capture overlay arrive cropped, ready to edit.

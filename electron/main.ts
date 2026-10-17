@@ -309,6 +309,8 @@ let screenshotCroppedBuffer: Buffer | null = null;
 let screenshotCroppedScaleFactor = 1;
 /** Marks the overlay drew, handed to the editor so they stay editable. */
 let screenshotCroppedAnnotations: Annotation[] = [];
+/** Opens text extraction as soon as the pending capture reaches the editor. */
+let screenshotPreviewOpenOcr = false;
 let sparePreviewWindow: BrowserWindow | null = null;
 let sparePreviewTimer: NodeJS.Timeout | null = null;
 let appSettings: AppSettings = { ...DEFAULT_APP_SETTINGS };
@@ -2218,7 +2220,11 @@ function recycleIdleWindows() {
 	}
 }
 
-function openPreviewForImage(imageBuffer: Buffer, annotations: Annotation[] = []): boolean {
+function openPreviewForImage(
+	imageBuffer: Buffer,
+	annotations: Annotation[] = [],
+	options: { openOcr?: boolean } = {},
+): boolean {
 	if (!isValidCapturePngPayload(imageBuffer)) {
 		writeDiagnostic("preview-image-rejected");
 		return false;
@@ -2295,6 +2301,7 @@ function openPreviewForImage(imageBuffer: Buffer, annotations: Annotation[] = []
 	screenshotCroppedBuffer = imageBuffer;
 	screenshotCroppedScaleFactor = scaleFactor;
 	screenshotCroppedAnnotations = annotations;
+	screenshotPreviewOpenOcr = options.openOcr === true;
 	capturePhase = "opening-preview";
 	pendingPreviewSessionId = sessionId;
 	const replacedEditor = screenshotPreviewWindow;
@@ -4435,7 +4442,7 @@ function registerIpcHandlers() {
 				croppedImageBytes?: Uint8Array;
 				/** The styled export for clipboard copies, rendered by the overlay. */
 				composedImageBytes?: Uint8Array;
-				action?: "edit" | "copy" | "save" | "pin" | "scroll";
+				action?: "edit" | "ocr" | "copy" | "save" | "pin" | "scroll";
 				windowId?: number;
 				/** With `windowId`: the window in frozen-frame pixels, cropped if the window capture fails. */
 				rect?: { x: number; y: number; width: number; height: number };
@@ -4472,7 +4479,7 @@ function registerIpcHandlers() {
 			}
 
 			const action = payload.action ?? "edit";
-			if (!["edit", "copy", "save", "pin", "scroll"].includes(action)) {
+			if (!["edit", "ocr", "copy", "save", "pin", "scroll"].includes(action)) {
 				return { success: false, error: "unknown action" };
 			}
 			if (action === "scroll") {
@@ -4514,10 +4521,10 @@ function registerIpcHandlers() {
 			// wrap the wrong image.
 			const actionImageBuffer =
 				!capturedWindowInstead && composedImageBuffer ? composedImageBuffer : croppedImageBuffer;
-			if (action === "edit") {
+			if (action === "edit" || action === "ocr") {
 				const annotations = sanitizeAnnotations(payload.annotations);
 				if (deliverStitchPiece(croppedImageBuffer)) return { success: true };
-				if (!openPreviewForImage(croppedImageBuffer, annotations)) {
+				if (!openPreviewForImage(croppedImageBuffer, annotations, { openOcr: action === "ocr" })) {
 					return { success: false, error: "preview unavailable" };
 				}
 				overlayAwaitingEditor = true;
@@ -4603,6 +4610,7 @@ function registerIpcHandlers() {
 			imageBytes: toIpcPngBytes(screenshotCroppedBuffer),
 			scaleFactor: screenshotCroppedScaleFactor,
 			annotations: screenshotCroppedAnnotations,
+			openOcr: screenshotPreviewOpenOcr,
 		};
 	});
 
@@ -4625,6 +4633,7 @@ function registerIpcHandlers() {
 		activeCaptureDisplay = null;
 		screenshotCroppedBuffer = null;
 		screenshotCroppedAnnotations = [];
+		screenshotPreviewOpenOcr = false;
 		capturePhase = "idle";
 		writeDiagnostic("preview-ready", { sessionId });
 		scheduleSparePreviewWindow();

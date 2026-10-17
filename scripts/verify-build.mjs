@@ -9,7 +9,7 @@ const electronDistRoot = path.join(projectRoot, "dist-electron");
 // Budgets leave headroom over the current build so regressions stand out.
 const limits = {
 	// Includes capture-overlay annotations sharing the editor's drawing surface.
-	// The 1.3.8 build stays within the established renderer budget; no runtime dependencies added.
+	// The 1.3.9 build stays within the established renderer budget; no runtime dependencies added.
 	// Includes the settings window's default save-directory controls and the
 	// detected-window click-copy toggle.
 	rendererBytes: 410_000,

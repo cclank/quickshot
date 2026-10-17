@@ -30,7 +30,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		croppedImageBytes?: Uint8Array;
 		/** The styled export for clipboard copies, rendered by the overlay. */
 		composedImageBytes?: Uint8Array;
-		action?: "edit" | "copy" | "save" | "pin" | "scroll";
+		action?: "edit" | "ocr" | "copy" | "save" | "pin" | "scroll";
 		windowId?: number;
 		rect?: { x: number; y: number; width: number; height: number };
 		/** Marks drawn over the selection, for the editor to keep editing. */
