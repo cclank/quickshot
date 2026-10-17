@@ -7,6 +7,7 @@ import {
 	getFloatingToolbarPosition,
 	selectionCursor,
 	selectionHandleAt,
+	shouldStageDetectedWindow,
 } from "./selectionGeometry";
 
 const SOURCE_SIZE = { width: 1920, height: 1080 };
@@ -46,6 +47,14 @@ describe("selection geometry", () => {
 		expect(findWindowAt(windows, { x: 150, y: 120 })?.id).toBe("front");
 		expect(findWindowAt(windows, { x: 10, y: 10 })?.id).toBe("back");
 		expect(findWindowAt(windows, { x: 5000, y: 10 })).toBeNull();
+	});
+
+	it("stages a full-screen detected window for the shared toolbar when enabled", () => {
+		const fullScreenWindow = { x: 0, y: 0, width: 1920, height: 1080 };
+		expect(shouldStageDetectedWindow(fullScreenWindow, true, false)).toBe(true);
+		expect(shouldStageDetectedWindow(fullScreenWindow, false, false)).toBe(false);
+		expect(shouldStageDetectedWindow(fullScreenWindow, true, true)).toBe(false);
+		expect(shouldStageDetectedWindow(null, true, false)).toBe(false);
 	});
 });
 

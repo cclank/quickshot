@@ -65,6 +65,7 @@ import {
 	getClampedSelectionRect,
 	selectionCursor,
 	selectionHandleAt,
+	shouldStageDetectedWindow,
 } from "@/lib/selectionGeometry";
 
 /**
@@ -1374,7 +1375,7 @@ export function RegionSelector() {
 		}
 		// A click captures the window under the pointer, or the whole screen.
 		const target = findWindowAt(windowsRef.current, drag.anchor);
-		if (target && detectedWindowClickCopyRef.current && !scrollModeRef.current) {
+		if (target && shouldStageDetectedWindow(target, detectedWindowClickCopyRef.current, scrollModeRef.current)) {
 			state.selection = { x: target.x, y: target.y, width: target.width, height: target.height };
 			state.hoverWindow = null;
 			selectionTargetRef.current = { target, detectedWindow: true, pristine: true };

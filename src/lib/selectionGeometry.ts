@@ -96,6 +96,15 @@ export function findWindowAt<T extends { x: number; y: number; width: number; he
 	return null;
 }
 
+/** Whether a clicked detected window should pause in the overlay for toolbar actions. */
+export function shouldStageDetectedWindow(
+	target: { x: number; y: number; width: number; height: number } | null,
+	enabled: boolean,
+	scrollMode: boolean,
+): boolean {
+	return target !== null && enabled && !scrollMode;
+}
+
 /** Where a pointer can grab a selection: an edge, a corner, or inside to move it. */
 export type SelectionHandle = "n" | "s" | "e" | "w" | "nw" | "ne" | "sw" | "se" | "move";
 

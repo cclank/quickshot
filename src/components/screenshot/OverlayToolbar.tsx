@@ -1,4 +1,4 @@
-import { Check, Copy, Download, Redo2, Undo2, X } from "lucide-react";
+import { Copy, Download, Redo2, Undo2, X } from "lucide-react";
 import { type CSSProperties, memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AnnotationKind, Tool } from "@/editor/types";
 import { CAPTURE_TOOL_ORDER, type ToolStyle } from "@/editor/presets";
@@ -12,8 +12,8 @@ import { getFloatingToolbarPosition, type SelectionRect } from "@/lib/selectionG
 /**
  * The capture overlay's editing bar. It floats over the frozen screenshot at
  * beside the current selection, so it carries its own dark palette instead of the
- * editor's theme variables: the ten tools, the current tool's style controls,
- * undo and redo, and the capture actions.
+ * editor's theme variables. The primary row stays stable while the selected
+ * tool's style controls occupy a separate, optional row beneath it.
  */
 
 const DARK_VARS = {
@@ -38,6 +38,8 @@ const DARK_VARS = {
 	"--qs-danger": "#ff6b6b",
 	"--qs-shadow-float": "0 12px 34px rgba(0, 0, 0, 0.42), 0 0 0 0.5px rgba(255, 255, 255, 0.1)",
 } as CSSProperties;
+
+const EditIcon = TOOL_ICONS.select;
 
 export type OverlayToolbarProps = {
 	selection: SelectionRect;
@@ -130,72 +132,12 @@ export const OverlayToolbar = memo(function OverlayToolbar({
 			aria-label={t("overlay.editingBar")}
 			data-placement={position.placement}
 			data-quickshot-overlay-toolbar="true"
-			className="pointer-events-auto absolute flex max-w-[calc(100vw-32px)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-[14px] border border-white/12 bg-[rgba(16,18,23,0.88)] p-1.5 text-white shadow-[0_16px_44px_rgba(0,0,0,0.46)] backdrop-blur-xl"
+			className="pointer-events-auto absolute grid max-w-[calc(100vw-32px)] -translate-x-1/2 justify-center gap-1 rounded-[14px] border border-white/12 bg-[rgba(16,18,23,0.88)] p-1.5 text-white shadow-[0_16px_44px_rgba(0,0,0,0.46)] backdrop-blur-xl"
 			style={{ ...DARK_VARS, left: position.left, top: position.top }}
 			onPointerDown={(event) => event.stopPropagation()}
 			onDoubleClick={(event) => event.stopPropagation()}
 		>
-			<div className="flex shrink-0 items-center gap-0.5">
-				<IconButton
-					label={t("action.undo")}
-					shortcut={bindingLabel("Mod+Z")}
-					onClick={onUndo}
-					disabled={!canUndo}
-				>
-					<Undo2 size={16} strokeWidth={1.75} />
-				</IconButton>
-				<IconButton
-					label={t("action.redo")}
-					shortcut={bindingLabel("Mod+Shift+Z")}
-					onClick={onRedo}
-					disabled={!canRedo}
-				>
-					<Redo2 size={16} strokeWidth={1.75} />
-				</IconButton>
-			</div>
-
-			<div
-				role="group"
-				aria-label={t("toolbar.tools")}
-				className="flex w-max shrink-0 items-center gap-0.5 rounded-[11px] bg-[var(--qs-field)] p-[3px] shadow-[inset_0_0_0_1px_var(--qs-border)]"
-			>
-				{CAPTURE_TOOL_ORDER.map((value) => {
-					const Icon = TOOL_ICONS[value];
-					return (
-						<IconButton
-							key={value}
-							label={t(`tool.${value}`)}
-							shortcut={keys(`tool.${value}` as KeymapCommand)}
-							active={tool === value}
-							aria-pressed={tool === value}
-							onClick={() => onToolChange(value)}
-						>
-							<Icon size={16} strokeWidth={1.75} />
-						</IconButton>
-					);
-				})}
-			</div>
-
-			{contextKind && (
-				<>
-					<Divider />
-					<div className="qs-no-drag flex shrink-0 items-center">
-						<ContextBar
-							kind={contextKind}
-							style={style}
-							onChange={onStyleChange}
-							hasSelection={hasSelection}
-							onDelete={onDelete}
-							onDuplicate={onDuplicate}
-							variant="inline"
-						/>
-					</div>
-				</>
-			)}
-
-			<Divider />
-
-			<div className="flex shrink-0 items-center gap-0.5">
+			<div className="flex w-max shrink-0 items-center gap-0.5">
 				<IconButton
 					label={t("region.cancel")}
 					shortcut="Esc"
@@ -204,34 +146,108 @@ export const OverlayToolbar = memo(function OverlayToolbar({
 				>
 					<X size={16} strokeWidth={1.9} />
 				</IconButton>
-				{!scrollMode && (
+				<Divider />
+
+				<div
+					role="group"
+					aria-label={t("toolbar.tools")}
+					className="flex w-max shrink-0 items-center gap-0.5 rounded-[11px] bg-[var(--qs-field)] p-[3px] shadow-[inset_0_0_0_1px_var(--qs-border)]"
+				>
+					{CAPTURE_TOOL_ORDER.map((value) => {
+						const Icon = TOOL_ICONS[value];
+						return (
+							<IconButton
+								key={value}
+								label={t(`tool.${value}`)}
+								shortcut={keys(`tool.${value}` as KeymapCommand)}
+								active={tool === value}
+								aria-pressed={tool === value}
+								onClick={() => onToolChange(value)}
+							>
+								<Icon size={16} strokeWidth={1.75} />
+							</IconButton>
+						);
+					})}
+				</div>
+
+				<Divider />
+
+				<div className="flex shrink-0 items-center gap-0.5">
 					<IconButton
-						label={t("region.copy")}
-						onClick={onCopy}
+						label={t("action.undo")}
+						shortcut={bindingLabel("Mod+Z")}
+						onClick={onUndo}
+						disabled={!canUndo}
+					>
+						<Undo2 size={16} strokeWidth={1.75} />
+					</IconButton>
+					<IconButton
+						label={t("action.redo")}
+						shortcut={bindingLabel("Mod+Shift+Z")}
+						onClick={onRedo}
+						disabled={!canRedo}
+					>
+						<Redo2 size={16} strokeWidth={1.75} />
+					</IconButton>
+				</div>
+
+				<Divider />
+
+				<div className="flex shrink-0 items-center gap-0.5">
+					<button
+						type="button"
+						onClick={onConfirm}
+						disabled={busy}
+						className={`qs-tip-host flex h-8 shrink-0 items-center gap-1.5 rounded-[9px] px-2.5 text-[12.5px] font-semibold transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--qs-select)] disabled:opacity-40 ${
+							scrollMode
+								? "bg-[var(--qs-primary)] text-[var(--qs-primary-text)] hover:bg-[var(--qs-primary-hover)]"
+								: "text-[var(--qs-text-2)] hover:bg-[var(--qs-hover)] hover:text-[var(--qs-text)]"
+						}`}
+					>
+						<EditIcon size={15} strokeWidth={1.9} />
+						<span>{scrollMode ? t("region.startScroll") : t("region.confirm")}</span>
+						<Tooltip
+							label={scrollMode ? t("region.startScroll") : t("region.confirmHint")}
+							shortcut="Enter"
+						/>
+					</button>
+					<IconButton
+						label={t("action.quickSave")}
+						shortcut={keys("quickSave")}
+						onClick={onSave}
 						disabled={busy}
 					>
-						<Copy size={15} strokeWidth={1.9} />
+						<Download size={16} strokeWidth={1.9} />
 					</IconButton>
-				)}
-				<IconButton
-					label={t("action.quickSave")}
-					onClick={onSave}
-					disabled={busy}
-				>
-					<Download size={16} strokeWidth={1.9} />
-				</IconButton>
-				<button
-					type="button"
-					onClick={onConfirm}
-					disabled={busy}
-					title={scrollMode ? t("region.startScroll") : t("region.confirm")}
-					className="qs-tip-host ml-1 flex h-8 shrink-0 items-center gap-1.5 rounded-[9px] bg-[var(--qs-primary)] px-3 text-[12.5px] font-semibold text-[var(--qs-primary-text)] transition-[background-color] duration-100 hover:bg-[var(--qs-primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--qs-select)] disabled:opacity-40"
-				>
-					<Check size={15} strokeWidth={2.2} />
-					{scrollMode ? t("region.startScroll") : t("region.confirm")}
-					<Tooltip label={scrollMode ? t("region.startScroll") : t("region.confirm")} />
-				</button>
+					{!scrollMode && (
+						<button
+							type="button"
+							onClick={onCopy}
+							disabled={busy}
+							className="qs-tip-host ml-1 flex h-8 shrink-0 items-center gap-1.5 rounded-[9px] bg-[var(--qs-primary)] px-3 text-[12.5px] font-semibold text-[var(--qs-primary-text)] transition-[background-color] duration-100 hover:bg-[var(--qs-primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--qs-select)] disabled:opacity-40"
+						>
+							<Copy size={15} strokeWidth={1.9} />
+							<span>{t("region.copy")}</span>
+							<Tooltip label={t("region.copy")} shortcut={keys("copy")} />
+						</button>
+					)}
+				</div>
 			</div>
+
+			{contextKind && (
+				<div className="qs-no-drag flex max-w-full shrink-0 items-center">
+					<ContextBar
+						kind={contextKind}
+						style={style}
+						onChange={onStyleChange}
+						hasSelection={hasSelection}
+						onDelete={onDelete}
+						onDuplicate={onDuplicate}
+						variant="inline"
+						compactColors
+					/>
+				</div>
+			)}
 		</div>
 	);
 });
