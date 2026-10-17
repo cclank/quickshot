@@ -39,7 +39,7 @@ type ContextBarProps = {
 	smartRedactBusy?: boolean;
 };
 
-const COLORLESS: AnnotationKind[] = ["redact"];
+const COLORLESS: AnnotationKind[] = ["redact", "spotlight"];
 const SIZED: AnnotationKind[] = [
 	"rect",
 	"ellipse",
@@ -49,6 +49,8 @@ const SIZED: AnnotationKind[] = [
 	"highlighter",
 	"counter",
 	"redact",
+	"magnifier",
+	"spotlight",
 ];
 
 function Group({ label, children }: { label: string; children: ReactNode }) {
@@ -230,7 +232,11 @@ export const ContextBar = memo(function ContextBar({
 	const duplicateKeys = keymap.duplicate;
 	const showColor = !COLORLESS.includes(kind);
 	const showSize = SIZED.includes(kind);
-	const sizeLabels = [t("style.size.s"), t("style.size.m"), t("style.size.l")];
+	const sizeLabels = kind === "magnifier"
+		? ["1.5×", "2×", "3×"]
+		: kind === "spotlight"
+			? [t("style.spotlight.light"), t("style.spotlight.medium"), t("style.spotlight.strong")]
+			: [t("style.size.s"), t("style.size.m"), t("style.size.l")];
 	const inline = variant === "inline";
 
 	return (
@@ -285,7 +291,7 @@ export const ContextBar = memo(function ContextBar({
 			{showSize && (
 				<>
 					{(showColor || kind === "redact") && <Divider />}
-					<Group label={kind === "redact" ? t("style.strength") : t("style.size")}>
+					<Group label={kind === "redact" || kind === "spotlight" ? t("style.strength") : kind === "magnifier" ? t("style.zoom") : t("style.size")}>
 						{([0, 1, 2] as SizeIndex[]).map((index) => (
 							<ChoiceButton
 								key={index}
@@ -299,6 +305,20 @@ export const ContextBar = memo(function ContextBar({
 								/>
 							</ChoiceButton>
 						))}
+					</Group>
+				</>
+			)}
+
+			{kind === "spotlight" && (
+				<>
+					<Divider />
+					<Group label={t("style.spotlight.shape")}>
+						<ChoiceButton label={t("style.spotlight.rect")} selected={style.spotlightShape === "rect"} onClick={() => onChange({ spotlightShape: "rect" })}>
+							<FillNoneIcon />
+						</ChoiceButton>
+						<ChoiceButton label={t("style.spotlight.ellipse")} selected={style.spotlightShape === "ellipse"} onClick={() => onChange({ spotlightShape: "ellipse" })}>
+							<BlurIcon />
+						</ChoiceButton>
 					</Group>
 				</>
 			)}

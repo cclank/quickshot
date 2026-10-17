@@ -35,8 +35,12 @@ interface SettingsState {
 		enabled: boolean;
 	};
 	language: "auto" | "zh" | "en";
+	saveDirectory: string | null;
+	effectiveSaveDirectory: string;
+	saveDirectoryStatus: "default" | "valid" | "missing" | "unwritable";
 	macCaptureMode: "overlay" | "system";
 	overlayDoubleClickCopy: boolean;
+	overlayDetectedWindowClickCopy: boolean;
 	trayClickCaptures: boolean;
 	overlayStyledCopy: boolean;
 	launchAtLogin: boolean;
@@ -98,6 +102,8 @@ interface Window {
 				scrollAvailable?: boolean;
 				/** When true, double-clicking the selection only copies it. */
 				doubleClickCopy?: boolean;
+				/** When true, clicking a detected window stages it for quick copy. */
+				detectedWindowClickCopy?: boolean;
 				/** When true, quick copies render the saved style template. */
 				styledCopy?: boolean;
 			};
@@ -115,16 +121,22 @@ interface Window {
 			/** The styled export for clipboard copies, rendered by the overlay. */
 			composedImageBytes?: Uint8Array;
 			/** "scroll" starts a scrolling capture of `rect`. */
-			action?: "edit" | "copy" | "save" | "pin" | "scroll";
+			action?: "edit" | "ocr" | "copy" | "save" | "pin" | "scroll";
 			/** A clicked window, captured on its own by the main process. */
 			windowId?: number;
 			/** The selection in frozen-frame pixels; the main process crops it. */
 			rect?: { x: number; y: number; width: number; height: number };
+			/** Marks drawn over the selection, for the editor to keep editing. */
+			annotations?: unknown[];
 		}) => Promise<{ success: boolean; error?: string }>;
 		getPreviewSession: (sessionId: number) => Promise<{
 			success: boolean;
 			imageBytes?: Uint8Array;
 			scaleFactor?: number;
+			/** Marks drawn in the capture overlay, to keep editing in the editor. */
+			annotations?: unknown[];
+			/** Open the editor's text extraction panel for this capture. */
+			openOcr?: boolean;
 		}>;
 		previewSessionReady: (
 			sessionId: number,
@@ -236,6 +248,8 @@ interface Window {
 				scrollAvailable?: boolean;
 				/** When true, double-clicking the selection only copies it. */
 				doubleClickCopy?: boolean;
+				/** When true, clicking a detected window stages it for quick copy. */
+				detectedWindowClickCopy?: boolean;
 				/** When true, quick copies render the saved style template. */
 				styledCopy?: boolean;
 			}) => void,
@@ -243,6 +257,9 @@ interface Window {
 		onPinnedInteractionRestored: (callback: () => void) => () => void;
 		getCaptureWindows?: (sessionId: number) => Promise<
 			{ success: true; windows: DetectedWindow[] } | { success: false }
+		>;
+		captureDetectedWindow?: (sessionId: number, windowId: number) => Promise<
+			{ success: true; imageBytes: Uint8Array } | { success: false }
 		>;
 		/** The welcome guide window. */
 		onboarding?: {
@@ -268,8 +285,16 @@ interface Window {
 			) => Promise<{ success: boolean; error?: string; state?: SettingsState }>;
 			setRecording: (recording: boolean) => Promise<{ success: boolean }>;
 			setLanguage: (language: "auto" | "zh" | "en") => Promise<{ success: boolean; state?: SettingsState }>;
+			chooseSaveDirectory: () => Promise<{
+				success: boolean;
+				canceled?: boolean;
+				error?: string;
+				state?: SettingsState;
+			}>;
+			resetSaveDirectory: () => Promise<{ success: boolean; state?: SettingsState }>;
 			setCaptureMode: (mode: "overlay" | "system") => Promise<{ success: boolean; state?: SettingsState }>;
 			setOverlayDoubleClickCopy: (enabled: boolean) => Promise<{ success: boolean; state?: SettingsState }>;
+			setOverlayDetectedWindowClickCopy: (enabled: boolean) => Promise<{ success: boolean; state?: SettingsState }>;
 			setTrayClickCaptures: (enabled: boolean) => Promise<{ success: boolean; state?: SettingsState }>;
 			setOverlayStyledCopy: (enabled: boolean) => Promise<{ success: boolean; state?: SettingsState }>;
 			setLaunchAtLogin: (enabled: boolean) => Promise<{ success: boolean; state?: SettingsState }>;

@@ -7,6 +7,39 @@ export type SelectionRect = {
 	height: number;
 };
 
+export type FloatingToolbarPosition = {
+	left: number;
+	top: number;
+	placement: "above" | "below";
+};
+
+/** Keeps a floating toolbar beside a selection while avoiding viewport edges. */
+export function getFloatingToolbarPosition(
+	selection: SelectionRect,
+	toolbar: SelectionSize,
+	viewport: SelectionSize,
+	gap = 8,
+	edge = 16,
+): FloatingToolbarPosition {
+	const availableWidth = Math.max(0, viewport.width - edge * 2);
+	const toolbarWidth = Math.min(Math.max(0, toolbar.width), availableWidth);
+	const minCenter = edge + toolbarWidth / 2;
+	const maxCenter = viewport.width - edge - toolbarWidth / 2;
+	const selectionCenter = selection.x + selection.width / 2;
+	const left = Math.min(maxCenter, Math.max(minCenter, selectionCenter));
+	const belowTop = selection.y + selection.height + gap;
+	const fitsBelow = belowTop + toolbar.height <= viewport.height - edge;
+	const placement = fitsBelow ? "below" : "above";
+	const preferredTop = fitsBelow ? belowTop : selection.y - gap - toolbar.height;
+	const maxTop = Math.max(edge, viewport.height - edge - toolbar.height);
+
+	return {
+		left: Math.round(left),
+		top: Math.round(Math.min(maxTop, Math.max(edge, preferredTop))),
+		placement,
+	};
+}
+
 export function clampCoordinate(value: number, maximum: number) {
 	if (!Number.isFinite(value) || maximum <= 0) return 0;
 	return Math.min(maximum, Math.max(0, Math.round(value)));
@@ -61,6 +94,15 @@ export function findWindowAt<T extends { x: number; y: number; width: number; he
 		}
 	}
 	return null;
+}
+
+/** Whether a clicked detected window should pause in the overlay for toolbar actions. */
+export function shouldStageDetectedWindow(
+	target: { x: number; y: number; width: number; height: number } | null,
+	enabled: boolean,
+	scrollMode: boolean,
+): boolean {
+	return target !== null && enabled && !scrollMode;
 }
 
 /** Where a pointer can grab a selection: an edge, a corner, or inside to move it. */
