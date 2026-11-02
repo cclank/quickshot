@@ -1,7 +1,7 @@
 {
 	"name": "quickshot",
 	"private": true,
-	"version": "1.3.6",
+	"version": "1.3.10",
 	"type": "module",
 	"description": "Fast, local-first screenshot tool for macOS and Windows with polished annotations and presentation-ready backgrounds",
 	"author": "岚叔 (https://github.com/cclank)",
@@ -25,6 +25,7 @@
 		"build:ocr-helper": "node scripts/build-native-helpers.mjs",
 		"build:ocr-helper:universal": "node scripts/build-native-helpers.mjs --universal",
 		"test:ocr-helper": "npm run build:ocr-helper && node scripts/smoke-ocr-helper.mjs",
+		"test:capture-interactions": "node scripts/test-capture-interactions.mjs",
 		"test:scroll-stitcher": "node scripts/test-scroll-stitcher.mjs",
 		"dev": "npm run build:ocr-helper && vite",
 		"dev:ui": "vite --config vite.ui.config.ts",

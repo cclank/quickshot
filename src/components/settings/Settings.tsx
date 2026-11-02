@@ -33,6 +33,8 @@ const COMMAND_LABELS: Record<KeymapCommand, MessageKey> = {
 	"tool.text": "tool.text",
 	"tool.counter": "tool.counter",
 	"tool.redact": "tool.redact",
+	"tool.magnifier": "tool.magnifier",
+	"tool.spotlight": "tool.spotlight",
 	copy: "action.copyImage",
 	copyAndClose: "action.copyAndClose",
 	quickSave: "action.quickSave",
@@ -245,6 +247,22 @@ export function Settings() {
 		if (savedTimerRef.current !== null) window.clearTimeout(savedTimerRef.current);
 		savedTimerRef.current = window.setTimeout(() => setSaved(null), 1600);
 	}, []);
+
+	const chooseSaveDirectory = useCallback(async () => {
+		const result = await api?.chooseSaveDirectory();
+		if (!result) return;
+		if (result.state) setState(result.state);
+		if (result.success) flashSaved("save-location");
+		else if (!result.canceled) setErrors((current) => ({ ...current, "save-location": result.error ?? t("settings.saveLocationMissing") }));
+	}, [api, flashSaved]);
+
+	const resetSaveDirectory = useCallback(async () => {
+		const result = await api?.resetSaveDirectory();
+		if (!result) return;
+		if (result.state) setState(result.state);
+		if (result.success) flashSaved("save-location");
+		else setErrors((current) => ({ ...current, "save-location": t("settings.saveLocationMissing") }));
+	}, [api, flashSaved]);
 
 	const stopRecording = useCallback(() => {
 		if (recordingRef.current === null) return;
@@ -496,6 +514,42 @@ export function Settings() {
 							onChange={(language) => void api?.setLanguage(language).then((result) => result.state && setState(result.state))}
 						/>
 					</Row>
+					<Row
+						label={t("settings.saveLocation")}
+						detail={
+							<div className="mt-1 space-y-1 text-[11.5px] text-[var(--qs-text-3)]">
+								<p>{t("settings.saveLocationHint")}</p>
+								<p
+									className={
+										state.saveDirectoryStatus === "missing" || state.saveDirectoryStatus === "unwritable"
+											? "text-[var(--qs-danger)]"
+											: "truncate"
+									}
+									title={state.effectiveSaveDirectory}
+								>
+									{state.saveDirectoryStatus === "missing"
+										? t("settings.saveLocationMissing")
+										: state.saveDirectoryStatus === "unwritable"
+											? t("settings.saveLocationUnwritable")
+											: state.saveDirectory
+												? state.effectiveSaveDirectory
+													: t("settings.saveLocationDefault")}
+								</p>
+								{errors["save-location"] && <p className="text-[var(--qs-danger)]">{errors["save-location"]}</p>}
+							</div>
+						}
+					>
+						<div className="flex shrink-0 gap-1">
+							<TextButton label={t("settings.saveLocationReset")} disabled={!state.saveDirectory} onClick={() => void resetSaveDirectory()} />
+							<button
+								type="button"
+								onClick={() => void chooseSaveDirectory()}
+								className="h-8 rounded-[8px] bg-[var(--qs-primary)] px-3 text-[12px] font-semibold text-[var(--qs-primary-text)] hover:bg-[var(--qs-primary-hover)]"
+							>
+								{t("settings.saveLocationChoose")}
+							</button>
+						</div>
+					</Row>
 					{IS_MAC && (
 						<Row
 							label={t("settings.selection")}
@@ -556,6 +610,20 @@ export function Settings() {
 							label={t("settings.doubleClickCopy")}
 							onChange={(enabled) =>
 								void api?.setOverlayDoubleClickCopy(enabled).then((result) => result.state && setState(result.state))
+							}
+						/>
+					</Row>
+					<Row
+						label={t("settings.detectedWindowClickCopy")}
+						detail={
+							<p className="mt-1 text-[11.5px] text-[var(--qs-text-3)]">{t("settings.detectedWindowClickCopyHint")}</p>
+						}
+					>
+						<Switch
+							checked={state.overlayDetectedWindowClickCopy}
+							label={t("settings.detectedWindowClickCopy")}
+							onChange={(enabled) =>
+								void api?.setOverlayDetectedWindowClickCopy(enabled).then((result) => result.state && setState(result.state))
 							}
 						/>
 					</Row>

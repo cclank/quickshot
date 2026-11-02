@@ -54,6 +54,13 @@ export function styleFromAnnotation(
 				annotation.strength / unit,
 			) as SizeIndex;
 			break;
+		case "magnifier":
+			style.strokeSize = nearestIndex([1.5, 2, 3], annotation.zoom) as SizeIndex;
+			break;
+		case "spotlight":
+			style.strokeSize = nearestIndex([0.35, 0.5, 0.65], annotation.opacity) as SizeIndex;
+			style.spotlightShape = annotation.shape;
+			break;
 	}
 	return style;
 }
@@ -98,6 +105,14 @@ export function applyStyleToAnnotation(
 			}
 			break;
 		}
+		case "magnifier":
+			if (size !== undefined) next.zoom = [1.5, 2, 3][size];
+			if (size !== undefined) next.width = STROKE_SIZES[size] * unit;
+			break;
+		case "spotlight":
+			if (size !== undefined) next.opacity = [0.35, 0.5, 0.65][size];
+			if (patch.spotlightShape) next.shape = patch.spotlightShape;
+			break;
 	}
 	return next;
 }

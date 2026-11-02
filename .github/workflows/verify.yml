@@ -22,6 +22,10 @@ jobs:
 
       - run: npm ci
       - run: npm run verify
+      - name: Verify capture renderer interactions
+        env:
+          CHROME_PATH: google-chrome
+        run: npm run test:capture-interactions
       - name: Package Linux x64 directory
         run: npx electron-builder --linux --dir --x64 --config.directories.output="$RUNNER_TEMP/quickshot-package"
       - name: Verify packaged application

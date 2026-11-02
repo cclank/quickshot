@@ -208,7 +208,14 @@
 					imageBytes: await getScreenshotBytes(),
 					scaleFactor: fixtureScaleFactor,
 				}),
-				previewSessionReady: async () => ({ success: true }),
+				onPreviewSession: (listener) => {
+					window.__quickshotPreviewFixture.startSession = listener;
+					return () => { delete window.__quickshotPreviewFixture.startSession; };
+				},
+				previewSessionReady: async (sessionId) => {
+					window.__quickshotPreviewFixture.readySessionId = sessionId;
+					return { success: true };
+				},
 				extractText: async () => ({
 					success: true,
 					text: "QuickShot 本地文本提取\nPreview fixture",

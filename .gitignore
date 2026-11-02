@@ -6,3 +6,4 @@ release
 .build
 *.tsbuildinfo
 promo/out/
+.work

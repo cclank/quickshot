@@ -20,6 +20,8 @@ export type ShortcutSettings = {
 };
 
 export type AppSettings = {
+	/** Optional override for quick saves; null follows the system Downloads folder. */
+	saveDirectory: string | null;
 	/** macOS only: the system crosshair, or QuickShot's frozen-screen overlay. */
 	macCaptureMode: MacCaptureMode;
 	language: LanguagePreference;
@@ -29,6 +31,8 @@ export type AppSettings = {
 	usageStats: boolean;
 	/** When true, double-clicking a released selection only copies it; by default it opens the editor. */
 	overlayDoubleClickCopy: boolean;
+	/** When true, clicking an automatically detected window stages it for quick copy instead of opening the editor. */
+	overlayDetectedWindowClickCopy: boolean;
 	/** When true (default), left-clicking the tray icon starts a capture; off leaves the click to the menu. */
 	trayClickCaptures: boolean;
 	/** When true (default), quick copies render the saved style template; off copies the bare capture. */
@@ -44,6 +48,7 @@ export type AppSettings = {
 export const ONBOARDING_VERSION = 1;
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
+	saveDirectory: null,
 	// The overlay recognises windows under the pointer; the system crosshair
 	// stays available from the tray menu.
 	macCaptureMode: "overlay",
@@ -52,6 +57,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 	usageStats: true,
 	// Most captures are pasted straight away; the editor stays an explicit choice.
 	overlayDoubleClickCopy: false,
+	// Clicking a detected window keeps the full selection toolbar in the overlay.
+	overlayDetectedWindowClickCopy: false,
 	// Left-click capture matches the tray menu item; menu-bar managers can turn it off.
 	trayClickCaptures: true,
 	// Quick copies hand over the styled export so pastes never need the editor.
@@ -92,6 +99,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
 	const input =
 		value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 	return {
+		saveDirectory:
+			typeof input.saveDirectory === "string" && input.saveDirectory.trim().length > 0
+				? input.saveDirectory
+				: DEFAULT_APP_SETTINGS.saveDirectory,
 		macCaptureMode:
 			input.macCaptureMode === "overlay" || input.macCaptureMode === "system"
 				? input.macCaptureMode
@@ -111,6 +122,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
 			typeof input.overlayDoubleClickCopy === "boolean"
 				? input.overlayDoubleClickCopy
 				: DEFAULT_APP_SETTINGS.overlayDoubleClickCopy,
+		overlayDetectedWindowClickCopy:
+			typeof input.overlayDetectedWindowClickCopy === "boolean"
+				? input.overlayDetectedWindowClickCopy
+				: DEFAULT_APP_SETTINGS.overlayDetectedWindowClickCopy,
 		trayClickCaptures:
 			typeof input.trayClickCaptures === "boolean"
 				? input.trayClickCaptures

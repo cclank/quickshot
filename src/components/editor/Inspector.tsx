@@ -1,5 +1,5 @@
-import { Check } from "lucide-react";
-import { memo, type CSSProperties, type ReactNode } from "react";
+import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
+import { memo, type CSSProperties, type ReactNode, useState } from "react";
 import {
 	GRADIENT_PRESETS,
 	SOLID_COLORS,
@@ -20,6 +20,7 @@ import {
 	WATERMARK_WEIGHTS,
 	type WatermarkSettings,
 } from "@/editor/composition";
+import type { StylePreset } from "@/editor/persistence";
 import {
 	AUTO_WATERMARK_COLOR,
 	WATERMARK_FONT_STACKS,
@@ -30,6 +31,11 @@ import { Section, Segmented, Slider, Swatch, Switch } from "./ui";
 
 type InspectorProps = {
 	settings: StyleSettings;
+	presets: StylePreset[];
+	onApplyPreset: (preset: StylePreset) => void;
+	onCreatePreset: (name: string) => void;
+	onRenamePreset: (preset: StylePreset, name: string) => void;
+	onDeletePreset: (preset: StylePreset) => void;
 	onChange: (patch: Partial<StyleSettings>) => void;
 	onWatermarkChange: (patch: Partial<WatermarkSettings>) => void;
 	outputSize: { w: number; h: number };
@@ -111,6 +117,11 @@ function FramePreview({ style }: { style: FrameStyle }) {
 
 export const Inspector = memo(function Inspector({
 	settings,
+	presets,
+	onApplyPreset,
+	onCreatePreset,
+	onRenamePreset,
+	onDeletePreset,
 	onChange,
 	onWatermarkChange,
 	outputSize,
@@ -125,6 +136,23 @@ export const Inspector = memo(function Inspector({
 }: InspectorProps) {
 	const { watermark } = settings;
 	const background = settings.background;
+	const settingsKey = JSON.stringify(settings);
+	const [creatingPreset, setCreatingPreset] = useState(false);
+	const [presetName, setPresetName] = useState("");
+	const [renamingPresetId, setRenamingPresetId] = useState<string | null>(null);
+	const [renameValue, setRenameValue] = useState("");
+	const finishCreate = () => {
+		if (!presetName.trim()) return;
+		onCreatePreset(presetName);
+		setPresetName("");
+		setCreatingPreset(false);
+	};
+	const finishRename = (preset: StylePreset) => {
+		if (!renameValue.trim()) return;
+		onRenamePreset(preset, renameValue);
+		setRenamingPresetId(null);
+		setRenameValue("");
+	};
 
 	return (
 		<aside
@@ -146,6 +174,67 @@ export const Inspector = memo(function Inspector({
 
 			<div className="qs-scroll min-h-0 flex-1 overflow-y-auto">
 				{stitchSection}
+				<Section
+					title={t("inspector.presets")}
+					action={
+						<button
+							type="button"
+							onClick={() => setCreatingPreset(true)}
+							className="flex h-6 items-center gap-1 rounded-[7px] bg-[var(--qs-field)] px-2 text-[11px] font-medium text-[var(--qs-text-2)] hover:bg-[var(--qs-hover)] hover:text-[var(--qs-text)]"
+						>
+							<Plus size={12} />
+							{t("inspector.presetSave")}
+						</button>
+					}
+				>
+					{creatingPreset && (
+						<div className="mb-2 flex items-center gap-1">
+							<input
+								autoFocus
+								value={presetName}
+								maxLength={32}
+								placeholder={t("inspector.presetNameDefault")}
+								aria-label={t("inspector.presetNamePrompt")}
+								onChange={(event) => setPresetName(event.target.value)}
+								onKeyDown={(event) => {
+									if (event.key === "Enter") finishCreate();
+									if (event.key === "Escape") setCreatingPreset(false);
+								}}
+								className="h-7 min-w-0 flex-1 rounded-[7px] bg-[var(--qs-field)] px-2 text-[12px] text-[var(--qs-text)] outline-none shadow-[inset_0_0_0_1px_var(--qs-border)] focus:shadow-[inset_0_0_0_1px_var(--qs-select)]"
+							/>
+							<button type="button" onClick={finishCreate} disabled={!presetName.trim()} aria-label={t("inspector.presetSave")} className="rounded p-1.5 text-[var(--qs-text-2)] hover:bg-[var(--qs-hover)] disabled:opacity-35"><Check size={13} /></button>
+							<button type="button" onClick={() => setCreatingPreset(false)} aria-label={t("crop.cancel")} className="rounded p-1.5 text-[var(--qs-text-3)] hover:bg-[var(--qs-hover)]"><X size={13} /></button>
+						</div>
+					)}
+					{presets.length === 0 ? (
+						<p className="text-[11px] leading-4 text-[var(--qs-text-3)]">
+							{t("inspector.presetsEmpty")}
+						</p>
+					) : (
+						<div className="space-y-1.5">
+							{presets.map((preset) => {
+								const active = JSON.stringify(preset.settings) === settingsKey;
+								return (
+									<div key={preset.id} className={`flex items-center gap-1 rounded-[8px] p-1 ${active ? "bg-[var(--qs-active)] shadow-[inset_0_0_0_1px_var(--qs-border-strong)]" : "bg-[var(--qs-field)]"}`}>
+										{renamingPresetId === preset.id ? (
+											<input autoFocus value={renameValue} maxLength={32} aria-label={t("inspector.presetRenamePrompt")} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") finishRename(preset); if (event.key === "Escape") setRenamingPresetId(null); }} className="h-6 min-w-0 flex-1 rounded-[6px] bg-[var(--qs-bg)] px-1.5 text-[12px] text-[var(--qs-text)] outline-none shadow-[inset_0_0_0_1px_var(--qs-select)]" />
+										) : (
+											<button type="button" onClick={() => onApplyPreset(preset)} className="min-w-0 flex-1 truncate px-1.5 py-1 text-left text-[12px] text-[var(--qs-text)]" title={preset.name}>{preset.name}</button>
+										)}
+										{renamingPresetId === preset.id ? (
+											<button type="button" onClick={() => finishRename(preset)} disabled={!renameValue.trim()} aria-label={t("inspector.presetRename")} className="rounded p-1 text-[var(--qs-text-3)] hover:bg-[var(--qs-hover)] disabled:opacity-35"><Check size={12} /></button>
+										) : <button type="button" onClick={() => { setRenamingPresetId(preset.id); setRenameValue(preset.name); }} title={t("inspector.presetRename")} aria-label={t("inspector.presetRename")} className="rounded p-1 text-[var(--qs-text-3)] hover:bg-[var(--qs-hover)] hover:text-[var(--qs-text)]">
+											<Pencil size={12} />
+										</button>}
+										<button type="button" onClick={() => onDeletePreset(preset)} title={t("inspector.presetDelete")} aria-label={t("inspector.presetDelete")} className="rounded p-1 text-[var(--qs-text-3)] hover:bg-[var(--qs-hover)] hover:text-red-500">
+											<Trash2 size={12} />
+										</button>
+									</div>
+								);
+							})}
+						</div>
+					)}
+				</Section>
 				{!settings.beautify ? (
 					<p className="border-b border-[var(--qs-border)] px-4 py-3.5 text-[12px] leading-5 text-[var(--qs-text-3)]">
 						{t("inspector.beautifyOff")}

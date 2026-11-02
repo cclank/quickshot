@@ -6,8 +6,10 @@ import {
 	MoveUpRight,
 	PenLine,
 	Slash,
+	Scan,
 	Square,
 	Type,
+	ZoomIn,
 	type LucideProps,
 } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
@@ -128,4 +130,6 @@ export const TOOL_ICONS: Record<Tool, IconComponent> = {
 	text: Type,
 	counter: CounterIcon,
 	redact: Grid2X2,
+	magnifier: ZoomIn,
+	spotlight: Scan,
 };

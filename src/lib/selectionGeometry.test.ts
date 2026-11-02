@@ -4,8 +4,10 @@ import {
 	clampSelectionPoint,
 	findWindowAt,
 	getClampedSelectionRect,
+	getFloatingToolbarPosition,
 	selectionCursor,
 	selectionHandleAt,
+	shouldStageDetectedWindow,
 } from "./selectionGeometry";
 
 const SOURCE_SIZE = { width: 1920, height: 1080 };
@@ -46,11 +48,56 @@ describe("selection geometry", () => {
 		expect(findWindowAt(windows, { x: 10, y: 10 })?.id).toBe("back");
 		expect(findWindowAt(windows, { x: 5000, y: 10 })).toBeNull();
 	});
+
+	it("stages a full-screen detected window for the shared toolbar when enabled", () => {
+		const fullScreenWindow = { x: 0, y: 0, width: 1920, height: 1080 };
+		expect(shouldStageDetectedWindow(fullScreenWindow, true, false)).toBe(true);
+		expect(shouldStageDetectedWindow(fullScreenWindow, false, false)).toBe(false);
+		expect(shouldStageDetectedWindow(fullScreenWindow, true, true)).toBe(false);
+		expect(shouldStageDetectedWindow(null, true, false)).toBe(false);
+	});
+});
+
+describe("floating selection toolbar", () => {
+	const toolbar = { width: 600, height: 64 };
+	const viewport = { width: 1200, height: 800 };
+
+	it("follows the selection bottom edge when space is available", () => {
+		expect(getFloatingToolbarPosition({ x: 200, y: 120, width: 500, height: 300 }, toolbar, viewport)).toEqual({
+			left: 450,
+			top: 428,
+			placement: "below",
+		});
+	});
+
+	it("moves above selections near the viewport bottom", () => {
+		expect(getFloatingToolbarPosition({ x: 300, y: 650, width: 400, height: 120 }, toolbar, viewport)).toEqual({
+			left: 500,
+			top: 578,
+			placement: "above",
+		});
+	});
+
+	it("keeps wide toolbars inside the horizontal viewport edges", () => {
+		expect(getFloatingToolbarPosition({ x: 0, y: 100, width: 80, height: 100 }, toolbar, viewport).left).toBe(316);
+		expect(getFloatingToolbarPosition({ x: 1120, y: 100, width: 80, height: 100 }, toolbar, viewport).left).toBe(884);
+	});
 });
 
 describe("adjusting a selection", () => {
 	const rect = { x: 100, y: 100, width: 200, height: 100 };
 	const screen = { width: 1000, height: 600 };
+
+	it.each([
+		[200, 100, "ns-resize"], [200, 200, "ns-resize"],
+		[100, 150, "ew-resize"], [300, 150, "ew-resize"],
+		[100, 100, "nwse-resize"], [300, 200, "nwse-resize"],
+		[300, 100, "nesw-resize"], [100, 200, "nesw-resize"],
+	] as const)("matches the resize cursor to the hit area at %s,%s", (x, y, cursor) => {
+		const handle = selectionHandleAt(rect, { x, y });
+		expect(handle).not.toBeNull();
+		expect(selectionCursor(handle!)).toBe(cursor);
+	});
 
 	it("finds edges, corners and the inside", () => {
 		expect(selectionHandleAt(rect, { x: 200, y: 150 })).toBe("move");

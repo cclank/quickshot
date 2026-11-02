@@ -4,16 +4,45 @@ import {
 	type StyleSettings,
 	normalizeStyleSettings,
 } from "./composition";
-import { type ToolStyle, TOOL_ORDER, normalizeToolStyle } from "./presets";
+import { type ToolStyle, normalizeToolStyle } from "./presets";
 import { type StitchSettings, normalizeStitchSettings } from "./stitch";
-import type { Tool } from "./types";
 
 const STYLE_KEY = "quickshot.style.v2";
 const DEFAULT_STYLE_KEY = "quickshot.style-default.v1";
+const STYLE_PRESETS_KEY = "quickshot.style-presets.v1";
 const STITCH_KEY = "quickshot.stitch.v1";
 const TOOL_STYLE_KEY = "quickshot.tool-style.v1";
-const TOOL_KEY = "quickshot.tool.v1";
 const INSPECTOR_KEY = "quickshot.inspector-open.v1";
+
+export type StylePreset = {
+	id: string;
+	name: string;
+	settings: StyleSettings;
+};
+
+const MAX_STYLE_PRESETS = 24;
+const MAX_PRESET_NAME_LENGTH = 32;
+
+export function normalizeStylePresets(value: unknown): StylePreset[] {
+	if (!Array.isArray(value)) return [];
+	const presets: StylePreset[] = [];
+	const seen = new Set<string>();
+	for (const item of value) {
+		if (presets.length >= MAX_STYLE_PRESETS) break;
+		if (!item || typeof item !== "object") continue;
+		const record = item as Record<string, unknown>;
+		const id = typeof record.id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(record.id)
+			? record.id
+			: null;
+		const name = typeof record.name === "string"
+			? record.name.trim().replace(/\s+/g, " ").slice(0, MAX_PRESET_NAME_LENGTH)
+			: "";
+		if (!id || !name || seen.has(id) || !record.settings || typeof record.settings !== "object") continue;
+		seen.add(id);
+		presets.push({ id, name, settings: normalizeStyleSettings(record.settings) });
+	}
+	return presets;
+}
 
 /** Carries the signature settings over from the first editor generation. */
 function readLegacyStyle(): Partial<StyleSettings> {
@@ -54,6 +83,14 @@ export function saveDefaultStyle(settings: StyleSettings) {
 	writeStoredJson(DEFAULT_STYLE_KEY, settings);
 }
 
+export function loadStylePresets(): StylePreset[] {
+	return normalizeStylePresets(readStoredJson(STYLE_PRESETS_KEY));
+}
+
+export function saveStylePresets(presets: StylePreset[]) {
+	writeStoredJson(STYLE_PRESETS_KEY, normalizeStylePresets(presets));
+}
+
 /** The last stitch arrangement, gap and alignment. */
 export function loadStitchSettings(): StitchSettings {
 	return normalizeStitchSettings(readStoredJson(STITCH_KEY));
@@ -69,15 +106,6 @@ export function loadToolStyle(): ToolStyle {
 
 export function saveToolStyle(style: ToolStyle) {
 	writeStoredJson(TOOL_STYLE_KEY, style);
-}
-
-export function loadTool(): Tool {
-	const stored = readStoredJson(TOOL_KEY);
-	return TOOL_ORDER.includes(stored as Tool) ? (stored as Tool) : "arrow";
-}
-
-export function saveTool(tool: Tool) {
-	writeStoredJson(TOOL_KEY, tool);
 }
 
 export function loadInspectorOpen(): boolean {

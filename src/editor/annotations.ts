@@ -43,6 +43,8 @@ export function getAnnotationBounds(
 		case "rect":
 		case "ellipse":
 		case "redact":
+		case "magnifier":
+		case "spotlight":
 			return normalizeRect(annotation);
 		case "arrow":
 		case "line":
@@ -76,6 +78,7 @@ export function getVisualBounds(
 		case "line":
 		case "pen":
 		case "highlighter":
+		case "magnifier":
 			return expandRect(bounds, annotation.width / 2);
 		case "arrow":
 			return expandRect(
@@ -112,6 +115,8 @@ export function getHandles(
 		case "rect":
 		case "ellipse":
 		case "redact":
+		case "magnifier":
+		case "spotlight":
 			return boxHandles(normalizeRect(annotation));
 		case "arrow":
 		case "line":
@@ -175,6 +180,16 @@ export function hitTestAnnotation(
 			return rectContains(normalizeRect(annotation), point, tolerance)
 				? "body"
 				: null;
+		case "magnifier": {
+			const rect = normalizeRect(annotation);
+			return isInsideEllipse(point, rect) ? "body" : null;
+		}
+		case "spotlight": {
+			const rect = normalizeRect(annotation);
+			return (annotation.shape === "ellipse" ? isInsideEllipse(point, rect) : rectContains(rect, point))
+				? "body"
+				: null;
+		}
 		case "arrow": {
 			const reach = tolerance + annotation.width / 2;
 			if (distanceToSegment(point, annotation.from, annotation.to) <= reach) {
@@ -273,7 +288,16 @@ export function translateAnnotation(
 		case "redact":
 		case "text":
 		case "counter":
+		case "spotlight":
 			return { ...annotation, x: annotation.x + dx, y: annotation.y + dy };
+		case "magnifier":
+			return {
+				...annotation,
+				x: annotation.x + dx,
+				y: annotation.y + dy,
+				sourceX: annotation.sourceX + dx,
+				sourceY: annotation.sourceY + dy,
+			};
 		case "arrow":
 		case "line":
 			return {
@@ -361,7 +385,9 @@ export function resizeAnnotation(
 	switch (original.kind) {
 		case "rect":
 		case "ellipse":
-		case "redact": {
+		case "redact":
+		case "magnifier":
+		case "spotlight": {
 			if (handle === "start" || handle === "end") return original;
 			const next = resizeRect(
 				normalizeRect(original),
@@ -437,6 +463,8 @@ export function isMeaningfulAnnotation(annotation: Annotation): boolean {
 		case "rect":
 		case "ellipse":
 		case "redact":
+		case "magnifier":
+		case "spotlight":
 			return Math.abs(annotation.w) >= 3 && Math.abs(annotation.h) >= 3;
 		case "arrow":
 		case "line":

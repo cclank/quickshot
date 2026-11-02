@@ -92,6 +92,29 @@ export type RedactAnnotation = AnnotationBase & {
 	strength: number;
 };
 
+export type MagnifierAnnotation = AnnotationBase & {
+	kind: "magnifier";
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+	sourceX: number;
+	sourceY: number;
+	zoom: number;
+	color: string;
+	width: number;
+};
+
+export type SpotlightAnnotation = AnnotationBase & {
+	kind: "spotlight";
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+	shape: "rect" | "ellipse";
+	opacity: number;
+};
+
 export type Annotation =
 	| RectAnnotation
 	| EllipseAnnotation
@@ -101,12 +124,14 @@ export type Annotation =
 	| HighlighterAnnotation
 	| TextAnnotation
 	| CounterAnnotation
-	| RedactAnnotation;
+	| RedactAnnotation
+	| MagnifierAnnotation
+	| SpotlightAnnotation;
 
 export type AnnotationKind = Annotation["kind"];
 export type Tool = "select" | AnnotationKind;
 
-export type BoxAnnotation = RectAnnotation | EllipseAnnotation | RedactAnnotation;
+export type BoxAnnotation = RectAnnotation | EllipseAnnotation | RedactAnnotation | MagnifierAnnotation | SpotlightAnnotation;
 export type SegmentAnnotation = ArrowAnnotation | LineAnnotation;
 export type PathAnnotation = PenAnnotation | HighlighterAnnotation;
 
