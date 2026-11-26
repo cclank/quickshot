@@ -3583,7 +3583,7 @@ background:conic-gradient(from var(--turn),#FF5A7A,#FF9F43,#FFD43B,#38D9A9,#4DAB
 	return win;
 }
 
-/** Progress, preview, Done and Cancel. A panel: clicking it never activates QuickShot. */
+/** Progress, preview and actions. Clicking the panel itself never activates QuickShot. */
 function createScrollPanel(area: ScrollRect, display: Display) {
 	const workAreas = [display, ...screen.getAllDisplays().filter((other) => other.id !== display.id)].map((other) => other.workArea);
 	const panel = new BrowserWindow({
@@ -3680,7 +3680,7 @@ function failScrollCapture(session: ScrollSession, reason: string) {
 	}, SCROLL_ERROR_DISPLAY_MS);
 }
 
-async function finishScrollCapture(reason: string) {
+async function finishScrollCapture(reason: string, action: "edit" | "copy" = "edit") {
 	const session = scrollSession;
 	if (!session || session.finishing || !scrollAgent) return;
 	session.finishing = true;
@@ -3709,14 +3709,30 @@ async function finishScrollCapture(reason: string) {
 		failScrollCapture(session, "finish-failed");
 		return;
 	}
+	if (action === "copy") {
+		try {
+			const stitchedImage = nativeImage.createFromBuffer(image);
+			if (stitchedImage.isEmpty()) throw new Error("Invalid stitched image");
+			clipboard.writeImage(stitchedImage);
+		} catch (error) {
+			writeDiagnostic("scroll-capture-copy-failed", { error: serializeError(error) });
+			failScrollCapture(session, "copy-failed");
+			return;
+		}
+	}
 	endScrollSession(session);
 	writeDiagnostic("scroll-capture-finished", {
 		reason,
+		action,
 		...readPngDimensions(image),
 		ms: Date.now() - session.startedAt,
 		// How the stitching went, in numbers only: frames, losses and why.
 		stats,
 	});
+	if (action === "copy") {
+		cancelActiveCapture(false, false);
+		return;
+	}
 	if (deliverStitchPiece(image)) return;
 	if (!openPreviewForImage(image)) cancelActiveCapture();
 }
@@ -4449,10 +4465,13 @@ function registerIpcHandlers() {
 		};
 	});
 
-	ipcMain.handle("finish-scroll-capture", (event) => {
+	ipcMain.handle("finish-scroll-capture", (event, action: unknown) => {
 		const session = scrollSession;
-		if (!session || !isTrustedWindowSender(event, session.panel)) return { success: false };
-		void finishScrollCapture("panel");
+		if (
+			!session || session.finishing || !isTrustedWindowSender(event, session.panel) ||
+			(action !== "edit" && action !== "copy")
+		) return { success: false };
+		void finishScrollCapture("panel", action);
 		return { success: true };
 	});
 

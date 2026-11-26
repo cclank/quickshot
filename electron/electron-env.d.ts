@@ -285,6 +285,7 @@ interface Window {
 				{ success: true; progress: ScrollCaptureProgress; previewBytes?: Uint8Array } | { success: false }
 			>;
 			finish: () => Promise<{ success: boolean }>;
+			copy: () => Promise<{ success: boolean }>;
 			cancel: () => Promise<{ success: boolean }>;
 			onProgress: (callback: (progress: ScrollCaptureProgress) => void) => () => void;
 		};

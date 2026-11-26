@@ -1,4 +1,4 @@
-import { CornerDownLeft, GripVertical } from "lucide-react";
+import { GripVertical } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LANGUAGE, t } from "@/lib/i18n";
 import { createFrameObjectUrl } from "@/lib/pngBytes";
@@ -21,7 +21,7 @@ const STATUS_TEXT: Record<Progress["status"], Parameters<typeof t>[0]> = {
 
 /**
  * Sits beside an area while it is captured by scrolling: the stitched image
- * so far, its length, a hint, and Done / Cancel (↩ / Esc work anywhere). The
+ * so far, its length, and actions to copy, open the editor or cancel. The
  * window never takes focus, so the page being scrolled keeps it.
  */
 export function ScrollCapturePanel() {
@@ -150,24 +150,30 @@ export function ScrollCapturePanel() {
 					{t(STATUS_TEXT[shownStatus])}
 				</p>
 
-				<div className="mt-2 flex gap-2">
+				<div className="mt-2 flex gap-1.5">
 					<button
 						type="button"
 						disabled={status === "finishing"}
 						onClick={() => void window.electronAPI.scrollCapture?.cancel()}
-						className="flex h-[34px] flex-1 items-center justify-center gap-1.5 rounded-[10px] bg-white/10 text-[12.5px] font-medium text-white/85 transition-colors hover:bg-white/15 disabled:opacity-40"
+						className="flex h-[34px] flex-1 items-center justify-center rounded-[10px] bg-white/10 text-[12.5px] font-medium text-white/85 transition-colors hover:bg-white/15 disabled:opacity-40"
 					>
 						{t("scroll.cancel")}
-						<kbd className="font-sans text-[11px] text-white/45">esc</kbd>
+					</button>
+					<button
+						type="button"
+						disabled={busy}
+						onClick={() => void window.electronAPI.scrollCapture?.copy()}
+						className="flex h-[34px] flex-1 items-center justify-center rounded-[10px] bg-white/10 text-[12.5px] font-medium text-white/85 transition-colors hover:bg-white/15 disabled:opacity-40"
+					>
+						{t("scroll.copy")}
 					</button>
 					<button
 						type="button"
 						disabled={busy}
 						onClick={() => void window.electronAPI.scrollCapture?.finish()}
-						className="flex h-[34px] flex-1 items-center justify-center gap-1.5 rounded-[10px] bg-white text-[12.5px] font-semibold text-[#1c1c1e] transition-colors hover:bg-white/90 disabled:opacity-40"
+						className="flex h-[34px] shrink-0 items-center justify-center whitespace-nowrap rounded-[10px] bg-white px-2.5 text-[12.5px] font-semibold text-[#1c1c1e] transition-colors hover:bg-white/90 disabled:opacity-40"
 					>
-						{t("scroll.done")}
-						<CornerDownLeft size={13} strokeWidth={2.2} className="text-black/45" aria-label="Return" />
+						{t("scroll.openEditor")}
 					</button>
 				</div>
 			</div>

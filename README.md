@@ -134,6 +134,8 @@ Screenshots, and any text in them, never leave your computer. There is no accoun
 
 `Mod` is `⌘` on macOS and `Ctrl` on Windows. The global capture shortcut can be changed, and scrolling capture given its own, under **Settings…** in the menu bar menu.
 
+In scrolling mode, drag to select an area and release to start capture. If an area is already selected, the scrolling mode shortcut starts capture immediately. Scroll the page, then click **Copy** in the floating panel to put the stitched image on the clipboard, or **Open editor** to edit it.
+
 | Where | Shortcut | Action |
 | --- | --- | --- |
 | Anywhere | `Mod+Shift+X` | Capture a region |

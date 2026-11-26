@@ -42,7 +42,10 @@
 					},
 				}),
 				onCaptureSession: () => () => {},
-				regionSelectorReady: async () => ({ success: true }),
+				regionSelectorReady: async (sessionId) => {
+					window.__quickshotRegionFixture.readySessionId = sessionId;
+					return { success: true };
+				},
 				// Front-to-back mock windows laid over the sample screen.
 				getCaptureWindows: async () => ({
 					success: true,
